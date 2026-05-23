@@ -1,0 +1,21 @@
+{
+  "name": "canopy",
+  "displayName": "Canopy Architecture Manager",
+  "version": "0.1.0",
+  "description": "Manage software architecture, projects, milestones, teams, Jira sync, and Gantt scheduling from Claude.",
+  "author": "Canopy",
+  "license": "MIT",
+  "keywords": ["architecture", "project-management", "gantt", "jira", "adr"],
+  "userConfig": {
+    "api_base_url": {
+      "type": "string",
+      "description": "Base URL of the canopy backend, e.g. http://localhost:8000",
+      "default": "http://localhost:8000"
+    },
+    "api_token": {
+      "type": "string",
+      "description": "JWT for the canopy API (obtain from POST /api/v1/auth/login)",
+      "sensitive": true
+    }
+  }
+}

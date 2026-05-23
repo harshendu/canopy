@@ -1,0 +1,13 @@
+{
+  "name": "canopy",
+  "owner": {
+    "name": "Canopy"
+  },
+  "plugins": [
+    {
+      "name": "canopy",
+      "source": "./plugin",
+      "description": "Manage software architecture, projects, milestones, teams, Jira sync, and Gantt scheduling from Claude."
+    }
+  ]
+}

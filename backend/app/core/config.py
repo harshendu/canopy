@@ -1,0 +1,60 @@
+from functools import lru_cache
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+
+    PROJECT_NAME: str = "Canopy"
+    API_V1_PREFIX: str = "/api/v1"
+
+    DATABASE_URL: str = "postgresql+asyncpg://canopy:canopy@localhost:5432/canopy"
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    SECRET_KEY: str = "change-me"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    JWT_ALGORITHM: str = "HS256"
+
+    # Fernet key for encrypting connector tokens at rest. If empty, one is derived
+    # from SECRET_KEY (fine for dev, set explicitly in production).
+    TOKEN_ENCRYPTION_KEY: str = ""
+
+    FIRST_SUPERUSER_EMAIL: str | None = None
+    FIRST_SUPERUSER_PASSWORD: str | None = None
+
+    BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:4173"]
+
+    GITHUB_WEBHOOK_SECRET: str = ""
+    JIRA_WEBHOOK_SECRET: str = ""
+
+    # Cron cadence (minutes) for the Jira reconciliation poll.
+    JIRA_POLL_MINUTES: int = 10
+
+    # --- OAuth 2.0 (3LO) ---
+    # The provider redirects here after consent; must match the app registration.
+    OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
+    # Where the callback redirects the browser when done.
+    FRONTEND_BASE_URL: str = "http://localhost:5173"
+    JIRA_OAUTH_CLIENT_ID: str = ""
+    JIRA_OAUTH_CLIENT_SECRET: str = ""
+    GITHUB_OAUTH_CLIENT_ID: str = ""
+    GITHUB_OAUTH_CLIENT_SECRET: str = ""
+    GOOGLE_OAUTH_CLIENT_ID: str = ""
+    GOOGLE_OAUTH_CLIENT_SECRET: str = ""
+
+    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
+    @classmethod
+    def _split_origins(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [o.strip() for o in v.split(",") if o.strip()]
+        return v
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()

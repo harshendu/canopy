@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Runs basic CI before every push: bootstraps the env (vanilla-VM friendly), then
+# backend tests + frontend build. A failure aborts the push.
+# Bypass in a genuine emergency only:  git push --no-verify
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+exec bash "$REPO_ROOT/scripts/ci.sh" </dev/null
