@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     GITHUB_WEBHOOK_SECRET: str = ""
     JIRA_WEBHOOK_SECRET: str = ""
+    EVENTS_WEBHOOK_SECRET: str = ""
 
     # Cron cadence (minutes) for the Jira reconciliation poll.
     JIRA_POLL_MINUTES: int = 10

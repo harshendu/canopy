@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.models.project import Dependency, Task
 from app.schemas.entities import DependencyCreate, DependencyRead
 
@@ -30,7 +30,7 @@ async def list_dependencies(
 
 @router.post("", response_model=DependencyRead, status_code=status.HTTP_201_CREATED)
 async def create_dependency(
-    session: SessionDep, _: CurrentUser, payload: DependencyCreate
+    session: SessionDep, _: PlannerWriter, payload: DependencyCreate
 ) -> Dependency:
     if payload.predecessor_id == payload.successor_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Self-dependency")
@@ -42,7 +42,7 @@ async def create_dependency(
 
 
 @router.delete("/{dependency_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_dependency(session: SessionDep, _: CurrentUser, dependency_id: int) -> None:
+async def delete_dependency(session: SessionDep, _: PlannerWriter, dependency_id: int) -> None:
     dependency = await session.get(Dependency, dependency_id)
     if dependency is not None:
         await session.delete(dependency)

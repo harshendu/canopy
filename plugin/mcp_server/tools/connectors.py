@@ -35,3 +35,30 @@ def register(mcp, client) -> None:
         return await client.get(
             f"/connectors/github/{connection_id}/file", params={"path": path}
         )
+
+    @mcp.tool
+    async def get_activity(project_id: int) -> list[dict]:
+        """The project's activity feed: deploys, build failures, and incidents."""
+        return await client.get(f"/projects/{project_id}/activity")
+
+    @mcp.tool
+    async def record_activity(
+        project_id: int,
+        kind: str,
+        summary: str,
+        component_id: int | None = None,
+        reference: str | None = None,
+    ) -> dict:
+        """Record a CI/observability event. kind: deploy | build_failure | incident_open |
+        incident_close. An incident_open auto-opens a postmortem; build failures and open
+        incidents feed the quality-risk family."""
+        return await client.post(
+            f"/projects/{project_id}/activity",
+            {
+                "kind": kind,
+                "summary": summary,
+                "component_id": component_id,
+                "reference": reference,
+                "source": "agent",
+            },
+        )

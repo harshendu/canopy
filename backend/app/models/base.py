@@ -28,9 +28,42 @@ class DependencyType(StrEnum):
 
 class ADRStatus(StrEnum):
     proposed = "proposed"
+    under_discussion = "under_discussion"
     accepted = "accepted"
+    rejected = "rejected"
     superseded = "superseded"
     deprecated = "deprecated"
+    deferred = "deferred"
+
+
+class Reversibility(StrEnum):
+    one_way = "one_way"  # a hard-to-reverse decision (Bezos "type 1" door)
+    two_way = "two_way"  # an easily reversible decision (Bezos "type 2" door)
+
+
+class ADRCommentKind(StrEnum):
+    comment = "comment"
+    approve = "approve"
+    request_changes = "request_changes"
+    reject = "reject"
+
+
+class DecisionRule(StrEnum):
+    owner_decides = "owner_decides"
+    consensus = "consensus"  # every stakeholder must approve
+    lazy_consensus = "lazy_consensus"  # accept unless a stakeholder requests changes
+
+
+class RetrospectiveKind(StrEnum):
+    project_retro = "project_retro"
+    incident_postmortem = "incident_postmortem"
+
+
+class ActivityKind(StrEnum):
+    deploy = "deploy"
+    build_failure = "build_failure"
+    incident_open = "incident_open"
+    incident_close = "incident_close"
 
 
 class Provider(StrEnum):
@@ -41,4 +74,8 @@ class Provider(StrEnum):
 
 class UserRole(StrEnum):
     admin = "admin"
-    member = "member"
+    architect = "architect"
+    engineering_manager = "engineering_manager"
+    engineer = "engineer"
+    viewer = "viewer"
+    member = "member"  # legacy default (pre-roles); treated as ~architect

@@ -15,6 +15,12 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.member
 
 
+class UserUpdate(BaseModel):
+    full_name: str | None = None
+    role: UserRole | None = None
+    is_active: bool | None = None
+
+
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int

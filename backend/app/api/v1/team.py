@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.models.project import Project
 from app.models.team import Allocation, Engineer, Role
 from app.schemas.entities import (
@@ -29,7 +29,7 @@ async def list_roles(session: SessionDep, _: CurrentUser) -> list[Role]:
 
 
 @router.post("/roles", response_model=RoleRead, status_code=status.HTTP_201_CREATED)
-async def create_role(session: SessionDep, _: CurrentUser, payload: RoleCreate) -> Role:
+async def create_role(session: SessionDep, _: PlannerWriter, payload: RoleCreate) -> Role:
     role = Role(name=payload.name)
     session.add(role)
     await session.commit()
@@ -45,7 +45,7 @@ async def list_engineers(session: SessionDep, _: CurrentUser) -> list[Engineer]:
 
 @router.post("/engineers", response_model=EngineerRead, status_code=status.HTTP_201_CREATED)
 async def create_engineer(
-    session: SessionDep, _: CurrentUser, payload: EngineerCreate
+    session: SessionDep, _: PlannerWriter, payload: EngineerCreate
 ) -> Engineer:
     engineer = Engineer(**payload.model_dump())
     session.add(engineer)
@@ -56,7 +56,7 @@ async def create_engineer(
 
 @router.patch("/engineers/{engineer_id}", response_model=EngineerRead)
 async def update_engineer(
-    session: SessionDep, _: CurrentUser, engineer_id: int, payload: EngineerUpdate
+    session: SessionDep, _: PlannerWriter, engineer_id: int, payload: EngineerUpdate
 ) -> Engineer:
     engineer = await session.get(Engineer, engineer_id)
     if engineer is None:
@@ -69,7 +69,7 @@ async def update_engineer(
 
 
 @router.delete("/engineers/{engineer_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_engineer(session: SessionDep, _: CurrentUser, engineer_id: int) -> None:
+async def delete_engineer(session: SessionDep, _: PlannerWriter, engineer_id: int) -> None:
     engineer = await session.get(Engineer, engineer_id)
     if engineer is not None:
         await session.delete(engineer)
@@ -77,7 +77,7 @@ async def delete_engineer(session: SessionDep, _: CurrentUser, engineer_id: int)
 
 
 @router.delete("/allocations/{allocation_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_allocation(session: SessionDep, _: CurrentUser, allocation_id: int) -> None:
+async def delete_allocation(session: SessionDep, _: PlannerWriter, allocation_id: int) -> None:
     allocation = await session.get(Allocation, allocation_id)
     if allocation is not None:
         await session.delete(allocation)
@@ -97,7 +97,7 @@ async def list_allocations(
 
 @router.post("/allocations", response_model=AllocationRead, status_code=status.HTTP_201_CREATED)
 async def create_allocation(
-    session: SessionDep, _: CurrentUser, payload: AllocationCreate
+    session: SessionDep, _: PlannerWriter, payload: AllocationCreate
 ) -> Allocation:
     allocation = Allocation(**payload.model_dump())
     session.add(allocation)

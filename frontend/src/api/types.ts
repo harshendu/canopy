@@ -1,6 +1,16 @@
 export type TaskType = "task" | "milestone" | "summary";
 export type DependencyType = "FS" | "SS" | "FF" | "SF";
-export type ADRStatus = "proposed" | "accepted" | "superseded" | "deprecated";
+export type ADRStatus =
+  | "proposed"
+  | "under_discussion"
+  | "accepted"
+  | "rejected"
+  | "superseded"
+  | "deprecated"
+  | "deferred";
+export type Reversibility = "one_way" | "two_way";
+export type ADRCommentKind = "comment" | "approve" | "request_changes" | "reject";
+export type DecisionRule = "owner_decides" | "consensus" | "lazy_consensus";
 export type Provider = "jira" | "github" | "gdrive";
 
 export interface Project {
@@ -12,6 +22,8 @@ export interface Project {
   target_date: string | null;
   archived: boolean;
   skip_weekends: boolean;
+  decision_rule: DecisionRule;
+  decision_sla_hours: number;
 }
 
 export interface Task {
@@ -101,9 +113,57 @@ export interface ADR {
   context: string | null;
   decision: string | null;
   consequences: string | null;
+  alternatives: string[];
+  reversibility: Reversibility | null;
+  decision_owner_id: number | null;
+  proposed_by_id: number | null;
+  decide_by: string | null;
+  rfc_url: string | null;
   supersedes_id: number | null;
   pr_links: string[];
   component_ids: number[];
+  stakeholder_ids: number[];
+}
+
+export interface ADRComment {
+  id: number;
+  adr_id: number;
+  engineer_id: number | null;
+  author_name: string | null;
+  body: string;
+  kind: ADRCommentKind;
+  created_at: string;
+}
+
+export interface ReviewSummary {
+  required: number;
+  approved: number;
+  changes_requested: number;
+  rejected: number;
+  pending: number;
+  can_accept: boolean;
+}
+
+export interface ADRDetail extends ADR {
+  comments: ADRComment[];
+  review: ReviewSummary;
+}
+
+export interface DecisionQueueItem {
+  id: number;
+  project_id: number;
+  number: number;
+  title: string;
+  status: ADRStatus;
+  bucket: string; // needs_triage | stuck | discussing | deferred_soon
+  reason: string;
+  overdue: boolean;
+  decide_by: string | null;
+  age_hours: number;
+}
+
+export interface DecisionQueueResponse {
+  items: DecisionQueueItem[];
 }
 
 export interface Component {
@@ -113,6 +173,16 @@ export interface Component {
   kind: string;
   description: string | null;
   repo_url: string | null;
+  owner_engineer_id: number | null;
+  criticality: string | null;
+  tier: string | null;
+  observability_url: string | null;
+}
+
+export interface ImpactResponse {
+  adr_id: number;
+  direct_component_ids: number[];
+  downstream_component_ids: number[];
 }
 
 export interface ComponentLink {
@@ -156,6 +226,83 @@ export interface ProjectSummary {
   critical_tasks: number;
   project_end: string | null;
   target_date: string | null;
+  risk_score: number;
+  risk_level: RiskLevel;
+  drift_score: number;
+  drift_level: RiskLevel;
+}
+
+export interface CodeBinding {
+  id: number;
+  component_id: number;
+  connection_id: number | null;
+  repo: string | null;
+  path_glob: string;
+  module_prefix: string | null;
+}
+
+export interface DriftEvent {
+  id: number;
+  project_id: number;
+  kind: string;
+  rule_key: string;
+  summary: string;
+  detail: string | null;
+  suspected_cause: string | null;
+  affected_component_ids: number[];
+  status: string;
+}
+
+export interface DriftResponse {
+  project_id: number;
+  score: number;
+  level: RiskLevel;
+  events: DriftEvent[];
+}
+
+export type RiskLevel = "low" | "moderate" | "high" | "critical";
+
+export interface RiskIndicator {
+  key: string;
+  label: string;
+  score: number;
+  summary: string;
+  details: string[];
+}
+
+export interface RiskFamily {
+  key: string;
+  label: string;
+  available: boolean;
+  score: number;
+  weight: number;
+  indicators: RiskIndicator[];
+}
+
+export interface RiskMitigation {
+  id: number;
+  project_id: number;
+  indicator_key: string;
+  note: string;
+  owner_engineer_id: number | null;
+  check_in: string | null;
+  resolved: boolean;
+}
+
+export interface RiskResponse {
+  project_id: number;
+  score: number;
+  level: RiskLevel;
+  families: RiskFamily[];
+  mitigations: RiskMitigation[];
+}
+
+export interface RiskSnapshot {
+  id: number;
+  project_id: number;
+  score: number;
+  level: RiskLevel;
+  created_at: string;
 }
 
 export interface PortfolioResponse {
@@ -174,6 +321,79 @@ export interface Engineer {
   title: string | null;
   role_id: number | null;
   active: boolean;
+  user_id: number | null;
+  skill_tags: string[];
+  github_login: string | null;
+  timezone: string | null;
+  committed_hours_per_week: number | null;
+}
+
+export type UserRole =
+  | "admin"
+  | "architect"
+  | "engineering_manager"
+  | "engineer"
+  | "viewer"
+  | "member";
+
+export interface User {
+  id: number;
+  email: string;
+  full_name: string | null;
+  role: UserRole;
+  is_active: boolean;
+}
+
+export type ActivityKind = "deploy" | "build_failure" | "incident_open" | "incident_close";
+
+export interface ActivityEvent {
+  id: number;
+  project_id: number;
+  kind: string;
+  summary: string;
+  component_id: number | null;
+  source: string;
+  reference: string | null;
+  created_at: string;
+}
+
+export type RetrospectiveKind = "project_retro" | "incident_postmortem";
+
+export interface Retrospective {
+  id: number;
+  project_id: number;
+  kind: RetrospectiveKind;
+  title: string;
+  body: string | null;
+  status: string;
+  affected_component_ids: number[];
+}
+
+export interface RetrospectiveComment {
+  id: number;
+  retrospective_id: number;
+  engineer_id: number | null;
+  author_name: string | null;
+  body: string;
+  created_at: string;
+}
+
+export interface RetrospectiveDetail extends Retrospective {
+  comments: RetrospectiveComment[];
+}
+
+export interface MyWorkspace {
+  user: User;
+  engineer: Engineer | null;
+  assigned_tasks: Task[];
+  owned_decisions: ADR[];
+  stakeholder_decisions: ADR[];
+}
+
+export interface MyToday {
+  user: User;
+  focus_tasks: Task[];
+  decisions_to_push: ADR[];
 }
 
 export interface Allocation {

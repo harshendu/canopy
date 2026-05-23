@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from sqlmodel import Field
 
-from app.models.base import DependencyType, TaskType, TimestampMixin
+from app.models.base import DecisionRule, DependencyType, TaskType, TimestampMixin
 
 
 class Project(TimestampMixin, table=True):
@@ -14,6 +14,10 @@ class Project(TimestampMixin, table=True):
     target_date: date | None = None
     archived: bool = False
     skip_weekends: bool = False  # schedule on a 5-day working week (+ holidays)
+    # How an ADR reaches `accepted` once its stakeholders have weighed in, and how long
+    # a freshly `proposed` ADR may sit before its owner must triage it.
+    decision_rule: DecisionRule = Field(default=DecisionRule.owner_decides)
+    decision_sla_hours: int = 72
 
 
 class Holiday(TimestampMixin, table=True):
@@ -85,3 +89,26 @@ class Dependency(TimestampMixin, table=True):
     successor_id: int = Field(foreign_key="task.id", index=True)
     type: DependencyType = Field(default=DependencyType.FS)
     lag: int = 0  # days
+
+
+class RiskMitigation(TimestampMixin, table=True):
+    """An acknowledgement of a risk indicator: a note, an owner, and a check-in date.
+    The system follows up — an open mitigation past its check-in is itself a nudge."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    indicator_key: str  # which risk indicator this addresses (see services/risk.py)
+    note: str
+    owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    check_in: date | None = None
+    resolved: bool = False
+
+
+class RiskSnapshot(TimestampMixin, table=True):
+    """A point-in-time capture of a project's risk score, for the risk timeline (§Q2).
+    Captured on demand / nightly; the trend matters more than any single value."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    score: int
+    level: str

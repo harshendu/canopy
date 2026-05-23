@@ -4,11 +4,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { Project } from "../api/types";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { canWriteProjects } from "../lib/permissions";
 
 export default function Projects() {
   const qc = useQueryClient();
   const [key, setKey] = useState("");
   const [name, setName] = useState("");
+  const { data: me } = useCurrentUser();
+  const mayCreate = canWriteProjects(me?.role);
 
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["projects"],
@@ -28,29 +32,31 @@ export default function Projects() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Projects</h1>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (key && name) create.mutate();
-        }}
-        className="flex gap-2"
-      >
-        <input
-          value={key}
-          onChange={(e) => setKey(e.target.value.toUpperCase())}
-          placeholder="KEY"
-          className="w-28 rounded border border-slate-300 px-3 py-2 text-sm"
-        />
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Project name"
-          className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
-        />
-        <button className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
-          Add
-        </button>
-      </form>
+      {mayCreate && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (key && name) create.mutate();
+          }}
+          className="flex gap-2"
+        >
+          <input
+            value={key}
+            onChange={(e) => setKey(e.target.value.toUpperCase())}
+            placeholder="KEY"
+            className="w-28 rounded border border-slate-300 px-3 py-2 text-sm"
+          />
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Project name"
+            className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+          />
+          <button className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
+            Add
+          </button>
+        </form>
+      )}
 
       {isLoading ? (
         <p className="text-sm text-slate-500">Loading…</p>
