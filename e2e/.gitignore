@@ -1,0 +1,7 @@
+# Local-only artifacts for the e2e suite — never commit these.
+.venv/
+.drivers/
+__pycache__/
+.pytest_cache/
+*.db
+artifacts/
