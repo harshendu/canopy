@@ -3,9 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { Engineer, Role, User } from "../api/types";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { isPlanner } from "../lib/permissions";
 
 export default function Team() {
   const qc = useQueryClient();
+  const { data: me } = useCurrentUser();
+  const mayWrite = isPlanner(me?.role);
   const [engName, setEngName] = useState("");
   const [engTitle, setEngTitle] = useState("");
   const [engGithub, setEngGithub] = useState("");
@@ -77,6 +81,7 @@ export default function Team() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Team</h1>
 
+      {mayWrite && (
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <form
           onSubmit={(e) => {
@@ -163,6 +168,7 @@ export default function Team() {
           </div>
         </form>
       </div>
+      )}
 
       <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
         {(engineers.data ?? []).map((e) => (
@@ -204,12 +210,14 @@ export default function Team() {
                   ))}
                 </select>
               )}
-              <button
-                onClick={() => removeEngineer.mutate(e.id)}
-                className="text-xs text-slate-400 hover:text-red-600"
-              >
-                remove
-              </button>
+              {mayWrite && (
+                <button
+                  onClick={() => removeEngineer.mutate(e.id)}
+                  className="text-xs text-slate-400 hover:text-red-600"
+                >
+                  remove
+                </button>
+              )}
             </div>
           </li>
         ))}

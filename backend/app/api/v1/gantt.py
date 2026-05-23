@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.core.events import publish
 from app.models.base import TaskType
 from app.models.project import Dependency, Milestone, Project, Task, TaskStatusHistory
@@ -90,7 +90,7 @@ async def get_gantt(session: SessionDep, _: CurrentUser, project_id: int) -> Gan
 
 
 @router.post("/projects/{project_id}/replan", response_model=ReplanResult)
-async def replan(session: SessionDep, _: CurrentUser, project_id: int) -> ReplanResult:
+async def replan(session: SessionDep, _: PlannerWriter, project_id: int) -> ReplanResult:
     try:
         outcome = await reschedule_project(session, project_id, persist=True)
     except CycleError as exc:
@@ -118,7 +118,7 @@ async def whatif(
 
 
 @router.post("/projects/{project_id}/baseline")
-async def set_baseline(session: SessionDep, _: CurrentUser, project_id: int) -> dict[str, int]:
+async def set_baseline(session: SessionDep, _: PlannerWriter, project_id: int) -> dict[str, int]:
     """Snapshot current start/end into baseline_* for every task (drift reference)."""
     tasks = list(
         (

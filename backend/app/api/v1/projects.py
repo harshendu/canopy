@@ -3,7 +3,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
 from app.api.v1.risk import report_for
 from app.models.architecture import ArchitectureDecision
 from app.models.base import TaskType
@@ -90,7 +90,9 @@ async def list_projects(session: SessionDep, _: CurrentUser) -> list[Project]:
 
 
 @router.post("", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
-async def create_project(session: SessionDep, _: CurrentUser, payload: ProjectCreate) -> Project:
+async def create_project(
+    session: SessionDep, _: ArchitectWriter, payload: ProjectCreate
+) -> Project:
     existing = await session.execute(select(Project).where(Project.key == payload.key))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project key exists")
@@ -111,7 +113,7 @@ async def get_project(session: SessionDep, _: CurrentUser, project_id: int) -> P
 
 @router.patch("/{project_id}", response_model=ProjectRead)
 async def update_project(
-    session: SessionDep, _: CurrentUser, project_id: int, payload: ProjectUpdate
+    session: SessionDep, _: ArchitectWriter, project_id: int, payload: ProjectUpdate
 ) -> Project:
     project = await session.get(Project, project_id)
     if project is None:
@@ -124,7 +126,7 @@ async def update_project(
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(session: SessionDep, _: CurrentUser, project_id: int) -> None:
+async def delete_project(session: SessionDep, _: ArchitectWriter, project_id: int) -> None:
     project = await session.get(Project, project_id)
     if project is not None:
         await session.delete(project)
@@ -142,7 +144,7 @@ async def list_holidays(session: SessionDep, _: CurrentUser, project_id: int) ->
     "/{project_id}/holidays", response_model=HolidayRead, status_code=status.HTTP_201_CREATED
 )
 async def create_holiday(
-    session: SessionDep, _: CurrentUser, project_id: int, payload: HolidayCreate
+    session: SessionDep, _: ArchitectWriter, project_id: int, payload: HolidayCreate
 ) -> Holiday:
     holiday = Holiday(project_id=project_id, day=payload.day, name=payload.name)
     session.add(holiday)
@@ -153,7 +155,7 @@ async def create_holiday(
 
 @router.delete("/{project_id}/holidays/{holiday_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_holiday(
-    session: SessionDep, _: CurrentUser, project_id: int, holiday_id: int
+    session: SessionDep, _: ArchitectWriter, project_id: int, holiday_id: int
 ) -> None:
     holiday = await session.get(Holiday, holiday_id)
     if holiday is not None:

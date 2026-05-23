@@ -14,6 +14,8 @@ import type {
 import GanttChart from "../components/GanttChart";
 import CapacityView from "../components/CapacityView";
 import RoadmapView from "../components/RoadmapView";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { canWriteProjects, isPlanner } from "../lib/permissions";
 
 // Heavy (React Flow / Recharts) — code-split.
 const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
@@ -59,6 +61,9 @@ export default function ProjectView() {
   const [succ, setSucc] = useState<number | "">("");
   const [lastReplan, setLastReplan] = useState<ReplanResult | null>(null);
   const [tab, setTab] = useState<Tab>(initialTab);
+  const { data: me } = useCurrentUser();
+  const mayPlan = isPlanner(me?.role);
+  const mayWriteProject = canWriteProjects(me?.role);
 
   const project = useQuery({
     queryKey: ["project", id],
@@ -138,28 +143,34 @@ export default function ProjectView() {
           {project.data ? project.data.name : "Project"}
         </h1>
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1 text-sm text-slate-600">
-            <input
-              type="checkbox"
-              checked={project.data?.skip_weekends ?? false}
-              onChange={(e) => toggleWeekends.mutate(e.target.checked)}
-            />
-            5-day week
-          </label>
-          <button
-            onClick={() => baseline.mutate()}
-            disabled={baseline.isPending}
-            className="rounded border border-canopy-500 px-4 py-2 text-sm font-medium text-canopy-700 disabled:opacity-50"
-          >
-            {baseline.isPending ? "Saving…" : "Set baseline"}
-          </button>
-          <button
-            onClick={() => replan.mutate()}
-            disabled={replan.isPending}
-            className="rounded bg-canopy-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-          >
-            {replan.isPending ? "Scheduling…" : "Schedule (CPM)"}
-          </button>
+          {mayWriteProject && (
+            <label className="flex items-center gap-1 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={project.data?.skip_weekends ?? false}
+                onChange={(e) => toggleWeekends.mutate(e.target.checked)}
+              />
+              5-day week
+            </label>
+          )}
+          {mayPlan && (
+            <>
+              <button
+                onClick={() => baseline.mutate()}
+                disabled={baseline.isPending}
+                className="rounded border border-canopy-500 px-4 py-2 text-sm font-medium text-canopy-700 disabled:opacity-50"
+              >
+                {baseline.isPending ? "Saving…" : "Set baseline"}
+              </button>
+              <button
+                onClick={() => replan.mutate()}
+                disabled={replan.isPending}
+                className="rounded bg-canopy-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {replan.isPending ? "Scheduling…" : "Schedule (CPM)"}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -253,6 +264,7 @@ export default function ProjectView() {
         </Suspense>
       )}
 
+      {mayPlan && (
       <div className="grid grid-cols-2 gap-6">
         <form
           onSubmit={(e) => {
@@ -339,6 +351,7 @@ export default function ProjectView() {
           </div>
         </form>
       </div>
+      )}
     </div>
   );
 }

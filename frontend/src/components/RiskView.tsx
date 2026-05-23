@@ -10,6 +10,8 @@ import type {
   RiskResponse,
 } from "../api/types";
 import { riskTone, scoreBar } from "../lib/risk";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { isPlanner } from "../lib/permissions";
 
 const SEVERITY_STYLES: Record<string, string> = {
   error: "border-red-300 bg-red-50 text-red-700",
@@ -20,6 +22,8 @@ const SEVERITY_STYLES: Record<string, string> = {
 export default function RiskView({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
   const [ackKey, setAckKey] = useState<string | null>(null);
+  const { data: me } = useCurrentUser();
+  const mayWrite = isPlanner(me?.role);
 
   const risk = useQuery({
     queryKey: ["risk", projectId],
@@ -93,6 +97,7 @@ export default function RiskView({ projectId }: { projectId: number }) {
             projectId={projectId}
             onChange={invalidate}
             engineerName={engineerName}
+            mayWrite={mayWrite}
           />
         ))}
       </div>
@@ -124,18 +129,22 @@ export default function RiskView({ projectId }: { projectId: number }) {
                       <span>{engineerName(m.owner_engineer_id)}</span>
                     )}
                     {m.check_in && <span>check-in {m.check_in}</span>}
-                    <button
-                      onClick={() => resolveMit.mutate({ id: m.id, resolved: !m.resolved })}
-                      className="text-canopy-700 hover:underline"
-                    >
-                      {m.resolved ? "reopen" : "resolve"}
-                    </button>
-                    <button
-                      onClick={() => deleteMit.mutate(m.id)}
-                      className="text-slate-400 hover:text-red-600"
-                    >
-                      delete
-                    </button>
+                    {mayWrite && (
+                      <>
+                        <button
+                          onClick={() => resolveMit.mutate({ id: m.id, resolved: !m.resolved })}
+                          className="text-canopy-700 hover:underline"
+                        >
+                          {m.resolved ? "reopen" : "resolve"}
+                        </button>
+                        <button
+                          onClick={() => deleteMit.mutate(m.id)}
+                          className="text-slate-400 hover:text-red-600"
+                        >
+                          delete
+                        </button>
+                      </>
+                    )}
                   </span>
                 </li>
               ))}
@@ -180,6 +189,7 @@ function FamilyCard({
   projectId,
   onChange,
   engineerName,
+  mayWrite,
 }: {
   family: RiskFamily;
   mitigationsFor: (key: string) => RiskMitigation[];
@@ -189,6 +199,7 @@ function FamilyCard({
   projectId: number;
   onChange: () => void;
   engineerName: (id: number | null) => string | null;
+  mayWrite: boolean;
 }) {
   const [open, setOpen] = useState<string | null>(null);
 
@@ -233,12 +244,14 @@ function FamilyCard({
                       {open_ ? "hide" : `details (${ind.details.length})`}
                     </button>
                   )}
-                  <button
-                    onClick={() => setAckKey(ackKey === ind.key ? null : ind.key)}
-                    className="text-canopy-700 hover:underline"
-                  >
-                    acknowledge
-                  </button>
+                  {mayWrite && (
+                    <button
+                      onClick={() => setAckKey(ackKey === ind.key ? null : ind.key)}
+                      className="text-canopy-700 hover:underline"
+                    >
+                      acknowledge
+                    </button>
+                  )}
                   {mits.length > 0 && <span>{mits.length} open mitigation(s)</span>}
                 </div>
                 {open_ && (
@@ -248,7 +261,7 @@ function FamilyCard({
                     ))}
                   </ul>
                 )}
-                {ackKey === ind.key && (
+                {mayWrite && ackKey === ind.key && (
                   <AcknowledgeForm
                     projectId={projectId}
                     indicatorKey={ind.key}

@@ -50,9 +50,30 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 - **API:** `POST /api/v1/auth/register` (admin), `GET /api/v1/auth/users` (admin),
   `PATCH /api/v1/auth/users/{id}` (admin; role / is_active / full_name — you can't deactivate
   yourself).
-- **Enforcement note:** roles are stored and admin-gated surfaces (user management) enforce them.
-  Broader per-role enforcement across project/plan/decision writes (the v2 "Roles × flows" matrix)
-  is **not built** — most write endpoints still accept any authenticated user.
+### A3a. Role enforcement (Roles × flows) **[new]**
+Write access is now enforced server-side per the v2 matrix; **reads stay open to any
+authenticated user** (viewers included). Enforced via role-group dependencies in
+`app/api/deps.py` (`ArchitectWriter` / `PlannerWriter` / `ContributorWriter`; admin always
+allowed; legacy `member` ≈ architect):
+
+|Domain                                   |admin|architect|eng-manager|engineer|viewer|
+|-----------------------------------------|-----|---------|-----------|--------|------|
+|Users (register / role / active)         |rw   |r        |r          |r       |r     |
+|Project create / settings / holidays (B) |rw   |rw       |r          |r       |r     |
+|Plan: tasks / deps / milestones / replan |rw   |rw       |rw         |own task|r     |
+|Capacity: engineers / roles / alloc (F)  |rw   |rw       |rw         |r       |r     |
+|ADR propose / comment (G2/G6)            |rw   |rw       |rw         |rw      |r     |
+|ADR status transition / components       |rw   |rw       |rw         |r       |r     |
+|Risk mitigations (Q)                     |rw   |rw       |rw         |r       |r     |
+
+- **Engineer "own task":** an engineer (linked via `Engineer.user_id`) may `PATCH` only a task
+  whose `assignee_engineer_id` is theirs (e.g. update progress); creating/deleting tasks, editing
+  the dependency graph, and replanning stay planner-only.
+- **The web app hides** write controls the current role can't use (a pure `src/lib/permissions.ts`
+  mirrors the matrix); the server is the real gate and returns `403` regardless.
+- **Not enforced yet:** connector writes (still any authenticated user) and the engineer
+  "own-allocation / availability" carve-out (that self-service flow is §F4, not built) — capacity
+  writes are planner-only for now. Decision **rules/approval gates** (G3) remain advisory.
 
 ### A4. Get current user
 - **API:** `GET /api/v1/auth/me`. The web app caches this to gate admin-only nav.
@@ -196,9 +217,10 @@ review it, alternatives, reversibility, and a discussion thread.
 
 > **Identity note:** decision **owner**, **proposer**, **stakeholders**, and **comment authors**
 > reference **Engineer** records (the team model). An Engineer can now be **linked to a login**
-> (`Engineer.user_id`, §A5), which powers the `/me` workspace (§M). Role-based *enforcement* of who
-> may do what to a decision (the v2 "Roles × flows" matrix) is still **not built** — any
-> authenticated user can perform these actions; roles exist and gate only admin surfaces (§A3).
+> (`Engineer.user_id`, §A5), which powers the `/me` workspace (§M). Role enforcement now applies
+> (§A3a): **engineers can propose and comment** on decisions and edit ADR fields, but **only
+> planners (admin / architect / engineering-manager) can change a decision's status** (e.g. accept);
+> viewers are read-only.
 
 ### G1. Map components (Architecture tab)
 - **UI:** Architecture tab → add components (name + kind: service/module/datastore/external/ui) and
@@ -439,15 +461,17 @@ backlog:
 - ADR **doc-import** (G6) — was dropped from the trimmed Architecture tab; re-add to Decisions.
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - *(closed previously: decision-impact / blast radius (G5); Risk dashboard (§Q) + portfolio risk
-  (§B1). Closed this revision: **user & role management UI** (A3) and the **engineer workspace**
-  (§M).)*
+  (§B1); user & role management UI (A3) + engineer workspace (§M). Closed this revision: **per-role
+  write enforcement** across the Roles × flows matrix (§A3a), with the web app hiding controls a
+  role can't use.)*
 
 ## Not built (documented as future)
 - Slack/email **delivery** of alerts (I) and **decision SLA notifications** (G3).
 - Multi-process **real-time** (K) — needs Redis pub/sub.
 - **Resource leveling** (auto-resolving over-allocation).
-- **Per-role enforcement** across the v2 "Roles × flows" matrix — roles now exist and gate admin
-  surfaces (§A3), but project/plan/decision *writes* still accept any authenticated user.
+- **Connector** RBAC (connector create / sync / OAuth still accept any authenticated user) and the
+  engineer **own-allocation / availability** carve-out (§F4) — the rest of the v2 "Roles × flows"
+  matrix is now **enforced** (§A3a).
 - **OIDC/SSO** + `HttpOnly`-cookie tokens (§A1) and engineer **self-onboarding** `/onboarding`
   (§A5); `/me/today` daily view (§M).
 - Hours-based **allocation** / interrupt budget, planned-vs-realized capacity, PTO→CPM, and

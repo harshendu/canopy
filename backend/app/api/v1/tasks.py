@@ -1,7 +1,14 @@
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import (
+    ContributorWriter,
+    CurrentUser,
+    PlannerWriter,
+    SessionDep,
+    current_engineer,
+    is_planner,
+)
 from app.models.project import Task, TaskStatusHistory
 from app.schemas.entities import (
     TaskCreate,
@@ -25,7 +32,7 @@ async def list_tasks(
 
 
 @router.post("", response_model=TaskRead, status_code=status.HTTP_201_CREATED)
-async def create_task(session: SessionDep, _: CurrentUser, payload: TaskCreate) -> Task:
+async def create_task(session: SessionDep, _: PlannerWriter, payload: TaskCreate) -> Task:
     task = Task(**payload.model_dump())
     session.add(task)
     await session.commit()
@@ -55,11 +62,19 @@ async def get_task_history(
 
 @router.patch("/{task_id}", response_model=TaskRead)
 async def update_task(
-    session: SessionDep, _: CurrentUser, task_id: int, payload: TaskUpdate
+    session: SessionDep, user: ContributorWriter, task_id: int, payload: TaskUpdate
 ) -> Task:
     task = await session.get(Task, task_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    # Planners can edit any task; an engineer may only edit a task assigned to them.
+    if not is_planner(user):
+        engineer = await current_engineer(session, user)
+        if engineer is None or task.assignee_engineer_id != engineer.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Engineers may only edit tasks assigned to them",
+            )
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(task, field, value)
     await session.commit()
@@ -68,7 +83,7 @@ async def update_task(
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_task(session: SessionDep, _: CurrentUser, task_id: int) -> None:
+async def delete_task(session: SessionDep, _: PlannerWriter, task_id: int) -> None:
     task = await session.get(Task, task_id)
     if task is not None:
         await session.delete(task)

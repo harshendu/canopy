@@ -13,6 +13,8 @@ import type {
   Reversibility,
 } from "../api/types";
 import { STATUS_LABELS, groupQueue, legalNextStatuses } from "../lib/decisions";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { canContribute, isPlanner } from "../lib/permissions";
 
 const STATUS_BADGE: Record<string, string> = {
   proposed: "bg-slate-100 text-slate-600",
@@ -36,6 +38,8 @@ const adrLabel = (n: number) => `ADR-${String(n).padStart(4, "0")}`;
 export default function DecisionsView({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const { data: me } = useCurrentUser();
+  const mayContribute = canContribute(me?.role);
 
   const adrs = useQuery({
     queryKey: ["adrs", projectId],
@@ -132,16 +136,18 @@ export default function DecisionsView({ projectId }: { projectId: number }) {
           </ul>
         </div>
 
-        <NewAdrForm
-          projectId={projectId}
-          adrs={adrList}
-          components={comps}
-          engineers={engs}
-          onCreated={() => {
-            qc.invalidateQueries({ queryKey: ["adrs", projectId] });
-            qc.invalidateQueries({ queryKey: ["decision-queue", projectId] });
-          }}
-        />
+        {mayContribute && (
+          <NewAdrForm
+            projectId={projectId}
+            adrs={adrList}
+            components={comps}
+            engineers={engs}
+            onCreated={() => {
+              qc.invalidateQueries({ queryKey: ["adrs", projectId] });
+              qc.invalidateQueries({ queryKey: ["decision-queue", projectId] });
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -218,6 +224,9 @@ function AdrDetailPanel({
   engineerName: (id: number | null) => string | null;
 }) {
   const qc = useQueryClient();
+  const { data: me } = useCurrentUser();
+  const mayPlan = isPlanner(me?.role);
+  const mayContribute = canContribute(me?.role);
   const [pendingStatus, setPendingStatus] = useState<ADR["status"] | "">("");
   const [decideBy, setDecideBy] = useState("");
   const [commentBody, setCommentBody] = useState("");
@@ -299,7 +308,8 @@ function AdrDetailPanel({
         </div>
       )}
 
-      {/* Lifecycle control */}
+      {/* Lifecycle control — planners only */}
+      {mayPlan && (
       <div className="flex flex-wrap items-center gap-2 rounded bg-slate-50 px-2 py-2">
         <span className="text-xs text-slate-400">Move to</span>
         <select
@@ -339,6 +349,7 @@ function AdrDetailPanel({
           </span>
         )}
       </div>
+      )}
 
       {/* Review summary */}
       <div className="flex flex-wrap gap-3 text-xs text-slate-600">
@@ -414,6 +425,7 @@ function AdrDetailPanel({
           </div>
         ))}
 
+        {mayContribute && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -457,6 +469,7 @@ function AdrDetailPanel({
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

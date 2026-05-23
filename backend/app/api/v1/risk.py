@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.models.architecture import ArchitectureDecision
 from app.models.base import ADRStatus, TaskType
 from app.models.project import Project, RiskMitigation, Task
@@ -182,7 +182,7 @@ async def project_risk(session: SessionDep, _: CurrentUser, project_id: int) -> 
     status_code=status.HTTP_201_CREATED,
 )
 async def create_mitigation(
-    session: SessionDep, _: CurrentUser, project_id: int, payload: RiskMitigationCreate
+    session: SessionDep, _: PlannerWriter, project_id: int, payload: RiskMitigationCreate
 ) -> RiskMitigation:
     mitigation = RiskMitigation(project_id=project_id, **payload.model_dump())
     session.add(mitigation)
@@ -197,7 +197,7 @@ async def create_mitigation(
 )
 async def update_mitigation(
     session: SessionDep,
-    _: CurrentUser,
+    _: PlannerWriter,
     project_id: int,
     mitigation_id: int,
     payload: RiskMitigationUpdate,
@@ -217,7 +217,7 @@ async def update_mitigation(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_mitigation(
-    session: SessionDep, _: CurrentUser, project_id: int, mitigation_id: int
+    session: SessionDep, _: PlannerWriter, project_id: int, mitigation_id: int
 ) -> None:
     mitigation = await session.get(RiskMitigation, mitigation_id)
     if mitigation is not None and mitigation.project_id == project_id:

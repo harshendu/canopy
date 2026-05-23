@@ -2,7 +2,13 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, func, select
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import (
+    ContributorWriter,
+    CurrentUser,
+    PlannerWriter,
+    SessionDep,
+    is_planner,
+)
 from app.connectors import get_connector
 from app.connectors.gdrive import GoogleDriveConnector
 from app.connectors.github import GitHubConnector
@@ -53,7 +59,7 @@ async def list_components(
 
 @router.post("/components", response_model=ComponentRead, status_code=status.HTTP_201_CREATED)
 async def create_component(
-    session: SessionDep, _: CurrentUser, payload: ComponentCreate
+    session: SessionDep, _: PlannerWriter, payload: ComponentCreate
 ) -> ArchitectureComponent:
     component = ArchitectureComponent(**payload.model_dump())
     session.add(component)
@@ -91,7 +97,7 @@ async def list_component_links(
     "/component-links", response_model=ComponentLinkRead, status_code=status.HTTP_201_CREATED
 )
 async def create_component_link(
-    session: SessionDep, _: CurrentUser, payload: ComponentLinkCreate
+    session: SessionDep, _: PlannerWriter, payload: ComponentLinkCreate
 ) -> ComponentLink:
     if payload.source_id == payload.target_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Self-link")
@@ -103,7 +109,7 @@ async def create_component_link(
 
 
 @router.delete("/component-links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_component_link(session: SessionDep, _: CurrentUser, link_id: int) -> None:
+async def delete_component_link(session: SessionDep, _: PlannerWriter, link_id: int) -> None:
     link = await session.get(ComponentLink, link_id)
     if link is not None:
         await session.delete(link)
@@ -221,7 +227,7 @@ async def _next_number(session: AsyncSession, project_id: int) -> int:
 
 
 @router.post("/adrs", response_model=ADRRead, status_code=status.HTTP_201_CREATED)
-async def create_adr(session: SessionDep, _: CurrentUser, payload: ADRCreate) -> ADRRead:
+async def create_adr(session: SessionDep, _: ContributorWriter, payload: ADRCreate) -> ADRRead:
     if payload.status == ADRStatus.deferred and payload.decide_by is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -245,7 +251,7 @@ async def create_adr(session: SessionDep, _: CurrentUser, payload: ADRCreate) ->
 
 @router.post("/adrs/import", response_model=ADRRead, status_code=status.HTTP_201_CREATED)
 async def import_adr(
-    session: SessionDep, _: CurrentUser, payload: ADRImportRequest
+    session: SessionDep, _: PlannerWriter, payload: ADRImportRequest
 ) -> ArchitectureDecision:
     """Read a markdown doc from GitHub/Drive and create an ADR from its sections."""
     connection = await session.get(Connection, payload.connection_id)
@@ -349,7 +355,7 @@ async def get_adr(session: SessionDep, _: CurrentUser, adr_id: int) -> ADRDetail
     status_code=status.HTTP_201_CREATED,
 )
 async def add_adr_comment(
-    session: SessionDep, _: CurrentUser, adr_id: int, payload: ADRCommentCreate
+    session: SessionDep, _: ContributorWriter, adr_id: int, payload: ADRCommentCreate
 ) -> ADRComment:
     """Post to an ADR's thread. A non-``comment`` kind is a formal review action
     (approve / request_changes / reject) that feeds the stakeholder-review summary."""
@@ -371,7 +377,7 @@ async def add_adr_comment(
 
 @router.patch("/adrs/{adr_id}", response_model=ADRRead)
 async def update_adr(
-    session: SessionDep, _: CurrentUser, adr_id: int, payload: ADRUpdate
+    session: SessionDep, user: ContributorWriter, adr_id: int, payload: ADRUpdate
 ) -> ADRRead:
     adr = await session.get(ArchitectureDecision, adr_id)
     if adr is None:
@@ -379,11 +385,19 @@ async def update_adr(
     data = payload.model_dump(exclude_unset=True, exclude={"component_ids", "stakeholder_ids"})
 
     new_status = data.get("status", adr.status)
-    if "status" in data and not valid_transition(adr.status, new_status):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot move an ADR from {adr.status} to {new_status}",
-        )
+    if "status" in data and new_status != adr.status:
+        # Engineers propose and refine, but only planners move a decision's status
+        # (e.g. accept/reject) per the v2 roles matrix.
+        if not is_planner(user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only architects / engineering managers can change a decision's status",
+            )
+        if not valid_transition(adr.status, new_status):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot move an ADR from {adr.status} to {new_status}",
+            )
     new_decide_by = data.get("decide_by", adr.decide_by)
     if new_status == ADRStatus.deferred and new_decide_by is None:
         raise HTTPException(
