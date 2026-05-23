@@ -8,6 +8,7 @@ import type {
   RiskFamily,
   RiskMitigation,
   RiskResponse,
+  RiskSnapshot,
 } from "../api/types";
 import { riskTone, scoreBar } from "../lib/risk";
 import { useCurrentUser } from "../lib/useCurrentUser";
@@ -37,6 +38,10 @@ export default function RiskView({ projectId }: { projectId: number }) {
     queryKey: ["engineers"],
     queryFn: () => api.get<Engineer[]>("/team/engineers"),
   });
+  const timeline = useQuery({
+    queryKey: ["risk-timeline", projectId],
+    queryFn: () => api.get<RiskSnapshot[]>(`/projects/${projectId}/risk/timeline`),
+  });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["risk", projectId] });
 
@@ -50,6 +55,10 @@ export default function RiskView({ projectId }: { projectId: number }) {
   const deleteMit = useMutation({
     mutationFn: (id: number) => api.del(`/projects/${projectId}/risk/mitigations/${id}`),
     onSuccess: invalidate,
+  });
+  const snapshot = useMutation({
+    mutationFn: () => api.post(`/projects/${projectId}/risk/snapshot`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["risk-timeline", projectId] }),
   });
 
   if (!risk.data) {
@@ -81,6 +90,29 @@ export default function RiskView({ projectId }: { projectId: number }) {
             A leading-indicator score (0–100, higher = riskier). Opinionated and arguable —
             its job is to start a conversation.
           </p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          {(timeline.data?.length ?? 0) > 0 && (
+            <div className="flex h-12 items-end gap-0.5" title="Risk trend">
+              {(timeline.data ?? []).map((s) => (
+                <div
+                  key={s.id}
+                  className={`w-1.5 rounded-sm ${riskTone(s.level).bar}`}
+                  style={{ height: `${Math.max(4, s.score)}%` }}
+                  title={`${s.score} (${new Date(s.created_at).toLocaleDateString()})`}
+                />
+              ))}
+            </div>
+          )}
+          {mayWrite && (
+            <button
+              onClick={() => snapshot.mutate()}
+              disabled={snapshot.isPending}
+              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 disabled:opacity-50"
+            >
+              Capture snapshot
+            </button>
+          )}
         </div>
       </div>
 

@@ -325,28 +325,33 @@ digest (§I) sits underneath.
     float consumption.
   - **Capacity** — engineer-week over-allocation (from the capacity grid).
   - **Architecture** — deferred decisions past `decide_by` + decisions stuck in `under_discussion`
-    > 14 days (both from §G).
-  - **Quality** — PR latency / churn / test failure: **not built** (needs GitHub PR metrics, v2
-    §J6); reported as *unavailable* and **excluded** from the score (the overall renormalises over
-    the available families).
+    > 14 days (both from §G) **+ the drift score (§N)** as a third indicator.
+  - **Quality** — **build failures + open incidents** from §J8 activity events. The family becomes
+    *available* (and counts toward the score) once a project has any observability events; until
+    then it's excluded and the overall renormalises over the available families. (PR-latency /
+    churn metrics, v2 §J6, would enrich it further — still future.)
 - Each indicator carries a 0–100 sub-score and drill-down **details** (the offending tasks /
   decisions / engineer-weeks). Scoring weights/thresholds live in `app/services/risk.py` (pure).
 - **API:** `GET /api/v1/projects/{id}/risk` · **MCP:** `get_risk`. The same scorer feeds the
   portfolio card's `risk_score` (§B1).
 
-### Q2. Mitigation log
+### Q2. Risk timeline
+- **UI:** Risk tab → a sparkline of recent risk **snapshots** next to the score; planners can
+  **Capture snapshot** on demand (run nightly via the plugin for a real trend).
+- **API:** `GET /api/v1/projects/{id}/risk/timeline`, `POST /api/v1/projects/{id}/risk/snapshot`.
+  Snapshots persist score + level; the trend matters more than any single value.
+
+### Q3. Mitigation log
 - **UI:** Risk tab → **Acknowledge** any indicator with a note, an owner, and a check-in date; open
   mitigations show inline under their indicator and in the **Mitigation log** (resolve / reopen /
   delete).
 - **API:** `GET` (embedded in the risk response), `POST/PATCH/DELETE
   /api/v1/projects/{id}/risk/mitigations[/{mid}]` · **MCP:** `log_risk_mitigation`.
 
-### Q3. Not built (v2 §Q)
-- **Risk timeline** (8-week small-multiples trend) — needs historical risk snapshots, which aren't
-  persisted yet.
+### Q4. Not built (v2 §Q)
 - Automated **check-in follow-ups** / notifications on mitigations past their date.
-- The **quality** family (see Q1). The **drift score** (§N) exists but isn't yet folded into the
-  Risk architecture family (a small follow-up).
+- PR-latency / churn **quality** metrics (need GitHub PR-metrics, §J6); the timeline is captured on
+  demand rather than on an automatic nightly schedule (wire the plugin/cron for that).
 
 ---
 

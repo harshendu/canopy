@@ -6,6 +6,7 @@ from sqlmodel import select
 from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
 from app.api.v1.drift import drift_score_from_events
 from app.api.v1.risk import report_for
+from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
 from app.models.base import TaskType
 from app.models.project import Holiday, Project, Task
@@ -47,6 +48,10 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
     drift_by_project: dict[int, list[DriftEvent]] = {}
     for ev in all_drift:
         drift_by_project.setdefault(ev.project_id, []).append(ev)
+    all_activity = (await session.execute(select(ActivityEvent))).scalars().all()
+    activity_by_project: dict[int, list[ActivityEvent]] = {}
+    for ae in all_activity:
+        activity_by_project.setdefault(ae.project_id, []).append(ae)
     today = date.today()
 
     summaries: list[ProjectSummary] = []
@@ -62,6 +67,7 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
         completed = sum(1 for t in leaves if t.percent_complete >= 100)
         avg = sum(t.percent_complete for t in leaves) / total if total else 0.0
         ends = [t.end for t in tasks if t.end]
+        drift = drift_score_from_events(drift_by_project.get(project.id, []))
         report = report_for(
             tasks=tasks,
             allocations=allocs_by_project.get(project.id, []),
@@ -70,8 +76,9 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
             project_start=project.start_date,
             project_target=project.target_date,
             today=today,
+            drift_score=drift,
+            activity_events=activity_by_project.get(project.id, []),
         )
-        drift = drift_score_from_events(drift_by_project.get(project.id, []))
         summaries.append(
             ProjectSummary(
                 id=project.id,

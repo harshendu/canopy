@@ -569,6 +569,15 @@ class RiskMitigationRead(BaseModel):
     resolved: bool
 
 
+class RiskSnapshotRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    score: int
+    level: str
+    created_at: datetime
+
+
 class RiskResponse(BaseModel):
     project_id: int
     score: int

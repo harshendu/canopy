@@ -102,3 +102,13 @@ class RiskMitigation(TimestampMixin, table=True):
     owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
     check_in: date | None = None
     resolved: bool = False
+
+
+class RiskSnapshot(TimestampMixin, table=True):
+    """A point-in-time capture of a project's risk score, for the risk timeline (§Q2).
+    Captured on demand / nightly; the trend matters more than any single value."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    score: int
+    level: str

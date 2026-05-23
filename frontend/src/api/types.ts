@@ -293,6 +293,14 @@ export interface RiskResponse {
   mitigations: RiskMitigation[];
 }
 
+export interface RiskSnapshot {
+  id: number;
+  project_id: number;
+  score: number;
+  level: RiskLevel;
+  created_at: string;
+}
+
 export interface PortfolioResponse {
   projects: ProjectSummary[];
 }

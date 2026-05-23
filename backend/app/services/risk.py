@@ -42,9 +42,14 @@ class RiskSignals:
     over_allocations: list[tuple[str, str, float]] = field(
         default_factory=list
     )  # (engineer_name, week_iso, percent)
-    # architecture (decisions)
+    # architecture (decisions + drift)
     deferred_overdue: list[tuple[int, str]] = field(default_factory=list)  # (number, title)
     stuck_decisions: list[tuple[int, str]] = field(default_factory=list)  # (number, title)
+    drift_score: int = 0  # the §N drift score folds into architecture risk
+    # quality (from §J8 CI/observability events)
+    quality_available: bool = False  # True once observability events exist for the project
+    build_failures: int = 0
+    open_incidents: int = 0
 
 
 @dataclass
@@ -169,6 +174,13 @@ def _architecture_family(s: RiskSignals) -> RiskFamily:
             summary=f"{len(s.stuck_decisions)} decision(s) stuck > 14 days",
             details=[f"ADR-{num:04d} {title}" for num, title in s.stuck_decisions],
         ),
+        RiskIndicator(
+            key="drift",
+            label="Architecture drift",
+            score=_cap(s.drift_score),
+            summary=f"Drift score {s.drift_score}",
+            details=[],
+        ),
     ]
     return RiskFamily(
         key="architecture",
@@ -180,14 +192,33 @@ def _architecture_family(s: RiskSignals) -> RiskFamily:
     )
 
 
-def _quality_family() -> RiskFamily:
+def _quality_family(s: RiskSignals) -> RiskFamily:
+    # Fed by §J8 CI/observability events. Until a project has any such events the family
+    # is "unavailable" and excluded from the overall score (PR-latency metrics, v2 §J6,
+    # would enrich it further).
+    indicators = [
+        RiskIndicator(
+            key="build_failures",
+            label="Build failures",
+            score=_cap(s.build_failures * 15),
+            summary=f"{s.build_failures} build failure event(s)",
+            details=[],
+        ),
+        RiskIndicator(
+            key="open_incidents",
+            label="Open incidents",
+            score=_cap(s.open_incidents * 30),
+            summary=f"{s.open_incidents} open incident(s)",
+            details=[],
+        ),
+    ]
     return RiskFamily(
         key="quality",
         label="Quality risk",
-        available=False,  # needs GitHub PR metrics (not built) — excluded from the score
-        score=0,
+        available=s.quality_available,
+        score=_family_score(indicators) if s.quality_available else 0,
         weight=QUALITY_WEIGHT,
-        indicators=[],
+        indicators=indicators if s.quality_available else [],
     )
 
 
@@ -196,7 +227,7 @@ def compute_risk(signals: RiskSignals) -> RiskReport:
         _schedule_family(signals),
         _capacity_family(signals),
         _architecture_family(signals),
-        _quality_family(),
+        _quality_family(signals),
     ]
     available = [f for f in families if f.available]
     total_weight = sum(f.weight for f in available)

@@ -23,6 +23,7 @@ from app.models.project import (
     Milestone,
     Project,
     RiskMitigation,
+    RiskSnapshot,
     Task,
     TaskStatusHistory,
 )
@@ -53,6 +54,7 @@ __all__ = [
     "Retrospective",
     "RetrospectiveComment",
     "RiskMitigation",
+    "RiskSnapshot",
     "Role",
     "Task",
     "TaskStatusHistory",
