@@ -10,17 +10,22 @@ from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
 from app.api.v1.projects import summarize_project
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
-from app.models.base import ADRStatus
-from app.models.project import Initiative, Project, Task
+from app.models.base import ADRStatus, TaskType
+from app.models.project import Dependency, Initiative, Project, Task
 from app.models.team import Allocation, Engineer
 from app.schemas.entities import (
+    CriticalPathHandoff,
+    CriticalPathNode,
     InitiativeCreate,
+    InitiativeCriticalPath,
     InitiativeRead,
     InitiativeRollup,
     InitiativeUpdate,
     ProjectSummary,
 )
+from app.services.cross_project import CPDep, CPTask, cross_project_critical_path
 from app.services.drift import level as drift_level
+from app.services.scheduling import CycleError
 
 router = APIRouter()
 
@@ -194,6 +199,91 @@ async def initiative_rollup(
         drift_level=drift_level(drift_score),
         open_decisions=open_decisions,
         on_track=on_track,
+    )
+
+
+@router.get("/{initiative_id}/critical-path", response_model=InitiativeCriticalPath)
+async def initiative_critical_path(
+    session: SessionDep, _: CurrentUser, initiative_id: int
+) -> InitiativeCriticalPath:
+    """The critical path across the initiative's sub-projects, including cross-project hand-offs.
+
+    Built over the union of the initiative's tasks + dependencies (intra- and cross-project)
+    with the same CPM as per-project scheduling — a structural critical path in working days."""
+    initiative = await session.get(Initiative, initiative_id)
+    if initiative is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Initiative not found")
+
+    project_keys = {
+        p.id: p.key
+        for p in (
+            await session.execute(
+                select(Project).where(Project.initiative_id == initiative_id)
+            )
+        ).scalars().all()
+        if p.id is not None
+    }
+    tasks = (
+        list(
+            (
+                await session.execute(
+                    select(Task).where(col(Task.project_id).in_(set(project_keys)))
+                )
+            ).scalars().all()
+        )
+        if project_keys
+        else []
+    )
+    task_names = {t.id: t.name for t in tasks if t.id is not None}
+    task_ids = set(task_names)
+    deps = [
+        d
+        for d in (await session.execute(select(Dependency))).scalars().all()
+        if d.predecessor_id in task_ids and d.successor_id in task_ids
+    ]
+
+    try:
+        result = cross_project_critical_path(
+            [
+                CPTask(
+                    id=t.id,
+                    project_id=t.project_id,
+                    duration=t.duration,
+                    is_summary=t.type == TaskType.summary,
+                )
+                for t in tasks
+                if t.id is not None
+            ],
+            [CPDep(d.predecessor_id, d.successor_id, d.type.value, d.lag) for d in deps],
+        )
+    except CycleError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    return InitiativeCriticalPath(
+        initiative_id=initiative_id,
+        total_working_days=result.total_working_days,
+        spans_projects=result.spans_projects,
+        tasks=[
+            CriticalPathNode(
+                task_id=n.task_id,
+                name=task_names.get(n.task_id, f"#{n.task_id}"),
+                project_id=n.project_id,
+                project_key=project_keys.get(n.project_id, f"#{n.project_id}"),
+                es=n.es,
+                ef=n.ef,
+                duration=n.duration,
+            )
+            for n in result.nodes
+        ],
+        handoffs=[
+            CriticalPathHandoff(
+                predecessor_id=h.predecessor_id,
+                successor_id=h.successor_id,
+                from_project_key=project_keys.get(h.from_project_id, f"#{h.from_project_id}"),
+                to_project_key=project_keys.get(h.to_project_id, f"#{h.to_project_id}"),
+            )
+            for h in result.handoffs
+        ],
     )
 
 

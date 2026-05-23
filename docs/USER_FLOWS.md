@@ -121,8 +121,20 @@ projects and rolls up their health.
   tasks, avg %, latest `project_end`, max `risk_score`/`drift_score` with the owning level,
   `open_decisions` = ADRs proposed/under-discussion, `on_track`) · **MCP:** `get_initiative_rollup`.
   The per-project summary is the same `summarize_project` the portfolio (§B1) uses.
-- **Not built yet (next slice):** **cross-project dependencies** and an initiative-level
-  **cross-project critical path** (a deeper scheduler change) — see `PROPOSED_FLOWS.md` D-R1.
+
+### R4. Cross-project dependencies & critical path **[new]**
+- **Cross-project hand-offs:** a dependency may link tasks in **different projects of the same
+  initiative** (a between-team hand-off). `POST /api/v1/dependencies` now validates this: a
+  cross-project edge is rejected (400) unless both projects share one initiative. Per-project Gantt
+  / replan stay project-local (they ignore cross-project edges); the hand-offs surface at the
+  initiative level.
+- **Cross-project critical path:** the **initiative cockpit** shows the longest chain of dependent
+  work across sub-projects, in working days, with cross-project hand-offs highlighted (amber). Built
+  over the union of the initiative's tasks + dependencies with the same CPM as per-project
+  scheduling (structural, calendar-independent).
+- **API:** `GET /api/v1/initiatives/{id}/critical-path` (ordered critical chain with each task's
+  project, total working days, `spans_projects`, and the `handoffs`; cyclic cross-project deps →
+  409) · **MCP:** `get_initiative_critical_path`.
 
 ---
 
@@ -176,7 +188,9 @@ projects and rolls up their health.
 - **UI:** Gantt tab → "Add dependency (finish → start)" form: pick predecessor + successor → "Link".
 - **API:** `POST /api/v1/dependencies` (supports `type` FS/SS/FF/SF and `lag`) · **MCP:**
   `link_dependency`.
-- **Notes:** the UI creates finish-to-start links; other types + lag are via API/MCP.
+- **Notes:** the UI creates finish-to-start links; other types + lag are via API/MCP. A
+  **cross-project** dependency (a hand-off between teams) is allowed only when both tasks' projects
+  share an **initiative** (§R4); it appears on the initiative critical path, not the per-project Gantt.
 
 ### C3. Schedule (Critical Path Method)
 - **UI:** project header → **Schedule (CPM)**. A banner reports scheduled task count, the critical
@@ -558,7 +572,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~54 curated tools that call the REST API.
+  MCP server then exposes ~55 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**

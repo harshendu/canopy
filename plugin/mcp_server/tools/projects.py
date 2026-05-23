@@ -88,6 +88,17 @@ def register(mcp, client) -> None:
         return await client.patch(f"/projects/{project_id}", {"initiative_id": initiative_id})
 
     @mcp.tool
+    async def get_initiative_critical_path(initiative_id: int) -> dict:
+        """The critical path across an initiative's sub-projects (in working days).
+
+        Returns the critical chain of tasks (each tagged with its project), the total
+        working-day length, whether it `spans_projects`, and the cross-project **hand-offs**
+        on it — the between-team dependencies most likely to slip the initiative. Add such a
+        hand-off with `link_dependency` between tasks in two projects of the same initiative.
+        """
+        return await client.get(f"/initiatives/{initiative_id}/critical-path")
+
+    @mcp.tool
     async def create_milestone(
         project_id: int, name: str, target_date: str | None = None
     ) -> dict:

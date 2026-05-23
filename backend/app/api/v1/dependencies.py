@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
-from app.models.project import Dependency, Task
+from app.models.project import Dependency, Project, Task
 from app.schemas.entities import DependencyCreate, DependencyRead
 
 router = APIRouter()
@@ -34,6 +34,22 @@ async def create_dependency(
 ) -> Dependency:
     if payload.predecessor_id == payload.successor_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Self-dependency")
+    pred = await session.get(Task, payload.predecessor_id)
+    succ = await session.get(Task, payload.successor_id)
+    if pred is None or succ is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    # A cross-project dependency (a hand-off between teams) is only allowed when both
+    # projects belong to the same initiative; it then shows on the initiative critical path.
+    if pred.project_id != succ.project_id:
+        pred_project = await session.get(Project, pred.project_id)
+        succ_project = await session.get(Project, succ.project_id)
+        pred_init = pred_project.initiative_id if pred_project else None
+        succ_init = succ_project.initiative_id if succ_project else None
+        if pred_init is None or pred_init != succ_init:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cross-project dependencies are only allowed within the same initiative",
+            )
     dependency = Dependency(**payload.model_dump())
     session.add(dependency)
     await session.commit()

@@ -114,10 +114,11 @@ migration cutover). But stop treating it as *the* spine. Add the flow lens the b
 
 ## D. Dependencies → typed, **cross-project**, and **blocker-aware** (addresses C1)
 
-- **D-R1 — Cross-project dependencies.** Allow a dependency edge between tasks in different projects
-  within an initiative, and compute the **cross-project critical path** at the initiative level.
-  This is the core of "concurrent sub-projects executed decentrally" — the hand-offs *between*
-  teams are where initiatives actually slip.
+- **D-R1 — Cross-project dependencies. ✅ Shipped.** A dependency edge may link tasks in different
+  projects of the **same initiative** (rejected otherwise, 400); `GET /initiatives/{id}/critical-path`
+  computes the **cross-project critical path** at the initiative level (reusing `compute_cpm` over
+  the union graph) and surfaces the cross-project **hand-offs** — the between-team dependencies most
+  likely to slip — on the initiative cockpit. Per-project replan stays project-local. (`get_initiative_critical_path` MCP.)
 - **D-R2 — Live blockers as a first-class signal.** Add a lightweight `Blocker { task_id,
   raised_by, reason, blocking_task_id?, opened_at, resolved_at }`. An engineer raises a blocker from
   `/me`; it surfaces on the dependency graph (red halo), in the daily digest, and as a **leading**
@@ -294,7 +295,7 @@ or fixes a referenced-but-missing tool.)
 | `get_delivery_metrics` | `GET …/delivery` | DORA + flow metrics (S). |
 | `add_adr_fitness` | `POST .../adrs/{id}/fitness` | Machine-checkable decision (G-R1). |
 | `get_decision_traceability` | `GET …/traceability` | Decision→code loop (T). |
-| `list_initiatives` / `create_initiative` / `get_initiative_rollup` / `set_project_initiative` ✅ | `/initiatives` | The C1 layer. **Shipped.** |
+| `list_initiatives` / `create_initiative` / `get_initiative_rollup` / `set_project_initiative` / `get_initiative_critical_path` ✅ | `/initiatives` | The C1 layer + cross-project critical path. **Shipped.** |
 | `record_risk_snapshot` | `POST .../risk/snapshot` | Let the morning agent capture the trend (Q-R3). |
 
 ---
@@ -315,9 +316,9 @@ or fixes a referenced-but-missing tool.)
    tension. *(Completes the "Now" tier.)*
 
 **Next (the structural bets):**
-5. **Initiative/Program layer + cross-project dependencies + initiative cockpit** (C1; B-R1, D-R1, R).
-   ◐ **Slice 1 shipped:** initiative model + project linkage + CRUD + rollup + cockpit (B-R1, R).
-   **Remaining:** cross-project dependencies + cross-project critical path (D-R1).
+5. ✅ **Initiative/Program layer + cross-project dependencies + initiative cockpit** (C1; B-R1, D-R1, R).
+   **Shipped:** initiative model + project linkage + CRUD + rollup + cockpit (slice 1), then
+   cross-project dependencies + cross-project critical path with hand-offs (slice 2). **C1 complete.**
 6. **Probabilistic forecast** (C-R1, C3) — the honest delivery-date answer.
 7. **Blockers + flow board + WIP** (D-R2, C-R2) — the decentralized day-to-day surface.
 8. **CI/webhook-triggered drift + auto-captured risk snapshots** (N-R1, Q-R3, C6) — close the loops.

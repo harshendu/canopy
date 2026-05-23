@@ -2,7 +2,7 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { InitiativeRollup } from "../api/types";
+import type { InitiativeCriticalPath, InitiativeRollup } from "../api/types";
 import { riskTone } from "../lib/risk";
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -23,11 +23,16 @@ export default function InitiativeView() {
     queryKey: ["initiative-rollup", id],
     queryFn: () => api.get<InitiativeRollup>(`/initiatives/${id}/rollup`),
   });
+  const criticalPath = useQuery({
+    queryKey: ["initiative-critical-path", id],
+    queryFn: () => api.get<InitiativeCriticalPath>(`/initiatives/${id}/critical-path`),
+  });
 
   if (!rollup.data) {
     return <p className="text-sm text-slate-500">Loading initiative…</p>;
   }
   const r = rollup.data;
+  const cp = criticalPath.data;
   const risk = riskTone(r.risk_level);
   const drift = riskTone(r.drift_level);
 
@@ -77,6 +82,48 @@ export default function InitiativeView() {
           hint={r.initiative.target_date ? `target ${r.initiative.target_date}` : "no target"}
         />
       </div>
+
+      {cp && cp.tasks.length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold">Cross-project critical path</h2>
+            <span className="text-xs text-slate-400">{cp.total_working_days} working days</span>
+            {cp.spans_projects && (
+              <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                {cp.handoffs.length} cross-project hand-off
+                {cp.handoffs.length === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            The longest chain of dependent work across the initiative. Hand-offs between projects
+            (amber) are where it most often slips.
+          </p>
+          <ol className="mt-3 flex flex-wrap items-center gap-1">
+            {cp.tasks.map((t, idx) => {
+              const handoff = idx > 0 && cp.tasks[idx - 1].project_key !== t.project_key;
+              return (
+                <li key={t.task_id} className="flex items-center gap-1">
+                  {idx > 0 && (
+                    <span className={handoff ? "text-amber-500" : "text-slate-300"}>→</span>
+                  )}
+                  <span
+                    className={`rounded border px-2 py-1 text-xs ${
+                      handoff
+                        ? "border-amber-300 bg-amber-50"
+                        : "border-slate-200 bg-slate-50"
+                    }`}
+                    title={`${t.duration} working day(s)`}
+                  >
+                    <span className="font-mono text-[10px] text-slate-400">{t.project_key}</span>{" "}
+                    {t.name}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
 
       <div>
         <h2 className="mb-2 font-semibold">Sub-projects</h2>

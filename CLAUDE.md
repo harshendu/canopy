@@ -88,8 +88,12 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   carries `initiative_id`, and `GET /initiatives/{id}/rollup` aggregates health across sub-projects
   (worst risk/drift, progress, open-decision backlog, on-track vs target). The per-project summary
   is `app/api/v1/projects.py:summarize_project`, shared with `GET /projects/portfolio` so a
-  project's headline numbers are computed in exactly one place. (Cross-project dependencies + a
-  cross-project critical path are a planned follow-up, not built.)
+  project's headline numbers are computed in exactly one place. **Cross-project dependencies** (a
+  hand-off between teams) are allowed only within one initiative (enforced in
+  `app/api/v1/dependencies.py`); `GET /initiatives/{id}/critical-path` runs the same `compute_cpm`
+  over the union of the initiative's tasks + deps (`app/services/cross_project.py`, pure) to find
+  the cross-project critical path + hand-offs. Per-project replan stays project-local (ignores
+  cross-project edges).
 - Aggregation for the visibility views is also backend-side and pure-where-possible:
   `GET /projects/portfolio` (per-project rollups), `GET /team/capacity?project_id=` (engineer×week
   allocation via `app/services/capacity.py:weekly_capacity`), and `GET /projects/{id}/burndown`

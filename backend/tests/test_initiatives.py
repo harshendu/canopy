@@ -107,3 +107,82 @@ async def test_initiative_crud_and_rollup(client, db_session):
     still_there = await client.get(f"/api/v1/projects/{p1['id']}", headers=headers)
     assert still_there.status_code == 200
     assert still_there.json()["initiative_id"] is None
+
+
+async def _make_task(client, headers, project_id: int, name: str, duration: int) -> int:
+    resp = await client.post(
+        "/api/v1/tasks",
+        json={"project_id": project_id, "name": name, "duration": duration},
+        headers=headers,
+    )
+    return resp.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_cross_project_dependency_and_critical_path(client, db_session):
+    await _seed_admin(db_session)
+    headers = {"Authorization": f"Bearer {await _token(client)}"}
+
+    init_id = (
+        await client.post(
+            "/api/v1/initiatives", json={"key": "INIT", "name": "Init"}, headers=headers
+        )
+    ).json()["id"]
+    a = (
+        await client.post(
+            "/api/v1/projects",
+            json={"key": "A", "name": "A", "initiative_id": init_id},
+            headers=headers,
+        )
+    ).json()["id"]
+    b = (
+        await client.post(
+            "/api/v1/projects",
+            json={"key": "B", "name": "B", "initiative_id": init_id},
+            headers=headers,
+        )
+    ).json()["id"]
+    # An UNlinked project — used to prove cross-initiative deps are rejected.
+    loose = (
+        await client.post(
+            "/api/v1/projects", json={"key": "LOOSE", "name": "Loose"}, headers=headers
+        )
+    ).json()["id"]
+
+    a1 = await _make_task(client, headers, a, "A1", 3)
+    a2 = await _make_task(client, headers, a, "A2", 2)
+    b1 = await _make_task(client, headers, b, "B1", 5)
+    loose_t = await _make_task(client, headers, loose, "L1", 1)
+
+    # Intra-project + a cross-project hand-off within the initiative are allowed.
+    assert (
+        await client.post(
+            "/api/v1/dependencies",
+            json={"predecessor_id": a1, "successor_id": a2},
+            headers=headers,
+        )
+    ).status_code == 201
+    handoff = await client.post(
+        "/api/v1/dependencies",
+        json={"predecessor_id": a2, "successor_id": b1},  # A -> B, same initiative
+        headers=headers,
+    )
+    assert handoff.status_code == 201, handoff.text
+
+    # A cross-project edge to a project outside the initiative is rejected.
+    bad = await client.post(
+        "/api/v1/dependencies",
+        json={"predecessor_id": b1, "successor_id": loose_t},
+        headers=headers,
+    )
+    assert bad.status_code == 400
+
+    cp = (
+        await client.get(f"/api/v1/initiatives/{init_id}/critical-path", headers=headers)
+    ).json()
+    assert cp["spans_projects"] is True
+    assert cp["total_working_days"] == 10  # 3 + 2 + 5
+    assert [t["name"] for t in cp["tasks"]] == ["A1", "A2", "B1"]
+    assert len(cp["handoffs"]) == 1
+    assert cp["handoffs"][0]["from_project_key"] == "A"
+    assert cp["handoffs"][0]["to_project_key"] == "B"

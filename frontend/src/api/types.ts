@@ -38,6 +38,31 @@ export interface Initiative {
   archived: boolean;
 }
 
+export interface CriticalPathNode {
+  task_id: number;
+  name: string;
+  project_id: number;
+  project_key: string;
+  es: number;
+  ef: number;
+  duration: number;
+}
+
+export interface CriticalPathHandoff {
+  predecessor_id: number;
+  successor_id: number;
+  from_project_key: string;
+  to_project_key: string;
+}
+
+export interface InitiativeCriticalPath {
+  initiative_id: number;
+  total_working_days: number;
+  spans_projects: boolean;
+  tasks: CriticalPathNode[];
+  handoffs: CriticalPathHandoff[];
+}
+
 export interface InitiativeRollup {
   initiative: Initiative;
   projects: ProjectSummary[];

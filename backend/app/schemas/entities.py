@@ -557,6 +557,33 @@ class InitiativeRead(BaseModel):
     archived: bool
 
 
+class CriticalPathNode(BaseModel):
+    task_id: int
+    name: str
+    project_id: int
+    project_key: str
+    es: int  # earliest-start offset (working days from the chain's origin)
+    ef: int  # earliest-finish offset
+    duration: int
+
+
+class CriticalPathHandoff(BaseModel):
+    predecessor_id: int
+    successor_id: int
+    from_project_key: str
+    to_project_key: str
+
+
+class InitiativeCriticalPath(BaseModel):
+    """The critical path across an initiative's sub-projects (structural, in working days)."""
+
+    initiative_id: int
+    total_working_days: int
+    spans_projects: bool
+    tasks: list[CriticalPathNode]  # the critical chain, earliest-first
+    handoffs: list[CriticalPathHandoff]  # cross-project edges on the critical path
+
+
 class InitiativeRollup(BaseModel):
     """Health rolled up across an initiative's sub-projects."""
 
