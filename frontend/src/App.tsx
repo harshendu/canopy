@@ -10,6 +10,7 @@ import ProjectView from "./pages/ProjectView";
 import Connectors from "./pages/Connectors";
 import Decisions from "./pages/Decisions";
 import MyWorkspace from "./pages/MyWorkspace";
+import MyToday from "./pages/MyToday";
 import AdminUsers from "./pages/AdminUsers";
 import Team from "./pages/Team";
 
@@ -115,6 +116,14 @@ export default function App() {
         element={
           <ProtectedLayout>
             <MyWorkspace />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/me/today"
+        element={
+          <ProtectedLayout>
+            <MyToday />
           </ProtectedLayout>
         }
       />

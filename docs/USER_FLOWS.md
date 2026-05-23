@@ -236,7 +236,9 @@ review it, alternatives, reversibility, and a discussion thread.
   `GET /api/v1/architecture/code-bindings?project_id=`, `POST/DELETE
   /api/v1/architecture/code-bindings[/{id}]` (planner-gated) · **MCP:** `list_code_bindings`,
   `add_code_binding`. These feed drift detection (§N).
-- **Not built:** component **owner / criticality / tier / observability links** (v2 §G1).
+- **Component metadata (v2 §G1):** components carry an **owner** (engineer), **criticality**
+  (low/med/high), **tier** (presentation/business/data/infra), and an **observability URL** — set on
+  the Add-component form (criticality also shown on the map node label).
 
 ### G2. Record / propose a decision (ADR) — Decisions tab
 - **UI:** Decisions tab → "Propose / record a decision": title, context, decision, consequences,
@@ -285,10 +287,9 @@ review it, alternatives, reversibility, and a discussion thread.
 - **Not built:** `whatif_supersede` preview (v2 §G4).
 
 ### G6. Import an ADR from a doc
-- **API:** `POST /api/v1/architecture/adrs/import` · **MCP:** `import_adr`. The markdown is parsed
-  (title + context/decision/consequences) into an ADR.
-- **UI gap:** the import form was on the old Architecture tab and was dropped when ADRs moved to the
-  Decisions tab — re-adding it there is a small follow-up.
+- **UI:** Decisions tab → "Import an ADR from a doc" (planner): pick a GitHub/Drive connection + a
+  path/file id → the markdown is parsed (title + context/decision/consequences) into an ADR.
+- **API:** `POST /api/v1/architecture/adrs/import` · **MCP:** `import_adr`.
 
 ---
 
@@ -500,7 +501,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~44 curated tools that call the REST API.
+  MCP server then exposes ~46 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -517,8 +518,8 @@ component map + ADRs and maintains the queue.
   (`transition_adr`), discusses/reviews it (`comment_adr`, `get_adr`), or imports one from a
   repo/Drive doc (`import_adr`). It also reads the **decision queue** (`decision_queue`) as a
   morning surface.
-- **Not built:** the **decision-deadline nudger** skill (v2 §L8) and a `/canopy propose-adr` slash
-  command — proposing is available as the `propose_adr` MCP tool today.
+- **Not built:** a `/canopy propose-adr` slash command — proposing is available as the
+  `propose_adr` MCP tool today.
 
 ### L5. Plan capacity (skill)
 - The **`capacity-planning`** skill reads `get_capacity` + `list_alerts`, cross-references the critical
@@ -539,7 +540,15 @@ component map + ADRs and maintains the queue.
   reports the refreshed drift score + queue and can `reconcile_drift` with the architect's go-ahead.
   Tools: `list_components`, `list_code_bindings`, `read_repo_file`, `scan_drift`, `get_drift`,
   `reconcile_drift`, `adr_impact`. This is the producer behind the Drift tab (§N).
-- **Not built (v2 §L8/§L9):** the decision-deadline nudger and the PR-to-ADR linker skills.
+### L9. Decision-deadline nudger (skill) **[new — v2 §L8]**
+- The **`decision-deadline-nudger`** skill reads the `decision_queue`, finds `deferred` ADRs whose
+  `decide_by` is approaching/overdue, and posts a nudge (alternatives + the open question) to the
+  owner via `comment_adr`.
+
+### L10. PR-to-ADR linker (skill) **[new — v2 §L9]**
+- The **`pr-to-adr-linker`** skill maps a PR's changed paths to components (via code bindings),
+  finds the ADRs governing them (`adr_impact`), and judges whether the PR implements / contradicts /
+  is unrelated to each — building implementation traceability.
 
 ---
 
@@ -556,8 +565,13 @@ team member via `Engineer.user_id` (§A5).
 - **API:** `GET /api/v1/me/workspace` · **MCP:** `my_workspace`.
 - **Note:** if no engineer is linked to the account, the page prompts to have an admin link one on
   the Team page; tasks/decisions are empty until then.
-- **Not built (v2 §M):** `/me/today` daily-focus view; PRs awaiting the user's review (needs the
-  GitHub PR-metrics work, v2 §J6); decision-queue items filtered to the user's components.
+
+### M2. Today (daily focus)
+- **UI:** `/me/today` (linked from `/me`) → today's focus: assigned open tasks that are **critical
+  or due within 7 days**, and the decisions to push (owned ADRs in `proposed`/`under_discussion`).
+- **API:** `GET /api/v1/me/today`.
+- **Not built (v2 §M):** PRs awaiting the user's review (needs GitHub PR-metrics, §J6) and
+  decision-queue items filtered to the user's components.
 
 ---
 
@@ -565,32 +579,29 @@ team member via `Engineer.user_id` (§A5).
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
 - **What-if** scheduling (C5).
-- ADR **doc-import** (G6) — was dropped from the trimmed Architecture tab; re-add to Decisions.
 - Project rename/archive/date edits and **holiday** management (B4, C7).
-- *(closed previously: decision-impact / blast radius (G5); Risk dashboard (§Q) + portfolio risk
-  (§B1); user & role management UI (A3) + engineer workspace (§M); per-role write enforcement
-  (§A3a); architecture drift detection (§N). Closed this revision: **retrospectives & postmortems**
-  (§P) — auto-seeded project retros, comment threads, follow-ups, and a Retros tab.)*
+- *(closed previously: G5 blast radius; Risk (§Q) + portfolio scores (§B1); user/role mgmt (A3) +
+  engineer workspace (§M); per-role enforcement (§A3a); drift detection (§N); retros/postmortems
+  (§P). Closed this revision: **CI/observability events + Activity feed** (§J8) with incident
+  postmortem auto-open (§P2); the **quality** risk family + **drift-into-risk** + **risk timeline**
+  (§Q); **ADR doc-import** UI (G6); **component owner/criticality/tier** (§G1); **`/me/today`** (§M);
+  the **decision-deadline nudger** + **PR-to-ADR linker** skills (§L8/§L9).)*
 
-## Not built (documented as future)
-- Slack/email **delivery** of alerts (I) and **decision SLA notifications** (G3).
-- Multi-process **real-time** (K) — needs Redis pub/sub.
-- **Resource leveling** (auto-resolving over-allocation).
-- **Connector** RBAC (connector create / sync / OAuth still accept any authenticated user) and the
-  engineer **own-allocation / availability** carve-out (§F4) — the rest of the v2 "Roles × flows"
-  matrix is now **enforced** (§A3a).
-- **OIDC/SSO** + `HttpOnly`-cookie tokens (§A1) and engineer **self-onboarding** `/onboarding`
-  (§A5); `/me/today` daily view (§M).
-- Hours-based **allocation** / interrupt budget, planned-vs-realized capacity, PTO→CPM, and
-  skill-task fit (§F2–F5).
-- Hard-enforced decision **rules/approval gates** (G3) — `can_accept` is advisory today.
-- **Risk timeline** (§Q2) and the **quality** risk family (§Q1) — need historical snapshots and the
-  GitHub PR-metrics work. Folding the **drift score** into Risk's architecture family is a follow-up.
-- **Drift** (§N) limits: no server-side repo crawl (the Drift Sentinel subagent reads code and posts
-  observations), Python-only import analysis, and no suppression-management UI.
-- **Incident postmortems auto-open** (§P2) and the broader v2 surfaces still untouched: new
-  connectors (PagerDuty §J7, CI/observability §J8 — the latter would also drive postmortem
-  auto-open and quality-risk inputs).
+## Not built (deliberately deferred — with rationale)
+- **OIDC/SSO + `HttpOnly`-cookie tokens** (§A1): a substantial auth overhaul; the `Bearer` JWT path
+  works and is the safe default. Deferred rather than half-built.
+- **Multi-process real-time** (§K): Redis pub/sub — an infra change that can't be verified in this
+  single-process setup; SSE works in-process today.
+- **Capacity overhaul** (§F2–F5): hours-based allocation, interrupt budget, planned-vs-realized,
+  PTO→CPM, skill-task fit — a large model change; allocation stays percent-based.
+- **PagerDuty / on-call** (§J7): an external connector with nothing to feed until the capacity
+  overhaul lands.
+- **GitHub PR-latency metrics** (§J6): needs deep repo crawling (like drift's live path); the
+  quality-risk family is fed by §J8 events instead.
+- Smaller follow-ups: Slack/email **alert delivery** (I) + **decision SLA notifications** (G3);
+  hard-enforced decision **approval gates** (G3, `can_accept` is advisory); connector **RBAC**;
+  resource **leveling**; drift **suppression-management UI** + non-Python analysis; nightly
+  **schedulers** for drift scans / risk snapshots (run via the plugin today).
 
 ---
 

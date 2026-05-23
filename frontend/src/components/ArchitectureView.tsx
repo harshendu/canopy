@@ -24,6 +24,8 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
   const mayWrite = isPlanner(me?.role);
   const [compName, setCompName] = useState("");
   const [compKind, setCompKind] = useState("service");
+  const [compCriticality, setCompCriticality] = useState("");
+  const [compTier, setCompTier] = useState("");
   const [src, setSrc] = useState<number | "">("");
   const [dst, setDst] = useState<number | "">("");
   const [linkKind, setLinkKind] = useState("depends_on");
@@ -70,9 +72,13 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
         project_id: projectId,
         name: compName,
         kind: compKind,
+        criticality: compCriticality || null,
+        tier: compTier || null,
       }),
     onSuccess: () => {
       setCompName("");
+      setCompCriticality("");
+      setCompTier("");
       qc.invalidateQueries({ queryKey: ["components", projectId] });
     },
   });
@@ -95,7 +101,7 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
     const nodes: Node[] = comps.map((c, i) => ({
       id: String(c.id),
       position: { x: (i % 4) * 220, y: Math.floor(i / 4) * 130 },
-      data: { label: c.name },
+      data: { label: c.criticality ? `${c.name} · ${c.criticality}` : c.name },
       style: {
         borderRadius: 8,
         padding: 6,
@@ -153,6 +159,32 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
               {KINDS.map((k) => (
                 <option key={k} value={k}>
                   {k}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <select
+              value={compCriticality}
+              onChange={(e) => setCompCriticality(e.target.value)}
+              className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">Criticality…</option>
+              {["low", "med", "high"].map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <select
+              value={compTier}
+              onChange={(e) => setCompTier(e.target.value)}
+              className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">Tier…</option>
+              {["presentation", "business", "data", "infra"].map((t) => (
+                <option key={t} value={t}>
+                  {t}
                 </option>
               ))}
             </select>

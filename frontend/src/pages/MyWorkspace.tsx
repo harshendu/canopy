@@ -50,7 +50,12 @@ export default function MyWorkspace() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">{user.full_name || user.email}</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">{user.full_name || user.email}</h1>
+          <Link to="/me/today" className="text-sm text-canopy-700 hover:underline">
+            Today →
+          </Link>
+        </div>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500">
           <span className="rounded bg-slate-100 px-2 py-0.5 text-xs">{roleLabel(user.role)}</span>
           {engineer ? (

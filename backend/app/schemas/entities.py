@@ -243,6 +243,10 @@ class ComponentCreate(BaseModel):
     kind: str = "service"
     description: str | None = None
     repo_url: str | None = None
+    owner_engineer_id: int | None = None
+    criticality: str | None = None
+    tier: str | None = None
+    observability_url: str | None = None
 
 
 class ComponentRead(BaseModel):
@@ -253,6 +257,10 @@ class ComponentRead(BaseModel):
     kind: str
     description: str | None
     repo_url: str | None
+    owner_engineer_id: int | None = None
+    criticality: str | None = None
+    tier: str | None = None
+    observability_url: str | None = None
 
 
 class ADRCreate(BaseModel):
@@ -729,6 +737,12 @@ class RetroFollowUpResponse(BaseModel):
 
 
 # --- Engineer workspace (/me) ---
+class MyTodayResponse(BaseModel):
+    user: UserRead
+    focus_tasks: list[TaskRead]  # assigned, open, critical or due soon
+    decisions_to_push: list[ADRRead]  # owned proposed/under_discussion
+
+
 class MyWorkspaceResponse(BaseModel):
     user: UserRead
     engineer: EngineerRead | None

@@ -18,6 +18,10 @@ class ArchitectureComponent(TimestampMixin, table=True):
     kind: str = "service"  # service | module | datastore | external | ui
     description: str | None = None
     repo_url: str | None = None
+    owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    criticality: str | None = None  # low | med | high
+    tier: str | None = None  # presentation | business | data | infra
+    observability_url: str | None = None  # dashboard / trace link
 
 
 class ComponentLink(TimestampMixin, table=True):

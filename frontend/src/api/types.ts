@@ -173,6 +173,10 @@ export interface Component {
   kind: string;
   description: string | null;
   repo_url: string | null;
+  owner_engineer_id: number | null;
+  criticality: string | null;
+  tier: string | null;
+  observability_url: string | null;
 }
 
 export interface ImpactResponse {
@@ -384,6 +388,12 @@ export interface MyWorkspace {
   assigned_tasks: Task[];
   owned_decisions: ADR[];
   stakeholder_decisions: ADR[];
+}
+
+export interface MyToday {
+  user: User;
+  focus_tasks: Task[];
+  decisions_to_push: ADR[];
 }
 
 export interface Allocation {

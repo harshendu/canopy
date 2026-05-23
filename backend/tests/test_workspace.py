@@ -77,6 +77,12 @@ async def test_me_workspace_surfaces_assigned_tasks_and_owned_decisions(client, 
     assert [a["title"] for a in ws["owned_decisions"]] == ["Owned ADR"]
     assert [a["title"] for a in ws["stakeholder_decisions"]] == ["Review ADR"]
 
+    # /me/today: the owned ADR is proposed -> a decision to push; the critical-or-due-soon
+    # task surfaces as focus.
+    today = (await client.get("/api/v1/me/today", headers=headers)).json()
+    assert [a["title"] for a in today["decisions_to_push"]] == ["Owned ADR"]
+    assert isinstance(today["focus_tasks"], list)
+
 
 @pytest.mark.asyncio
 async def test_me_workspace_without_linked_engineer_is_empty(client, db_session):

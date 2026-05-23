@@ -7,6 +7,7 @@ import type {
   ADRCommentKind,
   ADRDetail,
   Component,
+  Connection,
   DecisionQueueResponse,
   Engineer,
   ImpactResponse,
@@ -40,6 +41,7 @@ export default function DecisionsView({ projectId }: { projectId: number }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const { data: me } = useCurrentUser();
   const mayContribute = canContribute(me?.role);
+  const mayImport = isPlanner(me?.role);
 
   const adrs = useQuery({
     queryKey: ["adrs", projectId],
@@ -148,6 +150,85 @@ export default function DecisionsView({ projectId }: { projectId: number }) {
             }}
           />
         )}
+      </div>
+
+      {mayImport && (
+        <ImportAdrForm
+          projectId={projectId}
+          onImported={() => qc.invalidateQueries({ queryKey: ["adrs", projectId] })}
+        />
+      )}
+    </div>
+  );
+}
+
+function ImportAdrForm({
+  projectId,
+  onImported,
+}: {
+  projectId: number;
+  onImported: () => void;
+}) {
+  const [connId, setConnId] = useState<number | "">("");
+  const [ref, setRef] = useState("");
+
+  const connections = useQuery({
+    queryKey: ["connections"],
+    queryFn: () => api.get<Connection[]>("/connectors/connections"),
+  });
+  const docConnections = (connections.data ?? []).filter(
+    (c) => c.provider === "github" || c.provider === "gdrive",
+  );
+
+  const importAdr = useMutation({
+    mutationFn: () => {
+      const conn = docConnections.find((c) => c.id === connId);
+      return api.post("/architecture/adrs/import", {
+        project_id: projectId,
+        provider: conn?.provider,
+        connection_id: connId,
+        ref,
+      });
+    },
+    onSuccess: () => {
+      setRef("");
+      onImported();
+    },
+  });
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="mb-1 font-semibold">Import an ADR from a doc</h2>
+      <p className="mb-2 text-xs text-slate-400">
+        Parse a markdown ADR from a GitHub repo path or a Google Drive file into a decision.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <select
+          value={connId}
+          onChange={(e) => setConnId(e.target.value ? Number(e.target.value) : "")}
+          className="rounded border border-slate-300 px-2 py-2 text-sm"
+        >
+          <option value="">Source…</option>
+          {docConnections.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.provider}: {c.name}
+            </option>
+          ))}
+        </select>
+        <input
+          value={ref}
+          onChange={(e) => setRef(e.target.value)}
+          placeholder="path/to/adr.md or Drive file id"
+          className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+        />
+        <button
+          type="button"
+          onClick={() => connId && ref && importAdr.mutate()}
+          disabled={importAdr.isPending}
+          className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-600 disabled:opacity-50"
+        >
+          Import
+        </button>
       </div>
     </div>
   );
