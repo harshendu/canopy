@@ -62,4 +62,8 @@ class Provider(StrEnum):
 
 class UserRole(StrEnum):
     admin = "admin"
-    member = "member"
+    architect = "architect"
+    engineering_manager = "engineering_manager"
+    engineer = "engineer"
+    viewer = "viewer"
+    member = "member"  # legacy default (pre-roles); treated as ~architect

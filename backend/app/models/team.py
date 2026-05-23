@@ -1,5 +1,6 @@
 from datetime import date
 
+from sqlalchemy import JSON, Column
 from sqlmodel import Field
 
 from app.models.base import TimestampMixin
@@ -17,6 +18,12 @@ class Engineer(TimestampMixin, table=True):
     title: str | None = None
     role_id: int | None = Field(default=None, foreign_key="role.id")
     active: bool = True
+    # Links this team member to a login (for the /me workspace + PR attribution).
+    user_id: int | None = Field(default=None, foreign_key="app_user.id")
+    skill_tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    github_login: str | None = None
+    timezone: str | None = None
+    committed_hours_per_week: float | None = None
 
 
 class Allocation(TimestampMixin, table=True):

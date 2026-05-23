@@ -279,6 +279,35 @@ export interface Engineer {
   title: string | null;
   role_id: number | null;
   active: boolean;
+  user_id: number | null;
+  skill_tags: string[];
+  github_login: string | null;
+  timezone: string | null;
+  committed_hours_per_week: number | null;
+}
+
+export type UserRole =
+  | "admin"
+  | "architect"
+  | "engineering_manager"
+  | "engineer"
+  | "viewer"
+  | "member";
+
+export interface User {
+  id: number;
+  email: string;
+  full_name: string | null;
+  role: UserRole;
+  is_active: boolean;
+}
+
+export interface MyWorkspace {
+  user: User;
+  engineer: Engineer | null;
+  assigned_tasks: Task[];
+  owned_decisions: ADR[];
+  stakeholder_decisions: ADR[];
 }
 
 export interface Allocation {

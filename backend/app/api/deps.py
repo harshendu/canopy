@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
@@ -44,3 +45,20 @@ async def require_admin(user: CurrentUser) -> User:
 
 
 AdminUser = Annotated[User, Depends(require_admin)]
+
+
+def require_roles(*roles: UserRole) -> Callable[[User], Awaitable[User]]:
+    """Dependency factory: require the current user to hold one of `roles` (admin always
+    allowed). `member` is treated as `architect` for back-compat."""
+    allowed = set(roles) | {UserRole.admin}
+
+    async def _dependency(user: CurrentUser) -> User:
+        effective = UserRole.architect if user.role == UserRole.member else user.role
+        if effective not in allowed and user.role != UserRole.admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Requires one of: {', '.join(sorted(r.value for r in allowed))}",
+            )
+        return user
+
+    return _dependency

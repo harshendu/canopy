@@ -2,12 +2,15 @@ import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 
 import { useAuth } from "./lib/auth";
+import { useCurrentUser } from "./lib/useCurrentUser";
 import { useEventStream } from "./lib/useEventStream";
 import Login from "./pages/Login";
 import Projects from "./pages/Projects";
 import ProjectView from "./pages/ProjectView";
 import Connectors from "./pages/Connectors";
 import Decisions from "./pages/Decisions";
+import MyWorkspace from "./pages/MyWorkspace";
+import AdminUsers from "./pages/AdminUsers";
 import Team from "./pages/Team";
 
 const Portfolio = lazy(() => import("./pages/Portfolio")); // Recharts — load on demand
@@ -20,6 +23,7 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
   const { isAuthenticated, logout } = useAuth();
   const location = useLocation();
   useEventStream(isAuthenticated); // live-refresh caches on backend change events
+  const { data: me } = useCurrentUser(isAuthenticated);
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
@@ -32,6 +36,9 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
       <aside className="w-56 shrink-0 border-r border-slate-200 bg-white p-4">
         <div className="mb-6 text-lg font-bold text-canopy-700">canopy</div>
         <nav className="space-y-1">
+          <NavLink to="/me" className={navClass}>
+            My work
+          </NavLink>
           <NavLink to="/portfolio" className={navClass}>
             Portfolio
           </NavLink>
@@ -47,6 +54,11 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
           <NavLink to="/connectors" className={navClass}>
             Connectors
           </NavLink>
+          {me?.role === "admin" && (
+            <NavLink to="/admin/users" className={navClass}>
+              Users
+            </NavLink>
+          )}
         </nav>
         <button
           onClick={logout}
@@ -99,10 +111,26 @@ export default function App() {
         }
       />
       <Route
+        path="/me"
+        element={
+          <ProtectedLayout>
+            <MyWorkspace />
+          </ProtectedLayout>
+        }
+      />
+      <Route
         path="/decisions"
         element={
           <ProtectedLayout>
             <Decisions />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/admin/users"
+        element={
+          <ProtectedLayout>
+            <AdminUsers />
           </ProtectedLayout>
         }
       />

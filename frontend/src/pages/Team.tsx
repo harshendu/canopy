@@ -2,12 +2,16 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Engineer, Role } from "../api/types";
+import type { Engineer, Role, User } from "../api/types";
 
 export default function Team() {
   const qc = useQueryClient();
   const [engName, setEngName] = useState("");
   const [engTitle, setEngTitle] = useState("");
+  const [engGithub, setEngGithub] = useState("");
+  const [engTz, setEngTz] = useState("");
+  const [engHours, setEngHours] = useState("");
+  const [engSkills, setEngSkills] = useState("");
   const [roleName, setRoleName] = useState("");
 
   const engineers = useQuery({
@@ -18,17 +22,43 @@ export default function Team() {
     queryKey: ["roles"],
     queryFn: () => api.get<Role[]>("/team/roles"),
   });
+  // Only admins can list users; fail quietly so the link control just hides for others.
+  const users = useQuery({
+    queryKey: ["users"],
+    queryFn: () => api.get<User[]>("/auth/users"),
+    retry: false,
+  });
+
+  const skillsToArray = (s: string) =>
+    s.split(",").map((x) => x.trim()).filter(Boolean);
 
   const addEngineer = useMutation({
-    mutationFn: () => api.post("/team/engineers", { name: engName, title: engTitle || null }),
+    mutationFn: () =>
+      api.post("/team/engineers", {
+        name: engName,
+        title: engTitle || null,
+        github_login: engGithub || null,
+        timezone: engTz || null,
+        committed_hours_per_week: engHours ? Number(engHours) : null,
+        skill_tags: skillsToArray(engSkills),
+      }),
     onSuccess: () => {
       setEngName("");
       setEngTitle("");
+      setEngGithub("");
+      setEngTz("");
+      setEngHours("");
+      setEngSkills("");
       qc.invalidateQueries({ queryKey: ["engineers"] });
     },
   });
   const removeEngineer = useMutation({
     mutationFn: (id: number) => api.del(`/team/engineers/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["engineers"] }),
+  });
+  const linkUser = useMutation({
+    mutationFn: (vars: { id: number; userId: number | null }) =>
+      api.patch(`/team/engineers/${vars.id}`, { user_id: vars.userId }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["engineers"] }),
   });
   const addRole = useMutation({
@@ -41,6 +71,7 @@ export default function Team() {
 
   const roleName_ = (id: number | null) =>
     id == null ? "" : (roles.data ?? []).find((r) => r.id === id)?.name ?? "";
+  const userList = users.data ?? [];
 
   return (
     <div className="space-y-6">
@@ -55,17 +86,47 @@ export default function Team() {
           className="space-y-2 rounded-lg border border-slate-200 bg-white p-4"
         >
           <h2 className="font-semibold">Add engineer</h2>
-          <input
-            value={engName}
-            onChange={(e) => setEngName(e.target.value)}
-            placeholder="Name"
-            className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-          />
           <div className="flex gap-2">
+            <input
+              value={engName}
+              onChange={(e) => setEngName(e.target.value)}
+              placeholder="Name"
+              className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+            />
             <input
               value={engTitle}
               onChange={(e) => setEngTitle(e.target.value)}
-              placeholder="Title (optional)"
+              placeholder="Title"
+              className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={engGithub}
+              onChange={(e) => setEngGithub(e.target.value)}
+              placeholder="GitHub login"
+              className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={engTz}
+              onChange={(e) => setEngTz(e.target.value)}
+              placeholder="Timezone (e.g. UTC+1)"
+              className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+            />
+            <input
+              value={engHours}
+              onChange={(e) => setEngHours(e.target.value)}
+              type="number"
+              min={0}
+              placeholder="h/wk"
+              className="w-20 rounded border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={engSkills}
+              onChange={(e) => setEngSkills(e.target.value)}
+              placeholder="Skills (comma-separated)"
               className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
             />
             <button className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
@@ -105,22 +166,51 @@ export default function Team() {
 
       <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
         {(engineers.data ?? []).map((e) => (
-          <li key={e.id} className="flex items-center justify-between px-4 py-3">
-            <span>
-              <span className="font-medium">{e.name}</span>
-              {e.title && <span className="ml-2 text-sm text-slate-400">{e.title}</span>}
-              {roleName_(e.role_id) && (
-                <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                  {roleName_(e.role_id)}
-                </span>
+          <li key={e.id} className="flex flex-wrap items-center gap-2 px-4 py-3">
+            <span className="font-medium">{e.name}</span>
+            {e.title && <span className="text-sm text-slate-400">{e.title}</span>}
+            {e.github_login && <span className="text-xs text-slate-400">@{e.github_login}</span>}
+            {roleName_(e.role_id) && (
+              <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                {roleName_(e.role_id)}
+              </span>
+            )}
+            {e.skill_tags.map((t) => (
+              <span key={t} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+                {t}
+              </span>
+            ))}
+            {e.committed_hours_per_week != null && (
+              <span className="text-xs text-slate-400">{e.committed_hours_per_week}h/wk</span>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              {userList.length > 0 && (
+                <select
+                  value={e.user_id ?? ""}
+                  onChange={(ev) =>
+                    linkUser.mutate({
+                      id: e.id,
+                      userId: ev.target.value ? Number(ev.target.value) : null,
+                    })
+                  }
+                  className="rounded border border-slate-300 px-2 py-1 text-xs"
+                  title="Link to a login"
+                >
+                  <option value="">no login</option>
+                  {userList.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.email}
+                    </option>
+                  ))}
+                </select>
               )}
-            </span>
-            <button
-              onClick={() => removeEngineer.mutate(e.id)}
-              className="text-xs text-slate-400 hover:text-red-600"
-            >
-              remove
-            </button>
+              <button
+                onClick={() => removeEngineer.mutate(e.id)}
+                className="text-xs text-slate-400 hover:text-red-600"
+              >
+                remove
+              </button>
+            </div>
           </li>
         ))}
         {engineers.data?.length === 0 && (

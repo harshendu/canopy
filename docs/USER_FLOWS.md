@@ -41,12 +41,30 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 ### A2. Sign out
 - **UI:** sidebar "Sign out" clears the stored token and returns to `/login`.
 
-### A3. Add a user *(admin, API-only)*
-- **Actor:** admin · **API:** `POST /api/v1/auth/register` (admin token required).
-- **UI gap:** no registration screen yet; admins add users via the API.
+### A3. User & role management *(admin)*
+- **Roles:** `admin`, `architect`, `engineering_manager`, `engineer`, `viewer` (plus a legacy
+  `member` ≈ architect, kept for back-compat and not offered in the UI).
+- **UI:** `/admin/users` (admin only, shown in the sidebar only for admins) — invite by email
+  (email + temp password + role + name), change a user's role, and deactivate / reactivate.
+  Closes v1's API-only registration gap.
+- **API:** `POST /api/v1/auth/register` (admin), `GET /api/v1/auth/users` (admin),
+  `PATCH /api/v1/auth/users/{id}` (admin; role / is_active / full_name — you can't deactivate
+  yourself).
+- **Enforcement note:** roles are stored and admin-gated surfaces (user management) enforce them.
+  Broader per-role enforcement across project/plan/decision writes (the v2 "Roles × flows" matrix)
+  is **not built** — most write endpoints still accept any authenticated user.
 
 ### A4. Get current user
-- **API:** `GET /api/v1/auth/me`.
+- **API:** `GET /api/v1/auth/me`. The web app caches this to gate admin-only nav.
+
+### A5. Engineer ↔ login link & workspace **[new]**
+- A team **Engineer** record can be linked to a login via `Engineer.user_id` (set on the **Team**
+  page's per-engineer "link to a login" select, or `PATCH /api/v1/team/engineers/{id}`). That link
+  powers the engineer **workspace** (§M): a logged-in user sees the tasks and decisions tied to
+  their engineer record.
+- **Not built (v2 §A5):** self-service `/onboarding` (engineers confirming their own
+  timezone/skills/hours) — an admin sets these on the Team page for now. **OIDC/SSO** and the
+  `HttpOnly`-cookie token model (v2 §A1) are also not built; auth remains a `Bearer` JWT.
 
 ---
 
@@ -146,9 +164,16 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 ## F. Team & capacity
 
 ### F1. Manage engineers and roles
-- **UI:** `/team` — add engineers (name, optional title) and roles; remove engineers.
-- **API:** `GET/POST /api/v1/team/engineers`, `PATCH/DELETE /api/v1/team/engineers/{id}`,
-  `GET/POST /api/v1/team/roles` · **MCP:** `list_engineers`, `add_engineer`.
+- **UI:** `/team` — add engineers (name, title, **GitHub login**, **timezone**, **committed
+  hours/week**, **skill tags**), link an engineer to a **login** (per-row select, admins only),
+  add functional roles, and remove engineers. Engineer rows show skills / GitHub / committed hours.
+- **API:** `GET/POST /api/v1/team/engineers`, `PATCH/DELETE /api/v1/team/engineers/{id}`
+  (engineer payload now includes `user_id`, `skill_tags`, `github_login`, `timezone`,
+  `committed_hours_per_week`), `GET/POST /api/v1/team/roles` · **MCP:** `list_engineers`,
+  `add_engineer` (extended).
+- **Not built (v2 §F1):** on-call schedule (needs the PagerDuty connector §J7).
+- **Not built (v2 §F2–F5):** committed-hours/interrupt-budget *allocation*, planned-vs-realized
+  capacity, engineer PTO feeding CPM, and skill-task fit scores — allocation is still percent-based.
 
 ### F2. Allocate engineers (capacity)
 - **UI:** project → Capacity tab → "Allocate" form (engineer, percent, date range) → "Add".
@@ -169,11 +194,11 @@ Components and the system map live on the **Architecture** tab (G1). ADRs are no
 architect's unit of work is the decision, so it carries a lifecycle, an owner, stakeholders who
 review it, alternatives, reversibility, and a discussion thread.
 
-> **Identity note (current slice):** decision **owner**, **proposer**, **stakeholders**, and
-> **comment authors** all reference **Engineer** records (the existing team model). Role-based
-> *enforcement* (engineer vs architect vs owner) and engineer↔user unification are **not built**
-> yet — any authenticated user can currently perform any of these actions. The roles matrix in the
-> v2 spec (§"Roles × flows") is aspirational until the auth/roles slice lands.
+> **Identity note:** decision **owner**, **proposer**, **stakeholders**, and **comment authors**
+> reference **Engineer** records (the team model). An Engineer can now be **linked to a login**
+> (`Engineer.user_id`, §A5), which powers the `/me` workspace (§M). Role-based *enforcement* of who
+> may do what to a decision (the v2 "Roles × flows" matrix) is still **not built** — any
+> authenticated user can perform these actions; roles exist and gate only admin surfaces (§A3).
 
 ### G1. Map components (Architecture tab)
 - **UI:** Architecture tab → add components (name + kind: service/module/datastore/external/ui) and
@@ -354,7 +379,7 @@ digest (§I) sits underneath.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~32 curated tools that call the REST API.
+  MCP server then exposes ~34 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -383,6 +408,28 @@ digest (§I) sits underneath.
   `list_alerts`, `get_burndown`, the critical path, `decision_queue`, and `adr_impact` into a
   prioritized risk report — and can record agreed mitigations via `log_risk_mitigation`.
 
+### L7. Inspect the current user's workspace (tool)
+- `my_workspace` returns the caller's linked engineer profile, assigned open tasks, and the
+  decisions they own / must review (the API behind §M).
+
+---
+
+## M. Engineer workspace (`/me`)
+
+Makes engineers first-class (v1 had no engineer-facing surface). A logged-in user is mapped to a
+team member via `Engineer.user_id` (§A5).
+
+### M1. My work
+- **UI:** `/me` (also "My work" at the top of the sidebar) → the user's profile (role + linked
+  engineer's GitHub / timezone / committed hours / skill tags), their **assigned open tasks**
+  (most-critical first, then soonest due), and the **decisions they own** and **decisions to
+  review** — each linking into the owning project's Gantt / Decisions tab.
+- **API:** `GET /api/v1/me/workspace` · **MCP:** `my_workspace`.
+- **Note:** if no engineer is linked to the account, the page prompts to have an admin link one on
+  the Team page; tasks/decisions are empty until then.
+- **Not built (v2 §M):** `/me/today` daily-focus view; PRs awaiting the user's review (needs the
+  GitHub PR-metrics work, v2 §J6); decision-queue items filtered to the user's components.
+
 ---
 
 ## Known UI gaps (currently API/MCP-only)
@@ -391,23 +438,25 @@ backlog:
 - **What-if** scheduling (C5).
 - ADR **doc-import** (G6) — was dropped from the trimmed Architecture tab; re-add to Decisions.
 - Project rename/archive/date edits and **holiday** management (B4, C7).
-- **User registration** (A3).
-- *(closed previously: decision-impact / blast radius (G5) is in the UI. Closed this revision: the
-  **Risk dashboard** (§Q) and portfolio risk scores (§B1).)*
+- *(closed previously: decision-impact / blast radius (G5); Risk dashboard (§Q) + portfolio risk
+  (§B1). Closed this revision: **user & role management UI** (A3) and the **engineer workspace**
+  (§M).)*
 
 ## Not built (documented as future)
 - Slack/email **delivery** of alerts (I) and **decision SLA notifications** (G3).
 - Multi-process **real-time** (K) — needs Redis pub/sub.
 - **Resource leveling** (auto-resolving over-allocation).
-- **Role-based access** for decisions (engineer vs architect vs owner) and engineer↔user
-  unification (v2 §A3/§"Roles × flows") — decisions currently model actors as Engineers without
-  enforcement.
+- **Per-role enforcement** across the v2 "Roles × flows" matrix — roles now exist and gate admin
+  surfaces (§A3), but project/plan/decision *writes* still accept any authenticated user.
+- **OIDC/SSO** + `HttpOnly`-cookie tokens (§A1) and engineer **self-onboarding** `/onboarding`
+  (§A5); `/me/today` daily view (§M).
+- Hours-based **allocation** / interrupt budget, planned-vs-realized capacity, PTO→CPM, and
+  skill-task fit (§F2–F5).
 - Hard-enforced decision **rules/approval gates** (G3) — `can_accept` is advisory today.
 - **Risk timeline** (§Q2) and the **quality** risk family + **drift-score** contribution (§Q1) —
   need historical snapshots and the GitHub-metrics / drift-detection work respectively.
 - The broader v2 surfaces these slices do **not** touch: architecture **drift detection** (§N),
-  the **engineer workspace** (§M), **retros/postmortems** (§P), and new connectors (PagerDuty §J7,
-  CI/observability §J8).
+  **retros/postmortems** (§P), and new connectors (PagerDuty §J7, CI/observability §J8).
 
 ---
 

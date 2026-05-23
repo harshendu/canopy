@@ -11,6 +11,7 @@ from app.models.base import (
     Reversibility,
     TaskType,
 )
+from app.schemas.auth import UserRead
 
 _read = ConfigDict(from_attributes=True)
 
@@ -176,6 +177,11 @@ class EngineerCreate(BaseModel):
     email: str | None = None
     title: str | None = None
     role_id: int | None = None
+    user_id: int | None = None
+    skill_tags: list[str] = []
+    github_login: str | None = None
+    timezone: str | None = None
+    committed_hours_per_week: float | None = None
 
 
 class EngineerUpdate(BaseModel):
@@ -184,6 +190,11 @@ class EngineerUpdate(BaseModel):
     title: str | None = None
     role_id: int | None = None
     active: bool | None = None
+    user_id: int | None = None
+    skill_tags: list[str] | None = None
+    github_login: str | None = None
+    timezone: str | None = None
+    committed_hours_per_week: float | None = None
 
 
 class EngineerRead(BaseModel):
@@ -194,6 +205,11 @@ class EngineerRead(BaseModel):
     title: str | None
     role_id: int | None
     active: bool
+    user_id: int | None = None
+    skill_tags: list[str] = []
+    github_login: str | None = None
+    timezone: str | None = None
+    committed_hours_per_week: float | None = None
 
 
 class AllocationCreate(BaseModel):
@@ -555,3 +571,12 @@ class RiskResponse(BaseModel):
     level: str
     families: list[RiskFamilyRead]
     mitigations: list[RiskMitigationRead]
+
+
+# --- Engineer workspace (/me) ---
+class MyWorkspaceResponse(BaseModel):
+    user: UserRead
+    engineer: EngineerRead | None
+    assigned_tasks: list[TaskRead]
+    owned_decisions: list[ADRRead]
+    stakeholder_decisions: list[ADRRead]
