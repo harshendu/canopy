@@ -10,6 +10,7 @@ from app.api.v1 import (
     drift,
     events,
     gantt,
+    initiatives,
     me,
     milestones,
     projects,
@@ -22,6 +23,7 @@ from app.api.v1 import (
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(me.router, prefix="/me", tags=["me"])
+api_router.include_router(initiatives.router, prefix="/initiatives", tags=["initiatives"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(milestones.router, prefix="/milestones", tags=["milestones"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])

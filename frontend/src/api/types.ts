@@ -18,12 +18,39 @@ export interface Project {
   key: string;
   name: string;
   description: string | null;
+  initiative_id: number | null;
   start_date: string | null;
   target_date: string | null;
   archived: boolean;
   skip_weekends: boolean;
   decision_rule: DecisionRule;
   decision_sla_hours: number;
+}
+
+export interface Initiative {
+  id: number;
+  key: string;
+  name: string;
+  outcome_statement: string | null;
+  start_date: string | null;
+  target_date: string | null;
+  owner_engineer_id: number | null;
+  archived: boolean;
+}
+
+export interface InitiativeRollup {
+  initiative: Initiative;
+  projects: ProjectSummary[];
+  total_tasks: number;
+  completed_tasks: number;
+  avg_percent_complete: number;
+  project_end: string | null;
+  risk_score: number;
+  risk_level: string;
+  drift_score: number;
+  drift_level: string;
+  open_decisions: number;
+  on_track: boolean | null;
 }
 
 export interface Task {

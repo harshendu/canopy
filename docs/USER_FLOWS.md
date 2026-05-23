@@ -94,6 +94,38 @@ allowed; legacy `member` ≈ architect):
 
 ---
 
+## R. Initiatives (the program layer above projects) **[new — v2 §R / C1]**
+
+The architect's unit of work is usually an **initiative** (a.k.a. program) spanning several
+projects executed concurrently and decentrally — not a single project. An `Initiative` groups
+projects and rolls up their health.
+
+### R1. List / create initiatives
+- **UI:** `/initiatives` (sidebar) — list initiatives and (architect) create one (KEY + name +
+  optional outcome statement + target date). Each row opens its cockpit.
+- **API:** `GET /api/v1/initiatives`, `POST /api/v1/initiatives` (architect),
+  `GET/PATCH/DELETE /api/v1/initiatives/{id}` (delete **unlinks** sub-projects, never deletes them)
+  · **MCP:** `list_initiatives`, `create_initiative`.
+
+### R2. Link a project to an initiative
+- **UI:** `/projects` → per-project **initiative** select (architect). A project carries
+  `initiative_id`.
+- **API:** `PATCH /api/v1/projects/{id}` (`initiative_id`; `null` unlinks); `POST /api/v1/projects`
+  also accepts `initiative_id` · **MCP:** `set_project_initiative`, `create_project(initiative_id=)`.
+
+### R3. Initiative cockpit (rolled-up health)
+- **UI:** `/initiatives/:id` — outcome statement, an **on track / behind target** badge, aggregate
+  cards (progress, **worst** sub-project risk, **worst** drift, open-decision backlog, latest end
+  vs target), and the sub-project cards (each with its own risk/drift, linking into the project).
+- **API:** `GET /api/v1/initiatives/{id}/rollup` (per-project summaries + aggregates: total/completed
+  tasks, avg %, latest `project_end`, max `risk_score`/`drift_score` with the owning level,
+  `open_decisions` = ADRs proposed/under-discussion, `on_track`) · **MCP:** `get_initiative_rollup`.
+  The per-project summary is the same `summarize_project` the portfolio (§B1) uses.
+- **Not built yet (next slice):** **cross-project dependencies** and an initiative-level
+  **cross-project critical path** (a deeper scheduler change) — see `PROPOSED_FLOWS.md` D-R1.
+
+---
+
 ## B. Projects & portfolio
 
 ### B1. View the portfolio dashboard
@@ -107,9 +139,10 @@ allowed; legacy `member` ≈ architect):
 
 ### B2. Create a project
 - **UI:** `/projects` → enter KEY + name → "Add".
-- **API:** `POST /api/v1/projects` (`key`, `name`, optional `start_date`/`target_date`) · **MCP:**
-  `create_project`.
-- **Notes:** `key` is a unique slug (e.g. `PLATFORM`).
+- **API:** `POST /api/v1/projects` (`key`, `name`, optional `initiative_id`, `start_date`,
+  `target_date`) · **MCP:** `create_project`.
+- **Notes:** `key` is a unique slug (e.g. `PLATFORM`). A project can belong to an **initiative**
+  (§R) via `initiative_id`.
 
 ### B3. Open a project (the cockpit)
 - **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Dependencies · Capacity · Decisions ·
@@ -525,7 +558,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~50 curated tools that call the REST API.
+  MCP server then exposes ~54 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**

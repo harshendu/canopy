@@ -5,11 +5,27 @@ from sqlmodel import Field
 from app.models.base import DecisionRule, DependencyType, TaskType, TimestampMixin
 
 
+class Initiative(TimestampMixin, table=True):
+    """A program/initiative spanning multiple projects — the architect's unit of work above
+    a single Project. Sub-projects are how teams execute it concurrently and decentrally;
+    the initiative carries the outcome and rolls up health across them."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    key: str = Field(index=True, unique=True)  # short slug, e.g. "Q3-PLATFORM"
+    name: str
+    outcome_statement: str | None = None  # the outcome + how we'll know it worked
+    start_date: date | None = None
+    target_date: date | None = None
+    owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    archived: bool = False
+
+
 class Project(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     key: str = Field(index=True, unique=True)  # short slug, e.g. "PLATFORM"
     name: str
     description: str | None = None
+    initiative_id: int | None = Field(default=None, foreign_key="initiative.id", index=True)
     start_date: date | None = None
     target_date: date | None = None
     archived: bool = False

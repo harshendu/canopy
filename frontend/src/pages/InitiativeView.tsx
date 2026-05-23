@@ -1,0 +1,125 @@
+import { Link, useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+
+import { api } from "../api/client";
+import type { InitiativeRollup } from "../api/types";
+import { riskTone } from "../lib/risk";
+
+function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="text-xs uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="mt-1 text-2xl font-bold tabular-nums">{value}</div>
+      {hint && <div className="mt-0.5 text-xs text-slate-400">{hint}</div>}
+    </div>
+  );
+}
+
+export default function InitiativeView() {
+  const { initiativeId } = useParams();
+  const id = Number(initiativeId);
+
+  const rollup = useQuery({
+    queryKey: ["initiative-rollup", id],
+    queryFn: () => api.get<InitiativeRollup>(`/initiatives/${id}/rollup`),
+  });
+
+  if (!rollup.data) {
+    return <p className="text-sm text-slate-500">Loading initiative…</p>;
+  }
+  const r = rollup.data;
+  const risk = riskTone(r.risk_level);
+  const drift = riskTone(r.drift_level);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs text-slate-400">{r.initiative.key}</span>
+          <h1 className="text-2xl font-bold">{r.initiative.name}</h1>
+          {r.on_track != null && (
+            <span
+              className={`rounded px-2 py-0.5 text-xs font-medium ${
+                r.on_track
+                  ? "bg-canopy-100 text-canopy-700"
+                  : "bg-red-100 text-red-700"
+              }`}
+            >
+              {r.on_track ? "on track" : "behind target"}
+            </span>
+          )}
+        </div>
+        {r.initiative.outcome_statement && (
+          <p className="mt-1 text-sm text-slate-500">{r.initiative.outcome_statement}</p>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <Stat
+          label="Progress"
+          value={`${r.avg_percent_complete}%`}
+          hint={`${r.completed_tasks}/${r.total_tasks} tasks`}
+        />
+        <div className={`rounded-lg border p-4 ${risk.badge}`}>
+          <div className="text-xs uppercase tracking-wide opacity-70">Risk (worst)</div>
+          <div className="mt-1 text-2xl font-bold tabular-nums">{r.risk_score}</div>
+          <div className="mt-0.5 text-xs capitalize opacity-80">{r.risk_level}</div>
+        </div>
+        <div className={`rounded-lg border p-4 ${drift.badge}`}>
+          <div className="text-xs uppercase tracking-wide opacity-70">Drift (worst)</div>
+          <div className="mt-1 text-2xl font-bold tabular-nums">{r.drift_score}</div>
+          <div className="mt-0.5 text-xs capitalize opacity-80">{r.drift_level}</div>
+        </div>
+        <Stat label="Open decisions" value={String(r.open_decisions)} hint="proposed / in discussion" />
+        <Stat
+          label="Latest end"
+          value={r.project_end ?? "—"}
+          hint={r.initiative.target_date ? `target ${r.initiative.target_date}` : "no target"}
+        />
+      </div>
+
+      <div>
+        <h2 className="mb-2 font-semibold">Sub-projects</h2>
+        {r.projects.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            No projects linked yet — assign projects to this initiative on the Projects page.
+          </p>
+        ) : (
+          <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {r.projects.map((p) => (
+              <li key={p.id}>
+                <Link
+                  to={`/projects/${p.id}`}
+                  className="block rounded-lg border border-slate-200 bg-white p-4 hover:bg-slate-50"
+                >
+                  <div className="flex items-center justify-between">
+                    <span>
+                      <span className="font-mono text-xs text-slate-400">{p.key}</span>{" "}
+                      <span className="font-medium">{p.name}</span>
+                    </span>
+                    <span className="flex gap-1">
+                      <span
+                        className={`rounded px-2 py-0.5 text-xs font-medium ${riskTone(p.risk_level).badge}`}
+                      >
+                        risk {p.risk_score}
+                      </span>
+                      <span
+                        className={`rounded px-2 py-0.5 text-xs font-medium ${riskTone(p.drift_level).badge}`}
+                      >
+                        drift {p.drift_score}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-400">
+                    {p.avg_percent_complete}% · {p.completed_tasks}/{p.total_tasks} tasks ·{" "}
+                    {p.critical_tasks} critical · {p.project_end ? `ends ${p.project_end}` : "unscheduled"}
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}

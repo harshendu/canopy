@@ -26,8 +26,9 @@ and a Claude Code plugin (FastMCP server + skills + subagents).
 backend/   FastAPI + SQLModel + Alembic + arq. API in app/api/v1, models in app/models,
            business logic in app/services, integrations in app/connectors + app/webhooks.
 frontend/  Vite + React + TS + Tailwind v4 + TanStack Query. Pages in src/pages
-           (Portfolio dashboard, Projects, ProjectView with Gantt/Dependencies/Capacity/
-           Architecture/Roadmap/Burndown tabs, Connectors). Views in src/components:
+           (Portfolio dashboard, Initiatives + InitiativeView cockpit, Projects, ProjectView with
+           Gantt/Dependencies/Capacity/Architecture/Roadmap/Burndown tabs, Connectors). Views in
+           src/components:
            GanttChart (custom SVG, with zoom + baseline/variance overlay), DependencyGraph +
            ArchitectureView (React Flow), CapacityHeatmap + RoadmapView (custom),
            BurndownChart + Portfolio (Recharts). Heavy libs (React Flow / Recharts) are
@@ -83,6 +84,12 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   broker (`app/core/events.py`); `GET /api/v1/events/stream?token=` streams them; the frontend
   `useEventStream` invalidates query caches. Single-process only (worker syncs don't propagate) —
   Redis pub/sub is the multi-process upgrade.
+- **Initiatives** (`app/api/v1/initiatives.py`) are the program layer above projects: a `Project`
+  carries `initiative_id`, and `GET /initiatives/{id}/rollup` aggregates health across sub-projects
+  (worst risk/drift, progress, open-decision backlog, on-track vs target). The per-project summary
+  is `app/api/v1/projects.py:summarize_project`, shared with `GET /projects/portfolio` so a
+  project's headline numbers are computed in exactly one place. (Cross-project dependencies + a
+  cross-project critical path are a planned follow-up, not built.)
 - Aggregation for the visibility views is also backend-side and pure-where-possible:
   `GET /projects/portfolio` (per-project rollups), `GET /team/capacity?project_id=` (engineer×week
   allocation via `app/services/capacity.py:weekly_capacity`), and `GET /projects/{id}/burndown`

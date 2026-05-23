@@ -61,11 +61,15 @@ The single most important structural change. Introduce `Initiative` (a.k.a. Prog
 of `Project`. The architect manages the initiative; sub-projects are how teams execute it
 concurrently.
 
-- **B-R1 — Initiative model & dashboard.** `Initiative { name, outcome_statement, target_window,
-  owner }` with `Project.initiative_id`.
-  - UI `/initiatives` and `/initiatives/:id` (rolled-up health across sub-projects: combined risk,
-    drift, the cross-project critical path, decision backlog) · API `GET/POST /initiatives`,
-    `GET /initiatives/{id}/rollup` · MCP `list_initiatives`, `get_initiative_rollup`.
+- **B-R1 — Initiative model & dashboard. ✅ Shipped (first slice).** `Initiative { key, name,
+  outcome_statement, start/target dates, owner }` with `Project.initiative_id`.
+  - UI `/initiatives` (list + create) and `/initiatives/:id` (rolled-up health: progress, **worst**
+    sub-project risk + drift, open-decision backlog, on-track-vs-target, sub-project cards) · API
+    `GET/POST/PATCH/DELETE /initiatives`, `GET /initiatives/{id}/rollup` · MCP `list_initiatives`,
+    `create_initiative`, `get_initiative_rollup`, `set_project_initiative`. The rollup reuses the
+    portfolio's `summarize_project`.
+  - **Still pending:** the **cross-project critical path** on the cockpit needs cross-project
+    dependencies (D-R1) — the next slice.
 - **B-R2 — Outcome-first portfolio.** Revise §B1: the portfolio card leads with the **outcome** and
   a **confidence-to-hit-the-window** band (from forecasting, C-R1), not just avg-%-complete. Add the
   promised sortable columns + last-decision recency (the §B1 "not built").
@@ -290,7 +294,7 @@ or fixes a referenced-but-missing tool.)
 | `get_delivery_metrics` | `GET …/delivery` | DORA + flow metrics (S). |
 | `add_adr_fitness` | `POST .../adrs/{id}/fitness` | Machine-checkable decision (G-R1). |
 | `get_decision_traceability` | `GET …/traceability` | Decision→code loop (T). |
-| `list_initiatives` / `get_initiative_rollup` | new `/initiatives` | The C1 layer. |
+| `list_initiatives` / `create_initiative` / `get_initiative_rollup` / `set_project_initiative` ✅ | `/initiatives` | The C1 layer. **Shipped.** |
 | `record_risk_snapshot` | `POST .../risk/snapshot` | Let the morning agent capture the trend (Q-R3). |
 
 ---
@@ -312,6 +316,8 @@ or fixes a referenced-but-missing tool.)
 
 **Next (the structural bets):**
 5. **Initiative/Program layer + cross-project dependencies + initiative cockpit** (C1; B-R1, D-R1, R).
+   ◐ **Slice 1 shipped:** initiative model + project linkage + CRUD + rollup + cockpit (B-R1, R).
+   **Remaining:** cross-project dependencies + cross-project critical path (D-R1).
 6. **Probabilistic forecast** (C-R1, C3) — the honest delivery-date answer.
 7. **Blockers + flow board + WIP** (D-R2, C-R2) — the decentralized day-to-day surface.
 8. **CI/webhook-triggered drift + auto-captured risk snapshots** (N-R1, Q-R3, C6) — close the loops.

@@ -23,6 +23,7 @@ class ProjectCreate(BaseModel):
     key: str
     name: str
     description: str | None = None
+    initiative_id: int | None = None
     start_date: date | None = None
     target_date: date | None = None
 
@@ -30,6 +31,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    initiative_id: int | None = None
     start_date: date | None = None
     target_date: date | None = None
     archived: bool | None = None
@@ -44,6 +46,7 @@ class ProjectRead(BaseModel):
     key: str
     name: str
     description: str | None
+    initiative_id: int | None
     start_date: date | None
     target_date: date | None
     archived: bool
@@ -521,6 +524,54 @@ class ProjectSummary(BaseModel):
 
 class PortfolioResponse(BaseModel):
     projects: list[ProjectSummary]
+
+
+# --- Initiatives (program layer above projects) ---
+class InitiativeCreate(BaseModel):
+    key: str
+    name: str
+    outcome_statement: str | None = None
+    start_date: date | None = None
+    target_date: date | None = None
+    owner_engineer_id: int | None = None
+
+
+class InitiativeUpdate(BaseModel):
+    name: str | None = None
+    outcome_statement: str | None = None
+    start_date: date | None = None
+    target_date: date | None = None
+    owner_engineer_id: int | None = None
+    archived: bool | None = None
+
+
+class InitiativeRead(BaseModel):
+    model_config = _read
+    id: int
+    key: str
+    name: str
+    outcome_statement: str | None
+    start_date: date | None
+    target_date: date | None
+    owner_engineer_id: int | None
+    archived: bool
+
+
+class InitiativeRollup(BaseModel):
+    """Health rolled up across an initiative's sub-projects."""
+
+    initiative: InitiativeRead
+    projects: list[ProjectSummary]
+    total_tasks: int
+    completed_tasks: int
+    avg_percent_complete: float
+    project_end: date | None  # latest end across sub-projects
+    risk_score: int  # the riskiest sub-project drives initiative risk
+    risk_level: str
+    drift_score: int  # worst drift across sub-projects
+    drift_level: str
+    open_decisions: int  # ADRs proposed / under discussion across the initiative
+    on_track: bool | None  # latest end <= target_date (None if no target)
 
 
 # --- Alerts / digest ---
