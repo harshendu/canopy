@@ -48,7 +48,7 @@ class GitHubConnector(Connector):
 
     async def read_file(self, path: str) -> str:
         """Return the decoded text of a file (e.g. an architecture markdown doc)."""
-        async with self._client() as client:
+        async with await self.open_client() as client:
             resp = await request_with_retry(
                 client, "GET", f"/repos/{self.owner}/{self.repo}/contents/{path}"
             )
@@ -58,7 +58,7 @@ class GitHubConnector(Connector):
         return str(data.get("content", ""))
 
     async def list_pull_requests(self, state: str = "open") -> list[dict[str, Any]]:
-        async with self._client() as client:
+        async with await self.open_client() as client:
             resp = await request_with_retry(
                 client, "GET", f"/repos/{self.owner}/{self.repo}/pulls", params={"state": state}
             )
@@ -75,7 +75,7 @@ class GitHubConnector(Connector):
         ]
 
     async def list_milestones(self, state: str = "open") -> list[dict[str, Any]]:
-        async with self._client() as client:
+        async with await self.open_client() as client:
             resp = await request_with_retry(
                 client,
                 "GET",
@@ -89,7 +89,7 @@ class GitHubConnector(Connector):
 
     async def full_sync(self) -> SyncResult:
         # No mirrored entities by default; reads are on-demand. Verify connectivity.
-        async with self._client() as client:
+        async with await self.open_client() as client:
             await request_with_retry(client, "GET", f"/repos/{self.owner}/{self.repo}")
         return SyncResult(provider="github")
 

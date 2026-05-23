@@ -74,6 +74,7 @@ export interface Connection {
   config: Record<string, unknown>;
   watermark: string | null;
   active: boolean;
+  authorized: boolean;
 }
 
 export interface ADR {

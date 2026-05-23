@@ -14,10 +14,16 @@ class Connection(TimestampMixin, table=True):
     name: str
     encrypted_token: str | None = None  # Fernet-encrypted access token / API token
     encrypted_refresh_token: str | None = None
-    # Provider-specific config: base_url, cloud_id, repo, scopes, etc.
+    token_expires_at: datetime | None = None  # for OAuth refresh timing
+    # Provider-specific config: base_url, cloud_id, repo, scopes, auth_type, etc.
     config: dict = Field(default_factory=dict, sa_column=Column(JSON))
     watermark: str | None = None  # last successful incremental-sync cursor/timestamp
     active: bool = True
+
+    @property
+    def authorized(self) -> bool:
+        """True once a token (API token or OAuth access token) has been stored."""
+        return self.encrypted_token is not None
 
 
 class ExternalRef(TimestampMixin, table=True):

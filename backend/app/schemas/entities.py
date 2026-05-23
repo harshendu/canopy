@@ -243,6 +243,7 @@ class ConnectionRead(BaseModel):
     config: dict
     watermark: str | None
     active: bool
+    authorized: bool
 
 
 class PullRequestRead(BaseModel):

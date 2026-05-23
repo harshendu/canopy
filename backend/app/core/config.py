@@ -32,6 +32,18 @@ class Settings(BaseSettings):
     # Cron cadence (minutes) for the Jira reconciliation poll.
     JIRA_POLL_MINUTES: int = 10
 
+    # --- OAuth 2.0 (3LO) ---
+    # The provider redirects here after consent; must match the app registration.
+    OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
+    # Where the callback redirects the browser when done.
+    FRONTEND_BASE_URL: str = "http://localhost:5173"
+    JIRA_OAUTH_CLIENT_ID: str = ""
+    JIRA_OAUTH_CLIENT_SECRET: str = ""
+    GITHUB_OAUTH_CLIENT_ID: str = ""
+    GITHUB_OAUTH_CLIENT_SECRET: str = ""
+    GOOGLE_OAUTH_CLIENT_ID: str = ""
+    GOOGLE_OAUTH_CLIENT_SECRET: str = ""
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:

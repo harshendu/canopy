@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
@@ -12,6 +13,8 @@ const CONFIG_HINTS: Record<Provider, string> = {
 
 export default function Connectors() {
   const qc = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const justConnected = searchParams.get("connected");
   const [provider, setProvider] = useState<Provider>("jira");
   const [name, setName] = useState("");
   const [token, setToken] = useState("");
@@ -23,6 +26,13 @@ export default function Connectors() {
     queryKey: ["connections"],
     queryFn: () => api.get<Connection[]>("/connectors/connections"),
   });
+
+  async function connectOAuth(connectionId: number) {
+    const { authorize_url } = await api.get<{ authorize_url: string }>(
+      `/connectors/oauth/${connectionId}/authorize`,
+    );
+    window.location.href = authorize_url;
+  }
 
   const create = useMutation({
     mutationFn: () => {
@@ -59,6 +69,17 @@ export default function Connectors() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Connectors</h1>
+
+      {justConnected && (
+        <div className="rounded border border-canopy-500/30 bg-canopy-50 px-4 py-2 text-sm text-canopy-700">
+          Connection #{justConnected} authorized via OAuth.
+        </div>
+      )}
+
+      <p className="text-sm text-slate-500">
+        Add a connection, then either paste an API token above or use{" "}
+        <span className="font-medium">Connect</span> to authorize via OAuth.
+      </p>
 
       <form
         onSubmit={(e) => {
@@ -120,17 +141,34 @@ export default function Connectors() {
                 {c.provider}
               </span>{" "}
               <span className="font-medium">{c.name}</span>
+              {c.authorized ? (
+                <span className="ml-2 rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                  authorized
+                </span>
+              ) : (
+                <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+                  not connected
+                </span>
+              )}
               {c.watermark && (
                 <span className="ml-2 text-xs text-slate-400">synced ≥ {c.watermark}</span>
               )}
             </span>
-            <button
-              onClick={() => sync.mutate(c.id)}
-              disabled={sync.isPending}
-              className="rounded border border-canopy-500 px-3 py-1 text-xs font-medium text-canopy-700 disabled:opacity-50"
-            >
-              Sync now
-            </button>
+            <span className="flex gap-2">
+              <button
+                onClick={() => connectOAuth(c.id)}
+                className="rounded border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              >
+                {c.authorized ? "Reconnect" : "Connect"}
+              </button>
+              <button
+                onClick={() => sync.mutate(c.id)}
+                disabled={sync.isPending}
+                className="rounded border border-canopy-500 px-3 py-1 text-xs font-medium text-canopy-700 disabled:opacity-50"
+              >
+                Sync now
+              </button>
+            </span>
           </li>
         ))}
         {connections.data?.length === 0 && (

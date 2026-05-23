@@ -1,15 +1,18 @@
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, SessionDep
-from app.connectors import get_connector
+from app.connectors import get_connector, oauth
 from app.connectors.gdrive import GoogleDriveConnector
 from app.connectors.github import GitHubConnector
 from app.connectors.jira import JiraConnector
+from app.core.config import settings
 from app.core.crypto import encrypt_token
 from app.models.base import Provider
 from app.models.integration import Connection, PullRequest
@@ -71,6 +74,49 @@ async def trigger_incremental_sync(
 ) -> dict:
     result = await sync_service.run_incremental_sync(session, connection_id)
     return asdict(result)
+
+
+# --- OAuth 2.0 (3LO) flows ---
+@router.get("/oauth/{connection_id}/authorize")
+async def oauth_authorize(
+    session: SessionDep, _: CurrentUser, connection_id: int
+) -> dict[str, str]:
+    """Return the provider authorize URL to redirect the browser to (state is signed)."""
+    connection = await _get_connection(session, connection_id)
+    state = oauth.create_state(connection_id)
+    return {"authorize_url": oauth.build_authorize_url(connection.provider, state)}
+
+
+@router.get("/oauth/callback")
+async def oauth_callback(session: SessionDep, code: str, state: str) -> RedirectResponse:
+    """Provider redirect target: validate state, exchange the code, store tokens."""
+    connection_id = oauth.verify_state(state)
+    if connection_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
+    connection = await session.get(Connection, connection_id)
+    if connection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
+
+    tokens = await oauth.exchange_code(connection.provider, code)
+    connection.encrypted_token = encrypt_token(tokens.access_token)
+    if tokens.refresh_token:
+        connection.encrypted_refresh_token = encrypt_token(tokens.refresh_token)
+    if tokens.expires_in:
+        connection.token_expires_at = datetime.now(UTC) + timedelta(seconds=tokens.expires_in)
+
+    if connection.provider == Provider.jira:
+        cloud_id = await oauth.fetch_jira_cloud_id(tokens.access_token)
+        if cloud_id:
+            connection.config = {
+                **connection.config,
+                "auth_type": "oauth",
+                "cloud_id": cloud_id,
+                "base_url": f"https://api.atlassian.com/ex/jira/{cloud_id}",
+            }
+
+    await session.commit()
+    target = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/connectors?connected={connection_id}"
+    return RedirectResponse(url=target)
 
 
 # --- Jira Agile + history ---

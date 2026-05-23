@@ -41,13 +41,25 @@ class JiraConnector(Connector):
     def jira_project_key(self) -> str:
         return str(self.config["jira_project_key"])
 
+    @property
+    def _is_oauth(self) -> bool:
+        return (
+            self.config.get("auth_type") == "oauth"
+            or self.connection.encrypted_refresh_token is not None
+        )
+
     def _client(self) -> httpx.AsyncClient:
-        email = self.config.get("email", "")
         token = self.access_token() or ""
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        if self._is_oauth:
+            # OAuth 3LO: Bearer token against https://api.atlassian.com/ex/jira/{cloudId}.
+            headers["Authorization"] = f"Bearer {token}"
+            return httpx.AsyncClient(base_url=self.base_url, headers=headers, timeout=30.0)
+        # API token: HTTP Basic (email:token) against the site base URL.
         return httpx.AsyncClient(
             base_url=self.base_url,
-            auth=httpx.BasicAuth(email, token),
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            auth=httpx.BasicAuth(self.config.get("email", ""), token),
+            headers=headers,
             timeout=30.0,
         )
 
@@ -125,7 +137,7 @@ class JiraConnector(Connector):
         result = SyncResult(provider="jira")
         max_updated: str | None = self.connection.watermark
         parent_links: list[tuple[str, str]] = []
-        async with self._client() as client:
+        async with await self.open_client() as client:
             issues = await self._search(client, jql)
         for issue in issues:
             action, parent_ext_id, ext_id = await self._upsert_issue(issue)
@@ -191,7 +203,7 @@ class JiraConnector(Connector):
 
     # --- Agile API: boards & sprints ---
     async def list_boards(self) -> list[dict[str, Any]]:
-        async with self._client() as client:
+        async with await self.open_client() as client:
             resp = await request_with_retry(
                 client,
                 "GET",
@@ -202,7 +214,7 @@ class JiraConnector(Connector):
         return list(data.get("values", []))
 
     async def list_sprints(self, board_id: int, state: str = "active") -> list[dict[str, Any]]:
-        async with self._client() as client:
+        async with await self.open_client() as client:
             resp = await request_with_retry(
                 client, "GET", f"/rest/agile/1.0/board/{board_id}/sprint", params={"state": state}
             )
@@ -236,7 +248,7 @@ class JiraConnector(Connector):
         if not board_id:
             return result
         sprints = await self.list_sprints(int(board_id), state="active")
-        async with self._client() as client:
+        async with await self.open_client() as client:
             for sprint in sprints:
                 sprint_name = sprint.get("name")
                 for issue in await self._sprint_issues(client, int(sprint["id"])):
@@ -277,7 +289,7 @@ class JiraConnector(Connector):
             return 0
         histories: list[dict[str, Any]] = []
         start_at = 0
-        async with self._client() as client:
+        async with await self.open_client() as client:
             while True:
                 resp = await request_with_retry(
                     client,

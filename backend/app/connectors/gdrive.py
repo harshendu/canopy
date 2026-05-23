@@ -33,7 +33,7 @@ class GoogleDriveConnector(Connector):
         q = f"mimeType='{_DOC_MIME}'"
         if query:
             q += f" and name contains '{query}'"
-        async with self._client() as client:
+        async with await self.open_client() as client:
             resp = await request_with_retry(
                 client,
                 "GET",
@@ -45,7 +45,7 @@ class GoogleDriveConnector(Connector):
 
     async def export_doc(self, file_id: str) -> str:
         """Export a Google Doc to markdown text."""
-        async with self._client() as client:
+        async with await self.open_client() as client:
             resp = await request_with_retry(
                 client, "GET", f"/files/{file_id}/export", params={"mimeType": "text/markdown"}
             )
