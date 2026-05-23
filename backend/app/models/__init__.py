@@ -5,8 +5,18 @@ from app.models.architecture import (
     ArchitectureComponent,
     ArchitectureDecision,
 )
-from app.models.integration import Connection, ExternalRef
-from app.models.project import Dependency, Milestone, Project, Task
+from app.models.integration import (
+    Connection,
+    ExternalRef,
+    PullRequest,
+)
+from app.models.project import (
+    Dependency,
+    Milestone,
+    Project,
+    Task,
+    TaskStatusHistory,
+)
 from app.models.team import Allocation, Engineer, Role
 from app.models.user import User
 
@@ -21,7 +31,9 @@ __all__ = [
     "ExternalRef",
     "Milestone",
     "Project",
+    "PullRequest",
     "Role",
     "Task",
+    "TaskStatusHistory",
     "User",
 ]

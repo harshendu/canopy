@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from sqlmodel import Field
 
@@ -51,7 +51,20 @@ class Task(TimestampMixin, table=True):
 
     # Mirror of the upstream (Jira) status; canopy never writes this back.
     status: str | None = None
+    # Active Jira sprint name (from the Agile API), when applicable.
+    sprint: str | None = None
     assignee_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+
+
+class TaskStatusHistory(TimestampMixin, table=True):
+    """Status transitions mirrored from the Jira issue changelog."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="task.id", index=True)
+    from_status: str | None = None
+    to_status: str | None = None
+    changed_at: datetime = Field(index=True)
+    author: str | None = None
 
 
 class Dependency(TimestampMixin, table=True):

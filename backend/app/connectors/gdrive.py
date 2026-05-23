@@ -7,9 +7,12 @@ architect supplies an access token; a full OAuth dance is the production path.
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
 from app.connectors.base import Connector, SyncResult, register
+from app.connectors.http import request_with_retry
 from app.models.base import Provider
 
 _API = "https://www.googleapis.com/drive/v3"
@@ -26,26 +29,26 @@ class GoogleDriveConnector(Connector):
             timeout=30.0,
         )
 
-    async def list_design_docs(self, query: str | None = None) -> list[dict]:
+    async def list_design_docs(self, query: str | None = None) -> list[dict[str, Any]]:
         q = f"mimeType='{_DOC_MIME}'"
         if query:
             q += f" and name contains '{query}'"
         async with self._client() as client:
-            resp = await client.get(
+            resp = await request_with_retry(
+                client,
+                "GET",
                 "/files",
                 params={"q": q, "fields": "files(id,name,modifiedTime)", "pageSize": 50},
             )
-            resp.raise_for_status()
-            data = resp.json()
+            data: dict[str, Any] = resp.json()
         return list(data.get("files", []))
 
     async def export_doc(self, file_id: str) -> str:
         """Export a Google Doc to markdown text."""
         async with self._client() as client:
-            resp = await client.get(
-                f"/files/{file_id}/export", params={"mimeType": "text/markdown"}
+            resp = await request_with_retry(
+                client, "GET", f"/files/{file_id}/export", params={"mimeType": "text/markdown"}
             )
-            resp.raise_for_status()
             return resp.text
 
     async def full_sync(self) -> SyncResult:

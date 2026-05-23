@@ -38,3 +38,18 @@ class ExternalRef(TimestampMixin, table=True):
     entity_id: int
     remote_updated: str | None = None  # upstream `updated` watermark for staleness checks
     last_synced_at: datetime | None = None
+
+
+class PullRequest(TimestampMixin, table=True):
+    """Lightweight cache of GitHub pull requests, kept fresh by webhooks."""
+
+    __table_args__ = (UniqueConstraint("repo", "number", name="uq_pull_request"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    repo: str = Field(index=True)  # "owner/name"
+    number: int
+    title: str
+    state: str  # open | closed
+    url: str | None = None
+    author: str | None = None
+    remote_updated: str | None = None

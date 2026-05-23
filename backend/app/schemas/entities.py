@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
 
@@ -99,7 +99,18 @@ class TaskRead(BaseModel):
     is_critical: bool
     total_float: int
     status: str | None
+    sprint: str | None
     assignee_engineer_id: int | None
+
+
+class TaskStatusHistoryRead(BaseModel):
+    model_config = _read
+    id: int
+    task_id: int
+    from_status: str | None
+    to_status: str | None
+    changed_at: datetime
+    author: str | None
 
 
 # --- Dependency ---
@@ -232,6 +243,17 @@ class ConnectionRead(BaseModel):
     config: dict
     watermark: str | None
     active: bool
+
+
+class PullRequestRead(BaseModel):
+    model_config = _read
+    id: int
+    repo: str
+    number: int
+    title: str
+    state: str
+    url: str | None
+    author: str | None
 
 
 # --- Gantt / scheduling ---

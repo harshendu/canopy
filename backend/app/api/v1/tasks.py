@@ -2,8 +2,13 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, SessionDep
-from app.models.project import Task
-from app.schemas.entities import TaskCreate, TaskRead, TaskUpdate
+from app.models.project import Task, TaskStatusHistory
+from app.schemas.entities import (
+    TaskCreate,
+    TaskRead,
+    TaskStatusHistoryRead,
+    TaskUpdate,
+)
 
 router = APIRouter()
 
@@ -34,6 +39,18 @@ async def get_task(session: SessionDep, _: CurrentUser, task_id: int) -> Task:
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return task
+
+
+@router.get("/{task_id}/history", response_model=list[TaskStatusHistoryRead])
+async def get_task_history(
+    session: SessionDep, _: CurrentUser, task_id: int
+) -> list[TaskStatusHistory]:
+    result = await session.execute(
+        select(TaskStatusHistory)
+        .where(TaskStatusHistory.task_id == task_id)
+        .order_by(col(TaskStatusHistory.changed_at))
+    )
+    return list(result.scalars().all())
 
 
 @router.patch("/{task_id}", response_model=TaskRead)

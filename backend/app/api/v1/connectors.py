@@ -1,17 +1,19 @@
 from dataclasses import asdict
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.connectors import get_connector
 from app.connectors.gdrive import GoogleDriveConnector
 from app.connectors.github import GitHubConnector
+from app.connectors.jira import JiraConnector
 from app.core.crypto import encrypt_token
 from app.models.base import Provider
-from app.models.integration import Connection
-from app.schemas.entities import ConnectionCreate, ConnectionRead
+from app.models.integration import Connection, PullRequest
+from app.schemas.entities import ConnectionCreate, ConnectionRead, PullRequestRead
 from app.services import sync as sync_service
 
 router = APIRouter()
@@ -71,6 +73,38 @@ async def trigger_incremental_sync(
     return asdict(result)
 
 
+# --- Jira Agile + history ---
+def _jira(connection: Connection, session: AsyncSession) -> JiraConnector:
+    if connection.provider != Provider.jira:
+        raise HTTPException(status_code=400, detail="Not a Jira connection")
+    return get_connector(connection, session)  # type: ignore[return-value]
+
+
+@router.get("/jira/{connection_id}/boards")
+async def jira_list_boards(
+    session: SessionDep, _: CurrentUser, connection_id: int
+) -> list[dict[str, Any]]:
+    connection = await _get_connection(session, connection_id)
+    return await _jira(connection, session).list_boards()
+
+
+@router.get("/jira/{connection_id}/sprints")
+async def jira_list_sprints(
+    session: SessionDep, _: CurrentUser, connection_id: int, board_id: int, state: str = "active"
+) -> list[dict[str, Any]]:
+    connection = await _get_connection(session, connection_id)
+    return await _jira(connection, session).list_sprints(board_id, state)
+
+
+@router.post("/jira/{connection_id}/history")
+async def jira_sync_history(
+    session: SessionDep, _: CurrentUser, connection_id: int, issue_key: str
+) -> dict[str, int]:
+    connection = await _get_connection(session, connection_id)
+    added = await _jira(connection, session).sync_status_history(issue_key)
+    return {"added": added}
+
+
 # --- GitHub on-demand reads ---
 def _github(connection: Connection, session: AsyncSession) -> GitHubConnector:
     if connection.provider != Provider.github:
@@ -81,7 +115,7 @@ def _github(connection: Connection, session: AsyncSession) -> GitHubConnector:
 @router.get("/github/{connection_id}/file")
 async def github_read_file(
     session: SessionDep, _: CurrentUser, connection_id: int, path: str
-) -> dict:
+) -> dict[str, Any]:
     connection = await _get_connection(session, connection_id)
     content = await _github(connection, session).read_file(path)
     return {"path": path, "content": content}
@@ -90,9 +124,20 @@ async def github_read_file(
 @router.get("/github/{connection_id}/pulls")
 async def github_list_pulls(
     session: SessionDep, _: CurrentUser, connection_id: int, state: str = "open"
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     connection = await _get_connection(session, connection_id)
     return await _github(connection, session).list_pull_requests(state)
+
+
+@router.get("/github/cached-prs", response_model=list[PullRequestRead])
+async def github_cached_prs(
+    session: SessionDep, _: CurrentUser, repo: str | None = None
+) -> list[PullRequest]:
+    stmt = select(PullRequest)
+    if repo is not None:
+        stmt = stmt.where(PullRequest.repo == repo)
+    result = await session.execute(stmt.order_by(col(PullRequest.number)))
+    return list(result.scalars().all())
 
 
 # --- Google Drive on-demand reads ---

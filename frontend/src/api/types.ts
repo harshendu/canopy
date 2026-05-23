@@ -29,6 +29,7 @@ export interface Task {
   is_critical: boolean;
   total_float: number;
   status: string | null;
+  sprint: string | null;
   assignee_engineer_id: number | null;
 }
 
