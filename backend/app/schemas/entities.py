@@ -591,6 +591,8 @@ class RiskResponse(BaseModel):
     project_id: int
     score: int
     level: str
+    confidence: str  # high | low — how much of the picture has data
+    confidence_note: str
     families: list[RiskFamilyRead]
     mitigations: list[RiskMitigationRead]
 

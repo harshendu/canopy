@@ -115,10 +115,13 @@ def register(mcp, client) -> None:
     async def get_risk(project_id: int) -> dict:
         """Get the project's leading-indicator risk score + drillable breakdown.
 
-        Returns a 0-100 score and families (schedule / capacity / architecture / quality),
-        each with indicators (summary, score, drill-down details) and the open mitigations.
-        Architecture risk includes deferred decisions past decide-by and ADRs stuck in
-        discussion (see the decisions tools). Quality risk is not yet wired.
+        Returns a 0-100 score, a `confidence` flag (high|low), and families (schedule /
+        capacity / architecture / quality), each with indicators (summary, score, drill-down
+        details) and the open mitigations. Architecture risk includes deferred decisions past
+        decide-by and ADRs stuck in discussion. Quality risk is fed by observability events
+        (build failures / open incidents); when none are wired, the quality family scores the
+        missing **observability coverage** and `confidence` is "low" — a blind project is not
+        treated as safer, just less certain.
         """
         return await client.get(f"/projects/{project_id}/risk")
 

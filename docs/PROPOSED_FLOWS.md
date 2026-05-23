@@ -170,10 +170,13 @@ The decision model is the best part of the product. The gap is *traceability* an
 
 ## I + Q. Alerts & risk → **leading-indicator-first, confidence-aware, auto-captured** (addresses C5)
 
-- **Q-R1 — Fix the renormalization trap.** Today, when a project has no observability events the
-  quality family is *excluded* and the score renormalizes — so a **blind** project looks **safer**.
-  Invert it: add an explicit **Observability Coverage** indicator. No signal = *low confidence* and a
-  visible "we are flying blind here" flag, never a silently lower score.
+- **Q-R1 — Fix the renormalization trap. ✅ Shipped.** Previously, a project with no observability
+  events had its quality family *excluded* and the score renormalized — so a **blind** project
+  looked **safer**. Now the quality family always scores: with no events it surfaces an explicit
+  **Observability coverage** indicator and the risk response carries `confidence: "low"` with a note,
+  shown as a "Low confidence — flying blind" banner on the Risk tab. A blind project is flagged, not
+  silently scored as safe. (`risk.py` + `RiskResponse.confidence` + `RiskView`; `get_risk` and the
+  risk-analyst agent updated.)
 - **Q-R2 — Promote true leading indicators.** Add (and weight toward) **blocked-time** (D-R2),
   **WIP/aging** (C-R2), **cycle-time trend**, **PR review latency** (J-R1), and **decision latency**
   (G-R4). The current families lean lagging (burndown, deadline-missed, drift-after-the-fact).
@@ -299,8 +302,8 @@ or fixes a referenced-but-missing tool.)
    highest-leverage first step.
 2. ✅ **Org-wide capacity** (F-R1, C2) — `project_id` now optional; cross-project overload is
    visible on `/team`. **Shipped.**
-3. **Fix the risk renormalization trap** (Q-R1, C5) — an Observability Coverage indicator. Small,
-   corrects a *backwards* signal.
+3. ✅ **Fix the risk renormalization trap** (Q-R1, C5) — an Observability Coverage indicator +
+   `confidence` flag; a blind project no longer looks safer. **Shipped.**
 4. **Reframe schedule "drift" → variance; reserve "drift" for architecture** (C-R4). Mostly naming +
    a re-baseline note; defuses the agility-vs-baseline tension.
 

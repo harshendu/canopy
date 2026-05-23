@@ -294,6 +294,8 @@ export interface RiskResponse {
   project_id: number;
   score: number;
   level: RiskLevel;
+  confidence: "high" | "low";
+  confidence_note: string;
   families: RiskFamily[];
   mitigations: RiskMitigation[];
 }

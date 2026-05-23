@@ -187,6 +187,8 @@ async def project_risk(session: SessionDep, _: CurrentUser, project_id: int) -> 
         project_id=project_id,
         score=report.score,
         level=report.level,
+        confidence=report.confidence,
+        confidence_note=report.confidence_note,
         families=[
             RiskFamilyRead(
                 key=f.key,

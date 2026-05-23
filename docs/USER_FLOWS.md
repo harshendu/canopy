@@ -344,10 +344,11 @@ digest (§I) sits underneath.
   - **Capacity** — engineer-week over-allocation (from the capacity grid).
   - **Architecture** — deferred decisions past `decide_by` + decisions stuck in `under_discussion`
     > 14 days (both from §G) **+ the drift score (§N)** as a third indicator.
-  - **Quality** — **build failures + open incidents** from §J8 activity events. The family becomes
-    *available* (and counts toward the score) once a project has any observability events; until
-    then it's excluded and the overall renormalises over the available families. (PR-latency /
-    churn metrics, v2 §J6, would enrich it further — still future.)
+  - **Quality** — **build failures + open incidents** from §J8 activity events. When a project has
+    **no** observability events the family doesn't drop out; it scores an explicit **observability
+    coverage** gap and the response carries `confidence: "low"` with a note — so a blind project is
+    flagged ("flying blind"), never silently scored as *safer* (the old behaviour excluded the
+    family and renormalised). (PR-latency / churn metrics, v2 §J6, would enrich it further.)
 - Each indicator carries a 0–100 sub-score and drill-down **details** (the offending tasks /
   decisions / engineer-weeks). Scoring weights/thresholds live in `app/services/risk.py` (pure).
 - **API:** `GET /api/v1/projects/{id}/risk` · **MCP:** `get_risk`. The same scorer feeds the

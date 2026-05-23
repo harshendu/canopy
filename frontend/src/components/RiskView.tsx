@@ -116,6 +116,13 @@ export default function RiskView({ projectId }: { projectId: number }) {
         </div>
       </div>
 
+      {/* Confidence flag — a blind project is flagged, not silently scored as safe. */}
+      {data.confidence === "low" && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-700">
+          <span className="font-medium">Low confidence.</span> {data.confidence_note}
+        </div>
+      )}
+
       {/* Families + indicators */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {data.families.map((f) => (
@@ -239,23 +246,13 @@ function FamilyCard({
     <div className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">{family.label}</h3>
-        {family.available ? (
-          <span className="text-sm tabular-nums text-slate-500">{family.score}</span>
-        ) : (
-          <span className="text-xs text-slate-400">not yet wired</span>
-        )}
+        <span className="text-sm tabular-nums text-slate-500">{family.score}</span>
       </div>
       <div className="mt-1 h-1.5 w-full overflow-hidden rounded bg-slate-100">
         <div className={`h-full ${scoreBar(family.score)}`} style={{ width: `${family.score}%` }} />
       </div>
 
-      {!family.available ? (
-        <p className="mt-2 text-xs text-slate-400">
-          Needs GitHub PR metrics (time-to-review, churn, test status) — not built yet, so it
-          doesn’t contribute to the score.
-        </p>
-      ) : (
-        <ul className="mt-3 space-y-2">
+      <ul className="mt-3 space-y-2">
           {family.indicators.map((ind) => {
             const open_ = open === ind.key;
             const mits = mitigationsFor(ind.key);
@@ -314,8 +311,7 @@ function FamilyCard({
               </li>
             );
           })}
-        </ul>
-      )}
+      </ul>
     </div>
   );
 }
