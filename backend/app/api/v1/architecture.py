@@ -3,21 +3,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, func, select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.connectors import get_connector
+from app.connectors.gdrive import GoogleDriveConnector
+from app.connectors.github import GitHubConnector
 from app.models.architecture import (
     ADRComponentLink,
     ArchitectureComponent,
     ArchitectureDecision,
     ComponentLink,
 )
+from app.models.integration import Connection
 from app.schemas.entities import (
     ADRCreate,
+    ADRImportRequest,
     ADRRead,
     ADRUpdate,
     ComponentCreate,
     ComponentLinkCreate,
     ComponentLinkRead,
     ComponentRead,
+    ImpactResponse,
 )
+from app.services.impact import downstream_components
+from app.services.markdown_adr import parse_markdown_adr
 
 router = APIRouter()
 
@@ -149,18 +157,21 @@ async def list_adrs(
     return out
 
 
+async def _next_number(session: AsyncSession, project_id: int) -> int:
+    result = await session.execute(
+        select(func.max(ArchitectureDecision.number)).where(
+            ArchitectureDecision.project_id == project_id
+        )
+    )
+    return (result.scalar() or 0) + 1
+
+
 @router.post("/adrs", response_model=ADRRead, status_code=status.HTTP_201_CREATED)
 async def create_adr(
     session: SessionDep, _: CurrentUser, payload: ADRCreate
 ) -> ArchitectureDecision:
-    max_number = await session.execute(
-        select(func.max(ArchitectureDecision.number)).where(
-            ArchitectureDecision.project_id == payload.project_id
-        )
-    )
-    next_number = (max_number.scalar() or 0) + 1
     data = payload.model_dump(exclude={"component_ids"})
-    adr = ArchitectureDecision(number=next_number, **data)
+    adr = ArchitectureDecision(number=await _next_number(session, payload.project_id), **data)
     session.add(adr)
     await session.flush()
     assert adr.id is not None  # guaranteed after flush
@@ -168,6 +179,73 @@ async def create_adr(
     await session.commit()
     await session.refresh(adr)
     return adr
+
+
+@router.post("/adrs/import", response_model=ADRRead, status_code=status.HTTP_201_CREATED)
+async def import_adr(
+    session: SessionDep, _: CurrentUser, payload: ADRImportRequest
+) -> ArchitectureDecision:
+    """Read a markdown doc from GitHub/Drive and create an ADR from its sections."""
+    connection = await session.get(Connection, payload.connection_id)
+    if connection is None or connection.provider != payload.provider:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bad connection")
+    connector = get_connector(connection, session)
+    if isinstance(connector, GitHubConnector):
+        text = await connector.read_file(payload.ref)
+    elif isinstance(connector, GoogleDriveConnector):
+        text = await connector.export_doc(payload.ref)
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported provider")
+
+    fields = parse_markdown_adr(text, fallback_title=payload.ref.rsplit("/", 1)[-1])
+    adr = ArchitectureDecision(
+        project_id=payload.project_id,
+        number=await _next_number(session, payload.project_id),
+        title=fields["title"] or payload.ref,
+        context=fields["context"],
+        decision=fields["decision"],
+        consequences=fields["consequences"],
+    )
+    session.add(adr)
+    await session.commit()
+    await session.refresh(adr)
+    return adr
+
+
+@router.get("/adrs/{adr_id}/impact", response_model=ImpactResponse)
+async def adr_impact(session: SessionDep, _: CurrentUser, adr_id: int) -> ImpactResponse:
+    """Components an ADR directly affects, plus everything that transitively depends on them."""
+    adr = await session.get(ArchitectureDecision, adr_id)
+    if adr is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ADR not found")
+    direct = set(
+        (
+            await session.execute(
+                select(ADRComponentLink.component_id).where(ADRComponentLink.adr_id == adr_id)
+            )
+        ).scalars().all()
+    )
+    project_components = set(
+        (
+            await session.execute(
+                select(ArchitectureComponent.id).where(
+                    ArchitectureComponent.project_id == adr.project_id
+                )
+            )
+        ).scalars().all()
+    )
+    all_links = (await session.execute(select(ComponentLink))).scalars().all()
+    edges = [
+        (link.source_id, link.target_id)
+        for link in all_links
+        if link.source_id in project_components or link.target_id in project_components
+    ]
+    downstream = downstream_components(direct, edges)
+    return ImpactResponse(
+        adr_id=adr_id,
+        direct_component_ids=sorted(direct),
+        downstream_component_ids=sorted(downstream),
+    )
 
 
 @router.patch("/adrs/{adr_id}", response_model=ADRRead)

@@ -245,6 +245,19 @@ class ADRRead(BaseModel):
     component_ids: list[int] = []
 
 
+class ADRImportRequest(BaseModel):
+    project_id: int
+    provider: Provider  # github | gdrive
+    connection_id: int
+    ref: str  # GitHub file path or Google Drive file id
+
+
+class ImpactResponse(BaseModel):
+    adr_id: int
+    direct_component_ids: list[int]
+    downstream_component_ids: list[int]
+
+
 class ComponentLinkCreate(BaseModel):
     source_id: int
     target_id: int

@@ -286,3 +286,46 @@ async def test_skip_weekends_extends_schedule(client, db_session):
     replan = await client.post(f"/api/v1/projects/{project_id}/replan", headers=headers)
     # 5 working days from Mon 2026-01-05 skips the weekend -> ends Mon 2026-01-12.
     assert replan.json()["project_end"] == "2026-01-12"
+
+
+@pytest.mark.asyncio
+async def test_adr_impact(client, db_session):
+    await _seed_admin(db_session)
+    token = await _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id = (
+        await client.post(
+            "/api/v1/projects", json={"key": "PLAT", "name": "Platform"}, headers=headers
+        )
+    ).json()["id"]
+
+    async def comp(name: str) -> int:
+        return (
+            await client.post(
+                "/api/v1/architecture/components",
+                json={"project_id": project_id, "name": name},
+                headers=headers,
+            )
+        ).json()["id"]
+
+    a, b, c = await comp("A"), await comp("B"), await comp("C")
+    # A depends on B, C depends on A.
+    for source, target in [(a, b), (c, a)]:
+        await client.post(
+            "/api/v1/architecture/component-links",
+            json={"source_id": source, "target_id": target},
+            headers=headers,
+        )
+    adr_id = (
+        await client.post(
+            "/api/v1/architecture/adrs",
+            json={"project_id": project_id, "title": "Change B", "component_ids": [b]},
+            headers=headers,
+        )
+    ).json()["id"]
+
+    impact = (
+        await client.get(f"/api/v1/architecture/adrs/{adr_id}/impact", headers=headers)
+    ).json()
+    assert impact["direct_component_ids"] == [b]
+    assert sorted(impact["downstream_component_ids"]) == sorted([a, c])

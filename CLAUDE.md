@@ -79,6 +79,10 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
 - Jira (`app/connectors/jira.py`): enhanced JQL search + Agile API (`sync_active_sprints` tags tasks
   with their sprint when `board_id` is configured) + changelog → `TaskStatusHistory`
   (`sync_status_history`). Jira status stays read-only.
+- **Architecture depth:** `POST /architecture/adrs/import` reads a markdown doc from a GitHub/Drive
+  connection and parses it into an ADR (`app/services/markdown_adr.py`, pure). `GET /architecture/adrs/{id}/impact`
+  returns directly-affected components plus everything that transitively depends on them
+  (`app/services/impact.py` reverse-walks `ComponentLink` edges, pure).
 - Webhooks (`app/webhooks/`) verify HMAC **before** parsing, match the repo/project to active
   connections, then enqueue `process_webhook` (arq) — never process inline. `GitHubConnector.handle_webhook`
   upserts the `PullRequest` cache; `JiraConnector.handle_webhook` upserts the task.

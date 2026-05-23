@@ -4,7 +4,7 @@ import "@xyflow/react/dist/style.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { ADR, ADRStatus, Component, ComponentLink } from "../api/types";
+import type { ADR, ADRStatus, Component, ComponentLink, Connection } from "../api/types";
 
 const KIND_COLORS: Record<string, string> = {
   service: "#2f855a",
@@ -30,6 +30,8 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
   const [adrStatus, setAdrStatus] = useState<ADRStatus>("proposed");
   const [adrSupersedes, setAdrSupersedes] = useState<number | "">("");
   const [adrComponentIds, setAdrComponentIds] = useState<number[]>([]);
+  const [importConnId, setImportConnId] = useState<number | "">("");
+  const [importRef, setImportRef] = useState("");
 
   const components = useQuery({
     queryKey: ["components", projectId],
@@ -43,6 +45,29 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
   const adrs = useQuery({
     queryKey: ["adrs", projectId],
     queryFn: () => api.get<ADR[]>(`/architecture/adrs?project_id=${projectId}`),
+  });
+  const connections = useQuery({
+    queryKey: ["connections"],
+    queryFn: () => api.get<Connection[]>("/connectors/connections"),
+  });
+  const docConnections = (connections.data ?? []).filter(
+    (c) => c.provider === "github" || c.provider === "gdrive",
+  );
+
+  const importAdr = useMutation({
+    mutationFn: () => {
+      const conn = docConnections.find((c) => c.id === importConnId);
+      return api.post("/architecture/adrs/import", {
+        project_id: projectId,
+        provider: conn?.provider,
+        connection_id: importConnId,
+        ref: importRef,
+      });
+    },
+    onSuccess: () => {
+      setImportRef("");
+      qc.invalidateQueries({ queryKey: ["adrs", projectId] });
+    },
   });
 
   const addComponent = useMutation({
@@ -303,6 +328,38 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
           <button className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
             Add ADR
           </button>
+
+          <div className="mt-2 border-t border-slate-100 pt-2">
+            <div className="mb-1 text-xs font-medium text-slate-400">Or import from a doc</div>
+            <div className="flex gap-2">
+              <select
+                value={importConnId}
+                onChange={(e) => setImportConnId(e.target.value ? Number(e.target.value) : "")}
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+              >
+                <option value="">Source…</option>
+                {docConnections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.provider}: {c.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={importRef}
+                onChange={(e) => setImportRef(e.target.value)}
+                placeholder="path/to/adr.md or Drive file id"
+                className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => importConnId && importRef && importAdr.mutate()}
+                disabled={importAdr.isPending}
+                className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-600 disabled:opacity-50"
+              >
+                Import
+              </button>
+            </div>
+          </div>
         </form>
 
         <div className="rounded-lg border border-slate-200 bg-white p-4">
