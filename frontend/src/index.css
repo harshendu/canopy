@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canopy-50: #f0f7f4;
+  --color-canopy-500: #2f855a;
+  --color-canopy-700: #276749;
+  --color-critical: #dc2626;
+}
+
+body {
+  @apply bg-slate-50 text-slate-800 antialiased;
+}

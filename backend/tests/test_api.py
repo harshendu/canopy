@@ -1,0 +1,98 @@
+import pytest
+
+from app.core.security import hash_password
+from app.models.base import UserRole
+from app.models.user import User
+
+
+async def _seed_admin(session) -> None:
+    session.add(
+        User(
+            email="architect@example.com",
+            hashed_password=hash_password("secret123"),
+            role=UserRole.admin,
+        )
+    )
+    await session.commit()
+
+
+async def _token(client) -> str:
+    resp = await client.post(
+        "/api/v1/auth/login",
+        data={"username": "architect@example.com", "password": "secret123"},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["access_token"]
+
+
+@pytest.mark.asyncio
+async def test_health(client):
+    resp = await client.get("/api/v1/health")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_projects_require_auth(client):
+    resp = await client.get("/api/v1/projects")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_project_crud_flow(client, db_session):
+    await _seed_admin(db_session)
+    token = await _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create = await client.post(
+        "/api/v1/projects",
+        json={"key": "PLAT", "name": "Platform"},
+        headers=headers,
+    )
+    assert create.status_code == 201, create.text
+    project_id = create.json()["id"]
+
+    listing = await client.get("/api/v1/projects", headers=headers)
+    assert listing.status_code == 200
+    assert any(p["id"] == project_id for p in listing.json())
+
+
+@pytest.mark.asyncio
+async def test_replan_endpoint(client, db_session):
+    await _seed_admin(db_session)
+    token = await _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    project_id = (
+        await client.post(
+            "/api/v1/projects",
+            json={"key": "PLAT", "name": "Platform", "start_date": "2026-01-01"},
+            headers=headers,
+        )
+    ).json()["id"]
+
+    t1 = (
+        await client.post(
+            "/api/v1/tasks",
+            json={"project_id": project_id, "name": "Design", "duration": 2},
+            headers=headers,
+        )
+    ).json()["id"]
+    t2 = (
+        await client.post(
+            "/api/v1/tasks",
+            json={"project_id": project_id, "name": "Build", "duration": 3},
+            headers=headers,
+        )
+    ).json()["id"]
+    await client.post(
+        "/api/v1/dependencies",
+        json={"predecessor_id": t1, "successor_id": t2},
+        headers=headers,
+    )
+
+    replan = await client.post(f"/api/v1/projects/{project_id}/replan", headers=headers)
+    assert replan.status_code == 200, replan.text
+    body = replan.json()
+    assert body["scheduled_tasks"] == 2
+    assert body["project_end"] == "2026-01-06"  # 0 + 2 + 3 days from 2026-01-01

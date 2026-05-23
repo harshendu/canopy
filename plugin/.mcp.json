@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "canopy": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp_server/server.py"],
+      "env": {
+        "CANOPY_API_BASE_URL": "${user_config.api_base_url}",
+        "CANOPY_API_TOKEN": "${user_config.api_token}"
+      }
+    }
+  }
+}
