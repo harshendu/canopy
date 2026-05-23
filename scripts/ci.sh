@@ -21,9 +21,11 @@ echo "▶ backend: mypy"
 echo "▶ backend: pytest"
 ( cd "$REPO_ROOT/backend" && "$PY" -m pytest -q )
 
-# 3. Frontend: lint (eslint), typecheck + production build.
+# 3. Frontend: lint (eslint), unit tests (vitest), typecheck + production build.
 echo "▶ frontend: lint"
 ( cd "$REPO_ROOT/frontend" && npm run lint )
+echo "▶ frontend: test"
+( cd "$REPO_ROOT/frontend" && npm run test )
 echo "▶ frontend: build (tsc + vite)"
 ( cd "$REPO_ROOT/frontend" && npm run build )
 

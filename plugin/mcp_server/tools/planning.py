@@ -45,6 +45,32 @@ def register(mcp, client) -> None:
         return await client.get(f"/projects/{project_id}/gantt")
 
     @mcp.tool
+    async def whatif_schedule(project_id: int, duration_overrides: dict[int, int]) -> dict:
+        """Project a schedule with hypothetical task durations (working days) WITHOUT persisting.
+
+        duration_overrides maps task_id -> duration. Returns projected end date, critical path,
+        and deadline violations — useful for "what if we add an engineer / cut scope" analysis.
+        """
+        return await client.post(
+            f"/projects/{project_id}/whatif", {"duration_overrides": duration_overrides}
+        )
+
+    @mcp.tool
+    async def set_baseline(project_id: int) -> dict:
+        """Snapshot the current schedule as the baseline (for plan-vs-actual drift)."""
+        return await client.post(f"/projects/{project_id}/baseline")
+
+    @mcp.tool
+    async def get_burndown(project_id: int) -> dict:
+        """Get the weekly burndown (remaining vs completed) for a project."""
+        return await client.get(f"/projects/{project_id}/burndown")
+
+    @mcp.tool
+    async def list_alerts(project_id: int) -> dict:
+        """Get the project's alerts digest: deadline misses, overdue milestones, over-allocations."""
+        return await client.get(f"/projects/{project_id}/alerts")
+
+    @mcp.tool
     async def create_adr(
         project_id: int,
         title: str,

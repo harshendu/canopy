@@ -47,6 +47,7 @@ Frontend (run from `frontend/`):
 npm install
 npm run dev          # proxies /api -> :8000
 npm run lint         # eslint (typescript-eslint + react-hooks), --max-warnings 0
+npm run test         # vitest unit tests
 npm run build        # tsc typecheck + vite build
 ```
 Plugin (run from `plugin/`, venv at `plugin/.venv`):
@@ -105,7 +106,14 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   schema: edit models, then `alembic revision --autogenerate -m "..."`, review the file, commit.
   Generated files under `alembic/versions/` are excluded from ruff.
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
-  REST routes. Skills are runbooks; subagents do isolated multi-step work.
+  REST routes (~26 across projects/planning/connectors/team/architecture). Skills are runbooks
+  (`planning-roadmaps`, `writing-adrs`, `syncing-jira`, `capacity-planning`); subagents do isolated
+  multi-step work (`jira-sync`, `gantt-planner`, `risk-analyst`). Add a tool when Claude needs a new
+  verb; register it in `mcp_server/server.py`.
+- **Observability:** `GET /api/v1/health` (liveness) and `/api/v1/health/ready` (DB check) for
+  orchestration; structured logging via `app/core/logging.py`.
+- **Frontend tests:** Vitest (`npm run test`) covers pure helpers (e.g. `src/lib/horizon.ts`); CI
+  runs it between lint and build. Extract pure logic out of components to keep it testable.
 
 ## Code standards (enforced by CI — keep them green)
 - **Python is strictly typed.** Every function/method is annotated (ruff `ANN`), and `mypy app` must
@@ -133,9 +141,9 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   Node deps, and only reinstalls when something is missing or a lockfile changed. Works on a vanilla
   VM with just the repo checked out (requires `python3` and `node`/`npm` on PATH).
 - `scripts/ci.sh` — basic CI: runs `setup.sh`, then backend `ruff` + `mypy` + `pytest` and frontend
-  `eslint` + `build`.
+  `eslint` + `test` (vitest) + `build`.
 - **pre-commit** hook (`.githooks/pre-commit`): backend `ruff`+`mypy`+`pytest` (if `backend/` changed)
-  and frontend `eslint`+`build` (if `frontend/` changed). `RUN_ALL=1` forces both.
+  and frontend `eslint`+`test`+`build` (if `frontend/` changed). `RUN_ALL=1` forces both.
 - **pre-push** hook (`.githooks/pre-push`): runs `scripts/ci.sh` (full CI, self-bootstrapping) before
   every push; a failure aborts the push.
 - Install both hooks once per clone: `scripts/install-hooks.sh` (sets `core.hooksPath=.githooks`).

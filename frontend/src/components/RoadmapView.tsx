@@ -2,16 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { Milestone } from "../api/types";
-
-type Horizon = "now" | "next" | "later";
-
-function horizon(target: string | null): Horizon {
-  if (!target) return "later";
-  const days = Math.round((new Date(target).getTime() - Date.now()) / 86_400_000);
-  if (days <= 30) return "now";
-  if (days <= 90) return "next";
-  return "later";
-}
+import { horizon, type Horizon } from "../lib/horizon";
 
 const COLUMNS: { key: Horizon; label: string; hint: string }[] = [
   { key: "now", label: "Now", hint: "≤ 30 days / overdue" },

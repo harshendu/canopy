@@ -16,7 +16,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from fastmcp import FastMCP  # noqa: E402
 
 from client import CanopyClient  # noqa: E402
-from tools import connectors, planning, projects  # noqa: E402
+from tools import architecture, connectors, planning, projects, team  # noqa: E402
 
 mcp = FastMCP("canopy")
 client = CanopyClient()
@@ -24,6 +24,8 @@ client = CanopyClient()
 projects.register(mcp, client)
 planning.register(mcp, client)
 connectors.register(mcp, client)
+team.register(mcp, client)
+architecture.register(mcp, client)
 
 
 if __name__ == "__main__":

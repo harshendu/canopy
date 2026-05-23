@@ -1,17 +1,23 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.api.v1 import api_router
 from app.core.config import settings
-from app.core.db import async_session_factory
+from app.core.db import async_session_factory, get_session
+from app.core.logging import configure_logging
 from app.core.security import hash_password
 from app.models.base import UserRole
 from app.models.user import User
 from app.webhooks import webhook_router
+
+configure_logging()
 
 
 async def _seed_superuser() -> None:
@@ -59,3 +65,10 @@ app.include_router(webhook_router, prefix="/webhooks")
 @app.get("/api/v1/health", tags=["health"])
 async def health() -> dict:
     return {"status": "ok", "service": settings.PROJECT_NAME}
+
+
+@app.get("/api/v1/health/ready", tags=["health"])
+async def ready(session: Annotated[AsyncSession, Depends(get_session)]) -> dict:
+    """Readiness probe: verifies the database is reachable."""
+    await session.execute(text("SELECT 1"))
+    return {"status": "ready"}

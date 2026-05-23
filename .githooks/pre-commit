@@ -42,6 +42,8 @@ if changed_under frontend; then
   else
     info "frontend eslint"
     ( cd "$REPO_ROOT/frontend" && npm run lint ) || fail "eslint failed"
+    info "frontend test"
+    ( cd "$REPO_ROOT/frontend" && npm run test ) || fail "frontend tests failed"
     info "frontend build (tsc + vite)"
     ( cd "$REPO_ROOT/frontend" && npm run build ) || fail "frontend build failed"
   fi

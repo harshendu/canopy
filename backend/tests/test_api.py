@@ -33,6 +33,13 @@ async def test_health(client):
 
 
 @pytest.mark.asyncio
+async def test_health_ready(client):
+    resp = await client.get("/api/v1/health/ready")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ready"
+
+
+@pytest.mark.asyncio
 async def test_projects_require_auth(client):
     resp = await client.get("/api/v1/projects")
     assert resp.status_code == 401
