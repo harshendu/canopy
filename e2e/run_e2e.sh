@@ -36,6 +36,8 @@ fi
 PIDS=()
 cleanup() {
   for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+  # Clear everything the run created: throwaway DB + server logs.
+  rm -f "${E2E_DB_FILE:-}" "$E2E_DIR/.backend.log" "$E2E_DIR/.frontend.log" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
