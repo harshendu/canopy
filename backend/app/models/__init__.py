@@ -4,6 +4,7 @@ from app.models.architecture import (
     ADRComponentLink,
     ArchitectureComponent,
     ArchitectureDecision,
+    ComponentLink,
 )
 from app.models.integration import (
     Connection,
@@ -25,6 +26,7 @@ __all__ = [
     "Allocation",
     "ArchitectureComponent",
     "ArchitectureDecision",
+    "ComponentLink",
     "Connection",
     "Dependency",
     "Engineer",

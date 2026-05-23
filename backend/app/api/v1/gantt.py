@@ -2,17 +2,21 @@ from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.models.base import TaskType
-from app.models.project import Dependency, Project, Task
+from app.models.project import Dependency, Project, Task, TaskStatusHistory
 from app.schemas.entities import (
+    BurndownPoint,
+    BurndownResponse,
     GanttLink,
     GanttResponse,
     GanttTask,
     ReplanResult,
 )
+from app.services.burndown import compute_burndown, is_done_status
+from app.services.capacity import mondays
 from app.services.scheduling import (
     CycleError,
     SchedDep,
@@ -136,3 +140,39 @@ async def replan(session: SessionDep, _: CurrentUser, project_id: int) -> Replan
         critical_path=critical_path(results),
         project_end=project_end,
     )
+
+
+@router.get("/projects/{project_id}/burndown", response_model=BurndownResponse)
+async def burndown(session: SessionDep, _: CurrentUser, project_id: int) -> BurndownResponse:
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    tasks = list(
+        (
+            await session.execute(select(Task).where(Task.project_id == project_id))
+        ).scalars().all()
+    )
+    leaves = [t for t in tasks if t.type != TaskType.summary]
+    total = len(leaves)
+    task_ids = {t.id for t in tasks}
+
+    history = (
+        await session.execute(
+            select(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids))
+        )
+    ).scalars().all()
+    done_dates = sorted(
+        h.changed_at.date() for h in history if is_done_status(h.to_status)
+    )
+
+    ends = [t.end for t in tasks if t.end]
+    window_start = project.start_date or (done_dates[0] if done_dates else date.today())
+    window_end = project.target_date or (max(ends) if ends else window_start)
+    if window_end < window_start:
+        window_end = window_start
+    weeks = mondays(window_start, window_end)
+    points = [
+        BurndownPoint(week=p.week, total=p.total, completed=p.completed, remaining=p.remaining)
+        for p in compute_burndown(total, done_dates, weeks)
+    ]
+    return BurndownResponse(project_id=project_id, points=points)

@@ -1,9 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import type { GanttResponse, GanttTask } from "../api/types";
 
 const ROW_H = 38;
-const DAY_W = 26;
+const DEFAULT_DAY_W = 26;
+const MIN_DAY_W = 8;
+const MAX_DAY_W = 60;
 const LABEL_W = 240;
 const HEADER_H = 28;
 
@@ -28,6 +30,7 @@ interface Geom {
 }
 
 export default function GanttChart({ data }: { data: GanttResponse }) {
+  const [dayW, setDayW] = useState(DEFAULT_DAY_W);
   const { geoms, width, height, gridDays, minDay } = useMemo(() => {
     const tasks = data.tasks;
     const byId = new Map(tasks.map((t) => [t.id, t]));
@@ -54,9 +57,9 @@ export default function GanttChart({ data }: { data: GanttResponse }) {
     const geoms: Geom[] = tasks.map((task, row) => {
       const startDay = task.start_date ? parseDay(task.start_date) : null;
       const endDay = task.end_date ? parseDay(task.end_date) : null;
-      const x = startDay !== null ? (startDay - min) * DAY_W : null;
+      const x = startDay !== null ? (startDay - min) * dayW : null;
       const w =
-        startDay !== null && endDay !== null ? Math.max((endDay - startDay) * DAY_W, 4) : 0;
+        startDay !== null && endDay !== null ? Math.max((endDay - startDay) * dayW, 4) : 0;
       return { task, row, depth: depthOf(task), x, w, y: HEADER_H + row * ROW_H };
     });
 
@@ -64,15 +67,33 @@ export default function GanttChart({ data }: { data: GanttResponse }) {
       geoms,
       minDay: min,
       gridDays: Array.from({ length: span }, (_, i) => min + i).filter((_, i) => i % 7 === 0),
-      width: LABEL_W + span * DAY_W + 20,
+      width: LABEL_W + span * dayW + 20,
       height: HEADER_H + tasks.length * ROW_H + 10,
     };
-  }, [data]);
+  }, [data, dayW]);
 
   const geomById = new Map(geoms.map((g) => [g.task.id, g]));
 
   return (
-    <div className="overflow-auto rounded-lg border border-slate-200 bg-white">
+    <div className="rounded-lg border border-slate-200 bg-white">
+      <div className="flex items-center justify-end gap-1 border-b border-slate-100 px-3 py-1.5">
+        <span className="mr-1 text-xs text-slate-400">zoom</span>
+        <button
+          onClick={() => setDayW((w) => Math.max(MIN_DAY_W, w - 6))}
+          className="rounded border border-slate-300 px-2 text-sm text-slate-600"
+          aria-label="Zoom out"
+        >
+          −
+        </button>
+        <button
+          onClick={() => setDayW((w) => Math.min(MAX_DAY_W, w + 6))}
+          className="rounded border border-slate-300 px-2 text-sm text-slate-600"
+          aria-label="Zoom in"
+        >
+          +
+        </button>
+      </div>
+      <div className="overflow-auto">
       <svg width={width} height={height} className="select-none text-xs">
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
@@ -82,7 +103,7 @@ export default function GanttChart({ data }: { data: GanttResponse }) {
 
         {/* week gridlines */}
         {gridDays.map((day) => {
-          const x = LABEL_W + (day - minDay) * DAY_W;
+          const x = LABEL_W + (day - minDay) * dayW;
           return (
             <g key={day}>
               <line x1={x} y1={HEADER_H} x2={x} y2={height} className="stroke-slate-100" />
@@ -179,6 +200,7 @@ export default function GanttChart({ data }: { data: GanttResponse }) {
           );
         })}
       </svg>
+      </div>
     </div>
   );
 }

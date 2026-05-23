@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field
 
 from app.models.base import ADRStatus, TimestampMixin
@@ -11,6 +11,17 @@ class ArchitectureComponent(TimestampMixin, table=True):
     kind: str = "service"  # service | module | datastore | external | ui
     description: str | None = None
     repo_url: str | None = None
+
+
+class ComponentLink(TimestampMixin, table=True):
+    """A directed relationship between two architecture components (the system map edges)."""
+
+    __table_args__ = (UniqueConstraint("source_id", "target_id", name="uq_component_link"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    source_id: int = Field(foreign_key="architecturecomponent.id", index=True)
+    target_id: int = Field(foreign_key="architecturecomponent.id", index=True)
+    kind: str = "depends_on"  # depends_on | calls | publishes_to | reads_from
 
 
 class ArchitectureDecision(TimestampMixin, table=True):

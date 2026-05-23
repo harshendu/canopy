@@ -90,6 +90,34 @@ export interface ADR {
   pr_links: string[];
 }
 
+export interface Component {
+  id: number;
+  project_id: number;
+  name: string;
+  kind: string;
+  description: string | null;
+  repo_url: string | null;
+}
+
+export interface ComponentLink {
+  id: number;
+  source_id: number;
+  target_id: number;
+  kind: string;
+}
+
+export interface BurndownPoint {
+  week: string;
+  total: number;
+  completed: number;
+  remaining: number;
+}
+
+export interface BurndownResponse {
+  project_id: number;
+  points: BurndownPoint[];
+}
+
 export interface CapacityRow {
   engineer_id: number;
   engineer_name: string;

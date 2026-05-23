@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type {
+  BurndownResponse,
   CapacityResponse,
   GanttResponse,
   Project,
@@ -14,9 +15,12 @@ import type {
 import GanttChart from "../components/GanttChart";
 import CapacityHeatmap from "../components/CapacityHeatmap";
 
-const DependencyGraph = lazy(() => import("../components/DependencyGraph")); // React Flow
+// Heavy (React Flow / Recharts) — code-split.
+const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
+const ArchitectureView = lazy(() => import("../components/ArchitectureView"));
+const BurndownChart = lazy(() => import("../components/BurndownChart"));
 
-type Tab = "gantt" | "deps" | "capacity";
+type Tab = "gantt" | "deps" | "capacity" | "architecture" | "burndown";
 
 export default function ProjectView() {
   const { projectId } = useParams();
@@ -47,6 +51,11 @@ export default function ProjectView() {
     queryKey: ["capacity", id],
     queryFn: () => api.get<CapacityResponse>(`/team/capacity?project_id=${id}`),
     enabled: tab === "capacity",
+  });
+  const burndown = useQuery({
+    queryKey: ["burndown", id],
+    queryFn: () => api.get<BurndownResponse>(`/projects/${id}/burndown`),
+    enabled: tab === "burndown",
   });
 
   const invalidate = () => {
@@ -114,6 +123,8 @@ export default function ProjectView() {
           ["gantt", "Gantt"],
           ["deps", "Dependencies"],
           ["capacity", "Capacity"],
+          ["architecture", "Architecture"],
+          ["burndown", "Burndown"],
         ] as [Tab, string][]).map(([key, label]) => (
           <button
             key={key}
@@ -152,6 +163,21 @@ export default function ProjectView() {
           <CapacityHeatmap data={capacity.data} />
         ) : (
           <p className="text-sm text-slate-500">Loading capacity…</p>
+        ))}
+
+      {tab === "architecture" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading architecture…</p>}>
+          <ArchitectureView projectId={id} />
+        </Suspense>
+      )}
+
+      {tab === "burndown" &&
+        (burndown.data ? (
+          <Suspense fallback={<p className="text-sm text-slate-500">Loading chart…</p>}>
+            <BurndownChart data={burndown.data} />
+          </Suspense>
+        ) : (
+          <p className="text-sm text-slate-500">Loading burndown…</p>
         ))}
 
       <div className="grid grid-cols-2 gap-6">

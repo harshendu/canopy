@@ -226,6 +226,20 @@ class ADRRead(BaseModel):
     pr_links: list[str]
 
 
+class ComponentLinkCreate(BaseModel):
+    source_id: int
+    target_id: int
+    kind: str = "depends_on"
+
+
+class ComponentLinkRead(BaseModel):
+    model_config = _read
+    id: int
+    source_id: int
+    target_id: int
+    kind: str
+
+
 # --- Connectors ---
 class ConnectionCreate(BaseModel):
     provider: Provider
@@ -320,3 +334,16 @@ class ProjectSummary(BaseModel):
 
 class PortfolioResponse(BaseModel):
     projects: list[ProjectSummary]
+
+
+# --- Burndown ---
+class BurndownPoint(BaseModel):
+    week: date
+    total: int
+    completed: int
+    remaining: int
+
+
+class BurndownResponse(BaseModel):
+    project_id: int
+    points: list[BurndownPoint]

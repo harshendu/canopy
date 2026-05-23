@@ -7,12 +7,15 @@ from app.models.architecture import (
     ADRComponentLink,
     ArchitectureComponent,
     ArchitectureDecision,
+    ComponentLink,
 )
 from app.schemas.entities import (
     ADRCreate,
     ADRRead,
     ADRUpdate,
     ComponentCreate,
+    ComponentLinkCreate,
+    ComponentLinkRead,
     ComponentRead,
 )
 
@@ -40,6 +43,54 @@ async def create_component(
     await session.commit()
     await session.refresh(component)
     return component
+
+
+# --- Component links (system-map edges) ---
+@router.get("/component-links", response_model=list[ComponentLinkRead])
+async def list_component_links(
+    session: SessionDep, _: CurrentUser, project_id: int | None = None
+) -> list[ComponentLink]:
+    if project_id is None:
+        result = await session.execute(select(ComponentLink))
+        return list(result.scalars().all())
+    component_ids = set(
+        (
+            await session.execute(
+                select(ArchitectureComponent.id).where(
+                    ArchitectureComponent.project_id == project_id
+                )
+            )
+        ).scalars().all()
+    )
+    result = await session.execute(select(ComponentLink))
+    return [
+        link
+        for link in result.scalars().all()
+        if link.source_id in component_ids or link.target_id in component_ids
+    ]
+
+
+@router.post(
+    "/component-links", response_model=ComponentLinkRead, status_code=status.HTTP_201_CREATED
+)
+async def create_component_link(
+    session: SessionDep, _: CurrentUser, payload: ComponentLinkCreate
+) -> ComponentLink:
+    if payload.source_id == payload.target_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Self-link")
+    link = ComponentLink(**payload.model_dump())
+    session.add(link)
+    await session.commit()
+    await session.refresh(link)
+    return link
+
+
+@router.delete("/component-links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_component_link(session: SessionDep, _: CurrentUser, link_id: int) -> None:
+    link = await session.get(ComponentLink, link_id)
+    if link is not None:
+        await session.delete(link)
+        await session.commit()
 
 
 # --- ADRs ---
