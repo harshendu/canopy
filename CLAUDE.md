@@ -2,6 +2,13 @@
 
 Guidance for Claude Code working in this repo.
 
+## Keeping USER_FLOWS.md in sync (required)
+`docs/USER_FLOWS.md` documents every user-facing flow and **must be updated in the same change** that
+adds, changes, or removes a flow. When you add/modify an endpoint, page, tab, MCP tool, skill, or
+subagent that a user (architect or Claude) interacts with: add or revise the matching flow there,
+note the UI path + API endpoint + MCP tool, and keep its "Known UI gaps" / "Not built" sections
+honest. Treat a flow change without a USER_FLOWS.md update as incomplete.
+
 ## What canopy is
 A tool for a **software architect** to manage architecture + delivery of a codebase: projects,
 milestones, WBS/Gantt scheduling (critical path), teams, ADRs — with **sync from Jira** and reads
