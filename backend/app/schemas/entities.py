@@ -149,11 +149,29 @@ class DependencyRead(BaseModel):
 
 
 # --- Team ---
+class RoleCreate(BaseModel):
+    name: str
+
+
+class RoleRead(BaseModel):
+    model_config = _read
+    id: int
+    name: str
+
+
 class EngineerCreate(BaseModel):
     name: str
     email: str | None = None
     title: str | None = None
     role_id: int | None = None
+
+
+class EngineerUpdate(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    title: str | None = None
+    role_id: int | None = None
+    active: bool | None = None
 
 
 class EngineerRead(BaseModel):
@@ -375,6 +393,20 @@ class ProjectSummary(BaseModel):
 
 class PortfolioResponse(BaseModel):
     projects: list[ProjectSummary]
+
+
+# --- Alerts / digest ---
+class AlertRead(BaseModel):
+    kind: str
+    severity: str
+    message: str
+    entity_type: str | None = None
+    entity_id: int | None = None
+
+
+class AlertsResponse(BaseModel):
+    project_id: int
+    alerts: list[AlertRead]
 
 
 # --- Burndown ---

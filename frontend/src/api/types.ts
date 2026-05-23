@@ -161,3 +161,41 @@ export interface ProjectSummary {
 export interface PortfolioResponse {
   projects: ProjectSummary[];
 }
+
+export interface Role {
+  id: number;
+  name: string;
+}
+
+export interface Engineer {
+  id: number;
+  name: string;
+  email: string | null;
+  title: string | null;
+  role_id: number | null;
+  active: boolean;
+}
+
+export interface Allocation {
+  id: number;
+  engineer_id: number;
+  project_id: number | null;
+  task_id: number | null;
+  percent_allocation: number;
+  capacity_hours_per_week: number;
+  start_date: string | null;
+  end_date: string | null;
+}
+
+export interface Alert {
+  kind: string;
+  severity: string;
+  message: string;
+  entity_type: string | null;
+  entity_id: number | null;
+}
+
+export interface AlertsResponse {
+  project_id: number;
+  alerts: Alert[];
+}

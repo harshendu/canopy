@@ -1,13 +1,17 @@
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.core.events import publish
 from app.models.base import TaskType
-from app.models.project import Dependency, Project, Task, TaskStatusHistory
+from app.models.project import Dependency, Milestone, Project, Task, TaskStatusHistory
+from app.models.team import Allocation, Engineer
 from app.schemas.entities import (
+    AlertRead,
+    AlertsResponse,
     BurndownPoint,
     BurndownResponse,
     GanttLink,
@@ -16,8 +20,14 @@ from app.schemas.entities import (
     ReplanResult,
     WhatIfRequest,
 )
+from app.services.alerts import (
+    AlertMilestone,
+    AlertTask,
+    OverAllocation,
+    compute_alerts,
+)
 from app.services.burndown import compute_burndown, is_done_status
-from app.services.capacity import mondays
+from app.services.capacity import AllocationSpan, mondays, weekly_capacity
 from app.services.planner import PlanOutcome, reschedule_project
 from app.services.scheduling import CycleError
 
@@ -87,6 +97,7 @@ async def replan(session: SessionDep, _: CurrentUser, project_id: int) -> Replan
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if outcome is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    await publish({"type": "replan", "project_id": project_id})
     return _to_result(project_id, outcome)
 
 
@@ -120,6 +131,7 @@ async def set_baseline(session: SessionDep, _: CurrentUser, project_id: int) -> 
         task.baseline_end = task.end
         count += 1
     await session.commit()
+    await publish({"type": "baseline", "project_id": project_id})
     return {"baselined": count}
 
 
@@ -157,3 +169,73 @@ async def burndown(session: SessionDep, _: CurrentUser, project_id: int) -> Burn
         for p in compute_burndown(total, done_dates, weeks)
     ]
     return BurndownResponse(project_id=project_id, points=points)
+
+
+@router.get("/projects/{project_id}/alerts", response_model=AlertsResponse)
+async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> AlertsResponse:
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    tasks = list(
+        (await session.execute(select(Task).where(Task.project_id == project_id))).scalars().all()
+    )
+    milestones = list(
+        (
+            await session.execute(select(Milestone).where(Milestone.project_id == project_id))
+        ).scalars().all()
+    )
+
+    # Over-allocations: weeks where an engineer exceeds 100%.
+    allocations = list(
+        (
+            await session.execute(select(Allocation).where(Allocation.project_id == project_id))
+        ).scalars().all()
+    )
+    engineers = {
+        e.id: e.name
+        for e in (await session.execute(select(Engineer))).scalars().all()
+        if e.id is not None
+    }
+    over: list[OverAllocation] = []
+    if allocations:
+        starts = [a.start_date for a in allocations if a.start_date]
+        ends = [a.end_date for a in allocations if a.end_date]
+        win_start = project.start_date or (min(starts) if starts else date.today())
+        win_end = project.target_date or (max(ends) if ends else win_start + timedelta(weeks=8))
+        grid = weekly_capacity(
+            [AllocationSpan(a.engineer_id, a.percent_allocation, a.start_date, a.end_date)
+             for a in allocations],
+            win_start,
+            win_end,
+        )
+        for eng_id, by_week in grid.items():
+            for week, pct in by_week.items():
+                if pct > 100:
+                    over.append(
+                        OverAllocation(engineers.get(eng_id, f"#{eng_id}"), week.isoformat(), pct)
+                    )
+
+    alert_tasks = [
+        AlertTask(t.id, t.name, t.type == TaskType.summary, t.end, t.deadline)
+        for t in tasks
+        if t.id is not None
+    ]
+    alert_milestones = [
+        AlertMilestone(m.id, m.name, m.target_date, m.status)
+        for m in milestones
+        if m.id is not None
+    ]
+    computed = compute_alerts(date.today(), alert_tasks, alert_milestones, over)
+    return AlertsResponse(
+        project_id=project_id,
+        alerts=[
+            AlertRead(
+                kind=a.kind,
+                severity=a.severity,
+                message=a.message,
+                entity_type=a.entity_type,
+                entity_id=a.entity_id,
+            )
+            for a in computed
+        ],
+    )

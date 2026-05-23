@@ -66,6 +66,13 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   `POST /projects/{id}/replan` (persist), `POST /projects/{id}/whatif` (no persist, duration overrides),
   `POST /projects/{id}/baseline` (snapshot start/end → `baseline_*`; Gantt overlays drift). A Jira
   sync that creates tasks auto-replans the project. Keep the scheduler/planner pure-ish and unit-tested.
+- **Alerts/digest:** `GET /projects/{id}/alerts` turns project state into actionable alerts
+  (deadline misses, overdue milestones, over-allocations, unscheduled work) via
+  `app/services/alerts.py` (pure). Slack/email *delivery* is a future hook over this output.
+- **Live refresh (SSE):** web-process mutations (replan/baseline) `publish()` to an in-process
+  broker (`app/core/events.py`); `GET /api/v1/events/stream?token=` streams them; the frontend
+  `useEventStream` invalidates query caches. Single-process only (worker syncs don't propagate) —
+  Redis pub/sub is the multi-process upgrade.
 - Aggregation for the visibility views is also backend-side and pure-where-possible:
   `GET /projects/portfolio` (per-project rollups), `GET /team/capacity?project_id=` (engineer×week
   allocation via `app/services/capacity.py:weekly_capacity`), and `GET /projects/{id}/burndown`

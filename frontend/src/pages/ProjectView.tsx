@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type {
+  AlertsResponse,
   BurndownResponse,
   CapacityResponse,
   GanttResponse,
@@ -21,7 +22,13 @@ const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
 const ArchitectureView = lazy(() => import("../components/ArchitectureView"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
 
-type Tab = "gantt" | "deps" | "capacity" | "architecture" | "roadmap" | "burndown";
+type Tab = "gantt" | "deps" | "capacity" | "architecture" | "roadmap" | "burndown" | "alerts";
+
+const SEVERITY_STYLES: Record<string, string> = {
+  error: "border-red-300 bg-red-50 text-red-700",
+  warning: "border-amber-300 bg-amber-50 text-amber-700",
+  info: "border-slate-200 bg-slate-50 text-slate-600",
+};
 
 export default function ProjectView() {
   const { projectId } = useParams();
@@ -58,6 +65,11 @@ export default function ProjectView() {
     queryKey: ["burndown", id],
     queryFn: () => api.get<BurndownResponse>(`/projects/${id}/burndown`),
     enabled: tab === "burndown",
+  });
+  const alerts = useQuery({
+    queryKey: ["alerts", id],
+    queryFn: () => api.get<AlertsResponse>(`/projects/${id}/alerts`),
+    enabled: tab === "alerts",
   });
 
   const invalidate = () => {
@@ -169,6 +181,7 @@ export default function ProjectView() {
           ["architecture", "Architecture"],
           ["roadmap", "Roadmap"],
           ["burndown", "Burndown"],
+          ["alerts", "Alerts"],
         ] as [Tab, string][]).map(([key, label]) => (
           <button
             key={key}
@@ -224,6 +237,28 @@ export default function ProjectView() {
           </Suspense>
         ) : (
           <p className="text-sm text-slate-500">Loading burndown…</p>
+        ))}
+
+      {tab === "alerts" &&
+        (alerts.data ? (
+          alerts.data.alerts.length === 0 ? (
+            <p className="text-sm text-slate-500">No alerts — everything looks on track.</p>
+          ) : (
+            <ul className="space-y-2">
+              {alerts.data.alerts.map((a, i) => (
+                <li
+                  key={i}
+                  className={`rounded border px-4 py-2 text-sm ${
+                    SEVERITY_STYLES[a.severity] ?? SEVERITY_STYLES.info
+                  }`}
+                >
+                  <span className="font-medium uppercase">{a.severity}</span> · {a.message}
+                </li>
+              ))}
+            </ul>
+          )
+        ) : (
+          <p className="text-sm text-slate-500">Loading alerts…</p>
         ))}
 
       <div className="grid grid-cols-2 gap-6">

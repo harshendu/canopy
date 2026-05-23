@@ -2,10 +2,12 @@ import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 
 import { useAuth } from "./lib/auth";
+import { useEventStream } from "./lib/useEventStream";
 import Login from "./pages/Login";
 import Projects from "./pages/Projects";
 import ProjectView from "./pages/ProjectView";
 import Connectors from "./pages/Connectors";
+import Team from "./pages/Team";
 
 const Portfolio = lazy(() => import("./pages/Portfolio")); // Recharts — load on demand
 
@@ -16,6 +18,7 @@ function Loading() {
 function ProtectedLayout({ children }: { children: ReactNode }) {
   const { isAuthenticated, logout } = useAuth();
   const location = useLocation();
+  useEventStream(isAuthenticated); // live-refresh caches on backend change events
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
@@ -33,6 +36,9 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
           </NavLink>
           <NavLink to="/projects" className={navClass}>
             Projects
+          </NavLink>
+          <NavLink to="/team" className={navClass}>
+            Team
           </NavLink>
           <NavLink to="/connectors" className={navClass}>
             Connectors
@@ -85,6 +91,14 @@ export default function App() {
         element={
           <ProtectedLayout>
             <ProjectView />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/team"
+        element={
+          <ProtectedLayout>
+            <Team />
           </ProtectedLayout>
         }
       />

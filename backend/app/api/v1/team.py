@@ -5,7 +5,7 @@ from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.models.project import Project
-from app.models.team import Allocation, Engineer
+from app.models.team import Allocation, Engineer, Role
 from app.schemas.entities import (
     AllocationCreate,
     AllocationRead,
@@ -13,10 +13,28 @@ from app.schemas.entities import (
     CapacityRow,
     EngineerCreate,
     EngineerRead,
+    EngineerUpdate,
+    RoleCreate,
+    RoleRead,
 )
 from app.services.capacity import AllocationSpan, mondays, weekly_capacity
 
 router = APIRouter()
+
+
+@router.get("/roles", response_model=list[RoleRead])
+async def list_roles(session: SessionDep, _: CurrentUser) -> list[Role]:
+    result = await session.execute(select(Role).order_by(Role.name))
+    return list(result.scalars().all())
+
+
+@router.post("/roles", response_model=RoleRead, status_code=status.HTTP_201_CREATED)
+async def create_role(session: SessionDep, _: CurrentUser, payload: RoleCreate) -> Role:
+    role = Role(name=payload.name)
+    session.add(role)
+    await session.commit()
+    await session.refresh(role)
+    return role
 
 
 @router.get("/engineers", response_model=list[EngineerRead])
@@ -34,6 +52,36 @@ async def create_engineer(
     await session.commit()
     await session.refresh(engineer)
     return engineer
+
+
+@router.patch("/engineers/{engineer_id}", response_model=EngineerRead)
+async def update_engineer(
+    session: SessionDep, _: CurrentUser, engineer_id: int, payload: EngineerUpdate
+) -> Engineer:
+    engineer = await session.get(Engineer, engineer_id)
+    if engineer is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Engineer not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(engineer, field, value)
+    await session.commit()
+    await session.refresh(engineer)
+    return engineer
+
+
+@router.delete("/engineers/{engineer_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_engineer(session: SessionDep, _: CurrentUser, engineer_id: int) -> None:
+    engineer = await session.get(Engineer, engineer_id)
+    if engineer is not None:
+        await session.delete(engineer)
+        await session.commit()
+
+
+@router.delete("/allocations/{allocation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_allocation(session: SessionDep, _: CurrentUser, allocation_id: int) -> None:
+    allocation = await session.get(Allocation, allocation_id)
+    if allocation is not None:
+        await session.delete(allocation)
+        await session.commit()
 
 
 @router.get("/allocations", response_model=list[AllocationRead])
