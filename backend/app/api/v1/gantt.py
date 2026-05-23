@@ -22,6 +22,9 @@ from app.schemas.entities import (
     AlertsResponse,
     BaselineRead,
     BaselineRequest,
+    BoardLaneRead,
+    BoardResponse,
+    BoardTaskRead,
     BurndownPoint,
     BurndownResponse,
     ForecastResponse,
@@ -40,6 +43,7 @@ from app.services.alerts import (
 )
 from app.services.burndown import compute_burndown, is_done_status
 from app.services.capacity import AllocationSpan, mondays, weekly_capacity
+from app.services.flow import BoardTaskInput, build_board
 from app.services.forecast import monte_carlo_forecast, weekly_throughput
 from app.services.planner import PlanOutcome, reschedule_project
 from app.services.scheduling import CycleError
@@ -256,6 +260,84 @@ async def project_forecast(
         p85_weeks=result.p85_weeks,
         p50_date=result.p50_date,
         p85_date=result.p85_date,
+    )
+
+
+@router.get("/projects/{project_id}/board", response_model=BoardResponse)
+async def board(session: SessionDep, _: CurrentUser, project_id: int) -> BoardResponse:
+    """Flow board: leaf tasks in status lanes, with WIP per lane and aging vs cycle-time P85."""
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    tasks = list(
+        (
+            await session.execute(select(Task).where(Task.project_id == project_id))
+        ).scalars().all()
+    )
+    leaves = [t for t in tasks if t.type != TaskType.summary and t.id is not None]
+    history = (
+        await session.execute(
+            select(TaskStatusHistory).where(
+                col(TaskStatusHistory.task_id).in_({t.id for t in leaves})
+            )
+        )
+    ).scalars().all()
+    by_task: dict[int, list[TaskStatusHistory]] = {}
+    for h in history:
+        by_task.setdefault(h.task_id, []).append(h)
+
+    today = date.today()
+    inputs: list[BoardTaskInput] = []
+    for t in leaves:
+        assert t.id is not None
+        rows = by_task.get(t.id, [])
+        # When did it enter its current status? (latest matching transition, else created.)
+        entered = max(
+            (h.changed_at.date() for h in rows if h.to_status == t.status),
+            default=t.created_at.date(),
+        )
+        age_days = max(0, (today - entered).days)
+        done_dates = [h.changed_at.date() for h in rows if is_done_status(h.to_status)]
+        cycle_days = (
+            max(0, (max(done_dates) - t.created_at.date()).days) if done_dates else None
+        )
+        inputs.append(
+            BoardTaskInput(
+                id=t.id,
+                name=t.name,
+                status=t.status,
+                assignee_engineer_id=t.assignee_engineer_id,
+                is_done=is_done_status(t.status),
+                age_days=age_days,
+                cycle_days=cycle_days,
+            )
+        )
+
+    result = build_board(inputs)
+    return BoardResponse(
+        project_id=project_id,
+        cycle_time_p85_days=result.cycle_time_p85_days,
+        aging_count=result.aging_count,
+        lanes=[
+            BoardLaneRead(
+                status=lane.status,
+                is_done=lane.is_done,
+                wip=lane.wip,
+                tasks=[
+                    BoardTaskRead(
+                        id=bt.id,
+                        name=bt.name,
+                        status=bt.status,
+                        assignee_engineer_id=bt.assignee_engineer_id,
+                        is_done=bt.is_done,
+                        age_days=bt.age_days,
+                        aging=bt.aging,
+                    )
+                    for bt in lane.tasks
+                ],
+            )
+            for lane in result.lanes
+        ],
     )
 
 

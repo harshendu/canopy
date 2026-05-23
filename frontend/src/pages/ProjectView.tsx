@@ -21,6 +21,7 @@ import { canWriteProjects, isPlanner } from "../lib/permissions";
 
 // Heavy (React Flow / Recharts) — code-split.
 const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
+const FlowBoard = lazy(() => import("../components/FlowBoard"));
 const ArchitectureView = lazy(() => import("../components/ArchitectureView"));
 const DecisionsView = lazy(() => import("../components/DecisionsView"));
 const RiskView = lazy(() => import("../components/RiskView"));
@@ -31,6 +32,7 @@ const BurndownChart = lazy(() => import("../components/BurndownChart"));
 
 type Tab =
   | "gantt"
+  | "board"
   | "deps"
   | "capacity"
   | "decisions"
@@ -44,6 +46,7 @@ type Tab =
 
 const TABS: Tab[] = [
   "gantt",
+  "board",
   "deps",
   "capacity",
   "decisions",
@@ -254,6 +257,7 @@ export default function ProjectView() {
       <div className="flex gap-1 border-b border-slate-200">
         {([
           ["gantt", "Gantt"],
+          ["board", "Board"],
           ["deps", "Dependencies"],
           ["capacity", "Capacity"],
           ["decisions", "Decisions"],
@@ -349,6 +353,12 @@ export default function ProjectView() {
             </div>
           )}
         </>
+      )}
+
+      {tab === "board" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading board…</p>}>
+          <FlowBoard projectId={id} />
+        </Suspense>
       )}
 
       {tab === "deps" &&

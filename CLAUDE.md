@@ -27,7 +27,7 @@ backend/   FastAPI + SQLModel + Alembic + arq. API in app/api/v1, models in app/
            business logic in app/services, integrations in app/connectors + app/webhooks.
 frontend/  Vite + React + TS + Tailwind v4 + TanStack Query. Pages in src/pages
            (Portfolio dashboard, Initiatives + InitiativeView cockpit, Projects, ProjectView with
-           Gantt/Dependencies/Capacity/Architecture/Roadmap/Burndown tabs, Connectors). Views in
+           Gantt/Board/Dependencies/Capacity/Architecture/Roadmap/Burndown tabs, Connectors). Views in
            src/components:
            GanttChart (custom SVG, with zoom + baseline/variance overlay), DependencyGraph +
            ArchitectureView (React Flow), CapacityHeatmap + RoadmapView (custom),
@@ -77,6 +77,10 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   event — `GET .../baselines`; the Gantt overlays current-vs-baseline as **schedule variance**, and
   "drift" is reserved for architecture drift §N). A Jira sync that creates tasks auto-replans the
   project. Keep the scheduler/planner pure-ish and unit-tested.
+- **Flow board:** `GET /projects/{id}/board` groups leaf tasks into status lanes with WIP per lane,
+  and flags **aging** tasks (in-status age > the team's cycle-time P85) — pure logic in
+  `app/services/flow.py`; age/cycle dates derived from `TaskStatusHistory`. WIP limits are a
+  client-side knob (not persisted). MCP: `get_board`.
 - **Probabilistic forecast:** `GET /projects/{id}/forecast` and `GET /initiatives/{id}/forecast`
   run a Monte-Carlo simulation (`app/services/forecast.py`, pure) — burn down the remaining items by
   sampling historical weekly throughput (from `TaskStatusHistory`, incl. zero weeks) to report

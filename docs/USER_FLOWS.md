@@ -158,8 +158,8 @@ projects and rolls up their health.
   (§R) via `initiative_id`.
 
 ### B3. Open a project (the cockpit)
-- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Dependencies · Capacity · Decisions ·
-  Architecture · Drift · Roadmap · Burndown · Risk · Retros · Activity**. The header has a **5-day week** toggle, **Set
+- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Dependencies · Capacity ·
+  Decisions · Architecture · Drift · Roadmap · Burndown · Risk · Retros · Activity**. The header has a **5-day week** toggle, **Set
   baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
   `/projects/:id?tab=drift`).
@@ -238,6 +238,19 @@ projects and rolls up their health.
   including stall weeks, from `TaskStatusHistory` — the same source as burndown §H). Needs no
   per-task estimates; reports a distribution, not a single date. Insufficient until ~3 weeks of
   throughput exist.
+
+---
+
+## C9. Flow board (Kanban + WIP + aging) **[new — v2 §C-R2]**
+- **UI:** project → **Board** tab → leaf tasks grouped into **status lanes** (from the Jira-mirrored
+  `status`; done lanes sort last). Each lane shows **WIP** (count of not-done tasks); set a **WIP
+  limit** (client-side) and lanes over it turn red. Cards show **age in status**; a card **aging**
+  beyond the team's **cycle-time P85** is highlighted amber (the leading "this is stuck" signal).
+- **API:** `GET /api/v1/projects/{id}/board` (lanes with per-task `age_days`/`aging`, `wip`, plus
+  `cycle_time_p85_days` and `aging_count`) · **MCP:** `get_board`. Logic is pure in
+  `app/services/flow.py` (grouping + P85 + aging); age/cycle dates come from `TaskStatusHistory`.
+- **Not built:** **persisted** per-lane / per-engineer WIP limits (the limit is a client-side knob
+  for now); drag-to-change status (status is Jira-owned, read-only).
 
 ---
 
@@ -609,7 +622,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~59 curated tools that call the REST API.
+  MCP server then exposes ~60 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**

@@ -93,11 +93,12 @@ migration cutover). But stop treating it as *the* spine. Add the flow lens the b
   - UI: a forecast card on the Gantt tab and a **P85** stat on the initiative cockpit.
   - *Still open:* surfacing it on the portfolio cards (N forecasts is expensive — deferred);
     cycle-time-based forecasting as an alternative to throughput.
-- **C-R2 — Flow board + WIP limits.** A Kanban view over the same tasks (status lanes from Jira),
-  with a per-lane/per-engineer **WIP limit** and an **aging** highlight (items older than the
-  cycle-time P85 glow red). This is where decentralized execution actually happens day-to-day.
-  - UI: new **Board** tab · data from the existing `gantt`/`tasks` payload + status history · no new
-    write model needed (status stays Jira-owned, read-only).
+- **C-R2 — Flow board + WIP + aging. ✅ Shipped.** A **Board** tab groups leaf tasks into status
+  lanes (from Jira) with **WIP** per lane and an **aging** highlight (in-status age > the team's
+  cycle-time P85). `GET /projects/{id}/board` (pure `flow.py`; dates from `TaskStatusHistory`) ·
+  MCP `get_board`. Status stays Jira-owned/read-only.
+  - *Still open:* **persisted** per-lane/per-engineer WIP limits (the limit is a client-side knob
+    for now); drag-to-change.
 - **C-R3 — PTO & calendars feed CPM *and* forecast.** Promote the deferred §F "PTO→CPM" item: the
   `WorkingCalendar` already skips weekends + holidays; extend it to per-engineer availability
   (A-R2). A plan that ignores who's actually out is not a plan.
@@ -323,9 +324,10 @@ or fixes a referenced-but-missing tool.)
    cross-project dependencies + cross-project critical path with hand-offs (slice 2). **C1 complete.**
 6. ✅ **Probabilistic forecast** (C-R1, C3) — Monte-Carlo P50/P85 from throughput, on the Gantt tab
    and initiative cockpit. **Shipped.**
-7. ◐ **Blockers + flow board + WIP** (D-R2, C-R2). **Blockers shipped** (D-R2: model + CRUD + MCP +
-   `/me` flag/resolve + alerts digest). **Remaining:** the flow board (Kanban + WIP limits + aging,
-   C-R2).
+7. ✅ **Blockers + flow board + WIP** (D-R2, C-R2). **Shipped:** blockers (model + CRUD + MCP +
+   `/me` flag/resolve + alerts digest) and the flow board (status lanes + WIP + cycle-time-P85
+   aging, Board tab + `get_board`). *(Open follow-ups: blocked-time in the risk score; persisted
+   WIP limits.)*
 8. **CI/webhook-triggered drift + auto-captured risk snapshots** (N-R1, Q-R3, C6) — close the loops.
 
 **Later (depth):**

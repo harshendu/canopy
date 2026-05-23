@@ -476,6 +476,31 @@ class WhatIfRequest(BaseModel):
     duration_overrides: dict[int, int] = {}
 
 
+# --- Flow board (Kanban + WIP + aging) ---
+class BoardTaskRead(BaseModel):
+    id: int
+    name: str
+    status: str
+    assignee_engineer_id: int | None
+    is_done: bool
+    age_days: int
+    aging: bool
+
+
+class BoardLaneRead(BaseModel):
+    status: str
+    is_done: bool
+    wip: int
+    tasks: list[BoardTaskRead]
+
+
+class BoardResponse(BaseModel):
+    project_id: int
+    lanes: list[BoardLaneRead]
+    cycle_time_p85_days: int | None
+    aging_count: int
+
+
 # --- Blockers (flagged impediments) ---
 class BlockerCreate(BaseModel):
     reason: str

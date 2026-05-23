@@ -144,6 +144,13 @@ def register(mcp, client) -> None:
         return await client.get(f"/projects/{project_id}/burndown")
 
     @mcp.tool
+    async def get_board(project_id: int) -> dict:
+        """Get the flow board: leaf tasks in status lanes with WIP per lane, plus the team's
+        cycle-time P85 and which in-progress tasks are **aging** (sat in their status longer than
+        P85 — the leading 'this is stuck' signal). Manage flow by finishing aging/high-WIP work."""
+        return await client.get(f"/projects/{project_id}/board")
+
+    @mcp.tool
     async def get_forecast(
         project_id: int | None = None, initiative_id: int | None = None
     ) -> dict:

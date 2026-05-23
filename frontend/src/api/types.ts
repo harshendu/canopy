@@ -460,6 +460,30 @@ export interface RetrospectiveDetail extends Retrospective {
   comments: RetrospectiveComment[];
 }
 
+export interface BoardTaskItem {
+  id: number;
+  name: string;
+  status: string;
+  assignee_engineer_id: number | null;
+  is_done: boolean;
+  age_days: number;
+  aging: boolean;
+}
+
+export interface BoardLane {
+  status: string;
+  is_done: boolean;
+  wip: number;
+  tasks: BoardTaskItem[];
+}
+
+export interface BoardResponse {
+  project_id: number;
+  lanes: BoardLane[];
+  cycle_time_p85_days: number | null;
+  aging_count: number;
+}
+
 export interface Blocker {
   id: number;
   task_id: number;
