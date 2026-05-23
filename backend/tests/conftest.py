@@ -6,15 +6,19 @@ os.environ.setdefault("TOKEN_ENCRYPTION_KEY", "")
 os.environ.setdefault("FIRST_SUPERUSER_EMAIL", "")
 os.environ.setdefault("FIRST_SUPERUSER_PASSWORD", "")
 
-import pytest_asyncio  # noqa: E402
-from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
-from sqlmodel import SQLModel  # noqa: E402
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel
 
-import app.models  # noqa: F401,E402  -- register tables
-from app.core.db import get_session  # noqa: E402
-from app.main import app  # noqa: E402
+import app.models
+from app.core.db import get_session
+from app.main import app
 
 test_engine = create_async_engine(
     "sqlite+aiosqlite://",

@@ -41,8 +41,8 @@ docker compose up --build
 ./scripts/install-hooks.sh  # enable the git hooks for this clone
 ```
 
-- **pre-commit** runs backend `pytest` / frontend build only for the layers you change
-  (`RUN_ALL=1` forces both).
+- CI gate = backend **ruff + mypy + pytest** and frontend **eslint + build** (`tsc` + `vite`).
+- **pre-commit** runs the gate only for the layers you change (`RUN_ALL=1` forces both).
 - **pre-push** runs `scripts/ci.sh` — it self-bootstraps the environment, so a freshly cloned
   vanilla VM (with `python3` and `node`/`npm` installed) can push and have CI run. A failure aborts
   the push.

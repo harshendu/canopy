@@ -14,7 +14,8 @@ class Connection(TimestampMixin, table=True):
     name: str
     encrypted_token: str | None = None  # Fernet-encrypted access token / API token
     encrypted_refresh_token: str | None = None
-    config: dict = Field(default_factory=dict, sa_column=Column(JSON))  # base_url, cloud_id, repo, scopes...
+    # Provider-specific config: base_url, cloud_id, repo, scopes, etc.
+    config: dict = Field(default_factory=dict, sa_column=Column(JSON))
     watermark: str | None = None  # last successful incremental-sync cursor/timestamp
     active: bool = True
 

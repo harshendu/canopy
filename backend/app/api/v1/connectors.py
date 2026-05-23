@@ -1,6 +1,7 @@
 from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
@@ -16,7 +17,7 @@ from app.services import sync as sync_service
 router = APIRouter()
 
 
-async def _get_connection(session, connection_id: int) -> Connection:
+async def _get_connection(session: AsyncSession, connection_id: int) -> Connection:
     connection = await session.get(Connection, connection_id)
     if connection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
@@ -71,7 +72,7 @@ async def trigger_incremental_sync(
 
 
 # --- GitHub on-demand reads ---
-def _github(connection: Connection, session) -> GitHubConnector:
+def _github(connection: Connection, session: AsyncSession) -> GitHubConnector:
     if connection.provider != Provider.github:
         raise HTTPException(status_code=400, detail="Not a GitHub connection")
     return get_connector(connection, session)  # type: ignore[return-value]
@@ -95,7 +96,7 @@ async def github_list_pulls(
 
 
 # --- Google Drive on-demand reads ---
-def _gdrive(connection: Connection, session) -> GoogleDriveConnector:
+def _gdrive(connection: Connection, session: AsyncSession) -> GoogleDriveConnector:
     if connection.provider != Provider.gdrive:
         raise HTTPException(status_code=400, detail="Not a Google Drive connection")
     return get_connector(connection, session)  # type: ignore[return-value]

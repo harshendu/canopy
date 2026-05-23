@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, status
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.models.project import Task
@@ -15,7 +15,7 @@ async def list_tasks(
     stmt = select(Task)
     if project_id is not None:
         stmt = stmt.where(Task.project_id == project_id)
-    result = await session.execute(stmt.order_by(Task.id))
+    result = await session.execute(stmt.order_by(col(Task.id)))
     return list(result.scalars().all())
 
 

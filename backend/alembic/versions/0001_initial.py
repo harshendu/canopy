@@ -5,7 +5,7 @@ Revises:
 Create Date: 2026-05-23
 """
 
-import app.models  # noqa: F401  -- registers all tables
+import app.models
 from sqlmodel import SQLModel
 
 from alembic import op

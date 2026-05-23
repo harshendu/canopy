@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from app.models.base import Provider
 from app.models.integration import ExternalRef
@@ -35,7 +35,7 @@ async def upsert_ref(
     remote_updated: str | None = None,
 ) -> ExternalRef:
     ref = await get_ref(session, provider, external_id, entity_type)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if ref is None:
         ref = ExternalRef(
             provider=provider,

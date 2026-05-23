@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, status
-from sqlmodel import select
+from fastapi import APIRouter, status
+from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.models.project import Milestone
@@ -15,7 +15,7 @@ async def list_milestones(
     stmt = select(Milestone)
     if project_id is not None:
         stmt = stmt.where(Milestone.project_id == project_id)
-    result = await session.execute(stmt.order_by(Milestone.target_date))
+    result = await session.execute(stmt.order_by(col(Milestone.target_date)))
     return list(result.scalars().all())
 
 

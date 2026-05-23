@@ -1,6 +1,7 @@
-from datetime import date, timedelta
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
@@ -24,7 +25,9 @@ from app.services.scheduling import (
 router = APIRouter()
 
 
-async def _load_project_graph(session, project_id: int) -> tuple[list[Task], list[Dependency]]:
+async def _load_project_graph(
+    session: AsyncSession, project_id: int
+) -> tuple[list[Task], list[Dependency]]:
     tasks = list(
         (await session.execute(select(Task).where(Task.project_id == project_id)))
         .scalars()
@@ -79,15 +82,18 @@ async def replan(session: SessionDep, _: CurrentUser, project_id: int) -> Replan
     tasks, deps = await _load_project_graph(session, project_id)
     start_ref = _project_start(project, tasks)
 
-    sched_tasks = [
-        SchedTask(
-            id=t.id,
-            duration=0 if t.type == TaskType.milestone else max(t.duration, 0),
-            is_summary=t.type == TaskType.summary,
-            pinned_start_offset=(t.start - start_ref).days if t.start else None,
+    sched_tasks: list[SchedTask] = []
+    for t in tasks:
+        if t.id is None:
+            continue
+        sched_tasks.append(
+            SchedTask(
+                id=t.id,
+                duration=0 if t.type == TaskType.milestone else max(t.duration, 0),
+                is_summary=t.type == TaskType.summary,
+                pinned_start_offset=(t.start - start_ref).days if t.start else None,
+            )
         )
-        for t in tasks
-    ]
     sched_deps = [
         SchedDep(d.predecessor_id, d.successor_id, d.type.value, d.lag) for d in deps
     ]

@@ -32,13 +32,17 @@ pip install -e ".[dev]"
 export DATABASE_URL="sqlite+aiosqlite:///./canopy.db"   # or a Postgres URL
 alembic upgrade head
 uvicorn app.main:app --reload
+ruff check .         # lint (strict ruleset incl. ANN — every def must be typed)
+ruff check --fix .   # autofix
+mypy app             # static type check (must pass clean)
 pytest -q
 ```
 Frontend (run from `frontend/`):
 ```bash
 npm install
 npm run dev          # proxies /api -> :8000
-npm run build        # tsc typecheck + vite build (this is the "build" the hook runs)
+npm run lint         # eslint (typescript-eslint + react-hooks), --max-warnings 0
+npm run build        # tsc typecheck + vite build
 ```
 Plugin (run from `plugin/`, venv at `plugin/.venv`):
 ```bash
@@ -60,6 +64,20 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
   REST routes. Skills are runbooks; subagents do isolated multi-step work.
 
+## Code standards (enforced by CI — keep them green)
+- **Python is strictly typed.** Every function/method is annotated (ruff `ANN`), and `mypy app` must
+  pass with no errors (configured in `pyproject.toml`: `disallow_untyped_defs`, `no_implicit_optional`,
+  `warn_return_any`, pydantic plugin). New code must keep mypy clean.
+- **Use Pydantic models at API boundaries.** Request/response shapes live in `app/schemas/` as Pydantic
+  models (DB models are SQLModel). Don't return bare dicts from routes where a schema fits.
+- **SQLModel + mypy patterns:** wrap model columns in `col(...)` for `order_by`/`where` so they
+  type-check; a model `id` is `int | None`, so guard/assert it's set (it is after `flush`) before
+  using it as a non-optional value. Coerce `Any` from `dict`/`resp.json()` with `str(...)`/`list(...)`.
+- **Frontend is TypeScript + ESLint** (`typescript-eslint` + `react-hooks`), lint runs with
+  `--max-warnings 0`. `tsconfig` is strict (`noUnusedLocals`/`noUnusedParameters`). No `any`.
+- Ruff/mypy/eslint configs are the source of truth; tune them in `pyproject.toml` / `eslint.config.js`
+  rather than scattering inline ignores.
+
 ## Gotchas (decisions already made — don't "fix" these back)
 - Auth uses **`bcrypt` directly**, not `passlib` (passlib is unmaintained and breaks with bcrypt 4.x).
 - GitHub/Drive connectors use **`httpx`**, not `githubkit`/google SDKs (fewer deps, stable REST).
@@ -71,9 +89,10 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
 - `scripts/setup.sh` — idempotent environment bootstrap: creates `backend/.venv`, installs Python +
   Node deps, and only reinstalls when something is missing or a lockfile changed. Works on a vanilla
   VM with just the repo checked out (requires `python3` and `node`/`npm` on PATH).
-- `scripts/ci.sh` — basic CI: runs `setup.sh`, then backend `pytest` + frontend `npm run build`.
-- **pre-commit** hook (`.githooks/pre-commit`): backend `pytest` (if `backend/` changed) and frontend
-  build (if `frontend/` changed). `RUN_ALL=1` forces both.
+- `scripts/ci.sh` — basic CI: runs `setup.sh`, then backend `ruff` + `mypy` + `pytest` and frontend
+  `eslint` + `build`.
+- **pre-commit** hook (`.githooks/pre-commit`): backend `ruff`+`mypy`+`pytest` (if `backend/` changed)
+  and frontend `eslint`+`build` (if `frontend/` changed). `RUN_ALL=1` forces both.
 - **pre-push** hook (`.githooks/pre-push`): runs `scripts/ci.sh` (full CI, self-bootstrapping) before
   every push; a failure aborts the push.
 - Install both hooks once per clone: `scripts/install-hooks.sh` (sets `core.hooksPath=.githooks`).

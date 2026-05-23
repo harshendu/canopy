@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
-from sqlmodel import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, func, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.models.architecture import (
@@ -42,7 +43,9 @@ async def create_component(
 
 
 # --- ADRs ---
-async def _set_component_links(session, adr_id: int, component_ids: list[int]) -> None:
+async def _set_component_links(
+    session: AsyncSession, adr_id: int, component_ids: list[int]
+) -> None:
     existing = await session.execute(
         select(ADRComponentLink).where(ADRComponentLink.adr_id == adr_id)
     )
@@ -59,7 +62,7 @@ async def list_adrs(
     stmt = select(ArchitectureDecision)
     if project_id is not None:
         stmt = stmt.where(ArchitectureDecision.project_id == project_id)
-    result = await session.execute(stmt.order_by(ArchitectureDecision.number))
+    result = await session.execute(stmt.order_by(col(ArchitectureDecision.number)))
     return list(result.scalars().all())
 
 
@@ -77,6 +80,7 @@ async def create_adr(
     adr = ArchitectureDecision(number=next_number, **data)
     session.add(adr)
     await session.flush()
+    assert adr.id is not None  # guaranteed after flush
     await _set_component_links(session, adr.id, payload.component_ids)
     await session.commit()
     await session.refresh(adr)
@@ -93,7 +97,7 @@ async def update_adr(
     data = payload.model_dump(exclude_unset=True, exclude={"component_ids"})
     for field, value in data.items():
         setattr(adr, field, value)
-    if payload.component_ids is not None:
+    if payload.component_ids is not None and adr.id is not None:
         await _set_component_links(session, adr.id, payload.component_ids)
     await session.commit()
     await session.refresh(adr)

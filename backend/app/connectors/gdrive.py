@@ -37,7 +37,7 @@ class GoogleDriveConnector(Connector):
             )
             resp.raise_for_status()
             data = resp.json()
-        return data.get("files", [])
+        return list(data.get("files", []))
 
     async def export_doc(self, file_id: str) -> str:
         """Export a Google Doc to markdown text."""

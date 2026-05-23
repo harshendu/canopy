@@ -21,6 +21,6 @@ async def get_pool() -> ArqRedis:
     return _pool
 
 
-async def enqueue(function: str, *args, **kwargs):
+async def enqueue(function: str, *args: object) -> object:
     pool = await get_pool()
-    return await pool.enqueue_job(function, *args, **kwargs)
+    return await pool.enqueue_job(function, *args)

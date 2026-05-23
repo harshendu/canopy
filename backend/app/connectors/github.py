@@ -21,11 +21,11 @@ _API = "https://api.github.com"
 class GitHubConnector(Connector):
     @property
     def owner(self) -> str:
-        return self.config["owner"]
+        return str(self.config["owner"])
 
     @property
     def repo(self) -> str:
-        return self.config["repo"]
+        return str(self.config["repo"])
 
     def _client(self) -> httpx.AsyncClient:
         token = self.access_token() or ""
@@ -45,7 +45,7 @@ class GitHubConnector(Connector):
             data = resp.json()
         if data.get("encoding") == "base64":
             return base64.b64decode(data["content"]).decode("utf-8", errors="replace")
-        return data.get("content", "")
+        return str(data.get("content", ""))
 
     async def list_pull_requests(self, state: str = "open") -> list[dict]:
         async with self._client() as client:

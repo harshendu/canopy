@@ -26,7 +26,7 @@ _EPIC_TYPES = {"Epic"}
 class JiraConnector(Connector):
     @property
     def base_url(self) -> str:
-        return self.config["base_url"].rstrip("/")
+        return str(self.config["base_url"]).rstrip("/")
 
     @property
     def canopy_project_id(self) -> int:
@@ -34,7 +34,7 @@ class JiraConnector(Connector):
 
     @property
     def jira_project_key(self) -> str:
-        return self.config["jira_project_key"]
+        return str(self.config["jira_project_key"])
 
     def _client(self) -> httpx.AsyncClient:
         email = self.config.get("email", "")
@@ -80,26 +80,21 @@ class JiraConnector(Connector):
             return "skipped", parent_ext_id, ext_id
 
         task_type = TaskType.summary if issuetype in _EPIC_TYPES else TaskType.task
-        if ref is None:
-            task = Task(
-                project_id=self.canopy_project_id,
-                name=summary,
-                type=task_type,
-                status=status,
-            )
+        task: Task | None = None
+        if ref is not None:
+            task = await self.session.get(Task, ref.entity_id)
+        if task is None:  # new issue, or dangling ref — create
+            task = Task(project_id=self.canopy_project_id, name=summary, type=task_type)
             self.session.add(task)
             await self.session.flush()
-            action = "created"
+            action = "created" if ref is None else "updated"
         else:
-            task = await self.session.get(Task, ref.entity_id)
-            if task is None:  # ref dangling — recreate
-                task = Task(project_id=self.canopy_project_id, name=summary, type=task_type)
-                self.session.add(task)
-                await self.session.flush()
-            task.name = summary
-            task.status = status
-            task.type = task_type
             action = "updated"
+        task.name = summary
+        task.status = status
+        task.type = task_type
+        await self.session.flush()
+        assert task.id is not None  # guaranteed after flush
 
         await mapping.upsert_ref(
             self.session,

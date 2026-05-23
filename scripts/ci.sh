@@ -11,11 +11,19 @@ echo "═══════════ canopy CI ══════════
 # 1. Make sure the environment exists (works on a freshly-checked-out vanilla VM).
 bash "$REPO_ROOT/scripts/setup.sh"
 
-# 2. Backend tests.
-echo "▶ backend: pytest"
-( cd "$REPO_ROOT/backend" && "$REPO_ROOT/backend/.venv/bin/python" -m pytest -q )
+PY="$REPO_ROOT/backend/.venv/bin/python"
 
-# 3. Frontend typecheck + production build.
+# 2. Backend: lint (ruff), type-check (mypy), tests (pytest).
+echo "▶ backend: ruff"
+( cd "$REPO_ROOT/backend" && "$PY" -m ruff check . )
+echo "▶ backend: mypy"
+( cd "$REPO_ROOT/backend" && "$PY" -m mypy app )
+echo "▶ backend: pytest"
+( cd "$REPO_ROOT/backend" && "$PY" -m pytest -q )
+
+# 3. Frontend: lint (eslint), typecheck + production build.
+echo "▶ frontend: lint"
+( cd "$REPO_ROOT/frontend" && npm run lint )
 echo "▶ frontend: build (tsc + vite)"
 ( cd "$REPO_ROOT/frontend" && npm run build )
 

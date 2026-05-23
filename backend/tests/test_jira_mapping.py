@@ -61,7 +61,9 @@ async def test_upsert_is_idempotent(db_session):
 @pytest.mark.asyncio
 async def test_newer_update_refreshes(db_session):
     connector = await _make_connector(db_session)
-    await connector._upsert_issue(_issue("10001", "PLAT-1", "Story", "2026-05-01T10:00:00.000+0000"))
+    await connector._upsert_issue(
+        _issue("10001", "PLAT-1", "Story", "2026-05-01T10:00:00.000+0000")
+    )
     await db_session.commit()
     action, _, _ = await connector._upsert_issue(
         _issue("10001", "PLAT-1", "Story", "2026-05-02T10:00:00.000+0000")
@@ -73,7 +75,9 @@ async def test_newer_update_refreshes(db_session):
 @pytest.mark.asyncio
 async def test_epic_parent_wiring(db_session):
     connector = await _make_connector(db_session)
-    await connector._upsert_issue(_issue("20000", "PLAT-10", "Epic", "2026-05-01T10:00:00.000+0000"))
+    await connector._upsert_issue(
+        _issue("20000", "PLAT-10", "Epic", "2026-05-01T10:00:00.000+0000")
+    )
     await connector._upsert_issue(
         _issue("20001", "PLAT-11", "Story", "2026-05-01T10:00:00.000+0000", parent_id="20000")
     )

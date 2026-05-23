@@ -6,7 +6,7 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlmodel import SQLModel
 
-import app.models  # noqa: F401  -- registers all tables on SQLModel.metadata
+import app.models
 from app.core.config import settings
 
 config = context.config

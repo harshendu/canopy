@@ -9,7 +9,7 @@ flags the critical path (float <= 0).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 import networkx as nx

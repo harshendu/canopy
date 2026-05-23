@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,7 @@ class SyncResult:
     skipped: int = 0
     watermark: str | None = None
 
-    def merge(self, other: "SyncResult") -> "SyncResult":
+    def merge(self, other: SyncResult) -> SyncResult:
         self.created += other.created
         self.updated += other.updated
         self.skipped += other.skipped
@@ -54,7 +55,7 @@ class Connector(ABC):
 _REGISTRY: dict[Provider, type[Connector]] = {}
 
 
-def register(provider: Provider):
+def register(provider: Provider) -> Callable[[type[Connector]], type[Connector]]:
     def deco(cls: type[Connector]) -> type[Connector]:
         cls.provider = provider
         _REGISTRY[provider] = cls
