@@ -223,5 +223,9 @@ dist/
 .vite/
 *.local
 
+# The Python template's `lib/` rule above also matches frontend/src/lib — keep it tracked.
+!frontend/src/lib/
+!frontend/src/lib/**
+
 # --- canopy local artifacts ---
 *.db
