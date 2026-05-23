@@ -471,6 +471,8 @@ class ProjectSummary(BaseModel):
     critical_tasks: int
     project_end: date | None
     target_date: date | None
+    risk_score: int
+    risk_level: str
 
 
 class PortfolioResponse(BaseModel):
@@ -502,3 +504,54 @@ class BurndownPoint(BaseModel):
 class BurndownResponse(BaseModel):
     project_id: int
     points: list[BurndownPoint]
+
+
+# --- Risk dashboard ---
+class RiskIndicatorRead(BaseModel):
+    key: str
+    label: str
+    score: int
+    summary: str
+    details: list[str]
+
+
+class RiskFamilyRead(BaseModel):
+    key: str
+    label: str
+    available: bool
+    score: int
+    weight: float
+    indicators: list[RiskIndicatorRead]
+
+
+class RiskMitigationCreate(BaseModel):
+    indicator_key: str
+    note: str
+    owner_engineer_id: int | None = None
+    check_in: date | None = None
+
+
+class RiskMitigationUpdate(BaseModel):
+    note: str | None = None
+    owner_engineer_id: int | None = None
+    check_in: date | None = None
+    resolved: bool | None = None
+
+
+class RiskMitigationRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    indicator_key: str
+    note: str
+    owner_engineer_id: int | None
+    check_in: date | None
+    resolved: bool
+
+
+class RiskResponse(BaseModel):
+    project_id: int
+    score: int
+    level: str
+    families: list[RiskFamilyRead]
+    mitigations: list[RiskMitigationRead]

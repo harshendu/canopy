@@ -54,8 +54,11 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 
 ### B1. View the portfolio dashboard
 - **UI:** `/portfolio` (landing page). Shows a completion bar chart and a card per project
-  (avg % complete, completed/total tasks, critical-task count, end date). Clicking a card opens it.
-- **API:** `GET /api/v1/projects/portfolio` · **MCP:** `list_projects`.
+  (avg % complete, completed/total tasks, critical-task count, end date, and a **risk score +
+  level badge** — see §Q). Clicking a card opens it.
+- **API:** `GET /api/v1/projects/portfolio` (each `ProjectSummary` now includes `risk_score` +
+  `risk_level`, computed by the same scorer as the Risk tab) · **MCP:** `list_projects`.
+- **Not built (v2 §B1):** drift score, last-decision recency, and sortable columns.
 
 ### B2. Create a project
 - **UI:** `/projects` → enter KEY + name → "Add".
@@ -236,7 +239,9 @@ review it, alternatives, reversibility, and a discussion thread.
 ---
 
 ## H. Progress: burndown
-- **UI:** project → Burndown tab → a line chart of remaining vs completed work per week.
+- **UI:** project → Burndown tab → a line chart of remaining vs completed work per week. (v2 §H
+  folds burndown into Risk and adds cumulative flow / cycle time / throughput / PR latency — those
+  extra charts are **not built**, and burndown stays its own tab for now.)
 - **API:** `GET /api/v1/projects/{id}/burndown` · **MCP:** `get_burndown`.
 - **Notes:** burndown is driven by task **status history**, which is populated from Jira (see J5).
   Without synced status transitions the chart is flat at the total.
@@ -244,11 +249,49 @@ review it, alternatives, reversibility, and a discussion thread.
 ---
 
 ## I. Alerts / digest
-- **UI:** project → Alerts tab → a severity-colored list: deadline misses (error), overdue
-  milestones / over-allocations (warning), unscheduled work (info).
-- **API:** `GET /api/v1/projects/{id}/alerts` · **MCP:** `list_alerts`.
+- **UI:** the old standalone **Alerts** tab is **gone** — alerts now live as the *lagging-indicator*
+  section inside the **Risk** tab (§Q). Same content: deadline misses (error), overdue milestones /
+  over-allocations (warning), unscheduled work (info).
+- **API:** `GET /api/v1/projects/{id}/alerts` (unchanged) · **MCP:** `list_alerts`.
 - **Notes:** delivery to Slack/email is **not built** — alerts are computed and shown/queried; a
   delivery integration is a future hook over this output.
+
+---
+
+## Q. Risk dashboard (Risk tab) — leading indicators
+
+Replaces Alerts as the primary risk surface (v2 §Q). A per-project, opinionated **risk score**
+(0–100, higher = riskier) with a drillable breakdown, plus a mitigation log; the lagging Alerts
+digest (§I) sits underneath.
+
+### Q1. Risk score & breakdown
+- **UI:** project → **Risk** tab → the overall score + level (low/moderate/high/critical) and four
+  **families**, each with a score bar and drillable **indicators**:
+  - **Schedule** — deadline misses, schedule variance vs baseline (drifted tasks), critical-path
+    float consumption.
+  - **Capacity** — engineer-week over-allocation (from the capacity grid).
+  - **Architecture** — deferred decisions past `decide_by` + decisions stuck in `under_discussion`
+    > 14 days (both from §G).
+  - **Quality** — PR latency / churn / test failure: **not built** (needs GitHub PR metrics, v2
+    §J6); reported as *unavailable* and **excluded** from the score (the overall renormalises over
+    the available families).
+- Each indicator carries a 0–100 sub-score and drill-down **details** (the offending tasks /
+  decisions / engineer-weeks). Scoring weights/thresholds live in `app/services/risk.py` (pure).
+- **API:** `GET /api/v1/projects/{id}/risk` · **MCP:** `get_risk`. The same scorer feeds the
+  portfolio card's `risk_score` (§B1).
+
+### Q2. Mitigation log
+- **UI:** Risk tab → **Acknowledge** any indicator with a note, an owner, and a check-in date; open
+  mitigations show inline under their indicator and in the **Mitigation log** (resolve / reopen /
+  delete).
+- **API:** `GET` (embedded in the risk response), `POST/PATCH/DELETE
+  /api/v1/projects/{id}/risk/mitigations[/{mid}]` · **MCP:** `log_risk_mitigation`.
+
+### Q3. Not built (v2 §Q)
+- **Risk timeline** (8-week small-multiples trend) — needs historical risk snapshots, which aren't
+  persisted yet.
+- Automated **check-in follow-ups** / notifications on mitigations past their date.
+- The **quality** family (see Q1) and the **drift score** contribution (v2 §N).
 
 ---
 
@@ -311,7 +354,7 @@ review it, alternatives, reversibility, and a discussion thread.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~30 curated tools that call the REST API.
+  MCP server then exposes ~32 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -336,8 +379,9 @@ review it, alternatives, reversibility, and a discussion thread.
   path, and uses `whatif_schedule` to test staffing/scope changes before committing them.
 
 ### L6. Assess risk (subagent)
-- The **`risk-analyst`** subagent synthesizes `list_alerts`, `get_burndown`, the critical path, and
-  `adr_impact` into a prioritized risk report.
+- The **`risk-analyst`** subagent leads with `get_risk` (score + breakdown), then drills with
+  `list_alerts`, `get_burndown`, the critical path, `decision_queue`, and `adr_impact` into a
+  prioritized risk report — and can record agreed mitigations via `log_risk_mitigation`.
 
 ---
 
@@ -348,7 +392,8 @@ backlog:
 - ADR **doc-import** (G6) — was dropped from the trimmed Architecture tab; re-add to Decisions.
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - **User registration** (A3).
-- *(closed in this revision: decision-impact / blast radius (G5) is now in the UI.)*
+- *(closed previously: decision-impact / blast radius (G5) is in the UI. Closed this revision: the
+  **Risk dashboard** (§Q) and portfolio risk scores (§B1).)*
 
 ## Not built (documented as future)
 - Slack/email **delivery** of alerts (I) and **decision SLA notifications** (G3).
@@ -358,9 +403,11 @@ backlog:
   unification (v2 §A3/§"Roles × flows") — decisions currently model actors as Engineers without
   enforcement.
 - Hard-enforced decision **rules/approval gates** (G3) — `can_accept` is advisory today.
-- The broader v2 surfaces this slice does **not** touch: architecture **drift detection** (§N),
-  the **risk dashboard** (§Q), the **engineer workspace** (§M), **retros/postmortems** (§P), and
-  new connectors (PagerDuty §J7, CI/observability §J8).
+- **Risk timeline** (§Q2) and the **quality** risk family + **drift-score** contribution (§Q1) —
+  need historical snapshots and the GitHub-metrics / drift-detection work respectively.
+- The broader v2 surfaces these slices do **not** touch: architecture **drift detection** (§N),
+  the **engineer workspace** (§M), **retros/postmortems** (§P), and new connectors (PagerDuty §J7,
+  CI/observability §J8).
 
 ---
 

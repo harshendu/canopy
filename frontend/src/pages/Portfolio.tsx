@@ -12,6 +12,7 @@ import {
 
 import { api } from "../api/client";
 import type { PortfolioResponse } from "../api/types";
+import { riskTone } from "../lib/risk";
 
 export default function Portfolio() {
   const { data, isLoading } = useQuery({
@@ -53,13 +54,20 @@ export default function Portfolio() {
                 to={`/projects/${p.id}`}
                 className="block rounded-lg border border-slate-200 bg-white p-4 hover:border-canopy-500"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="font-mono text-xs text-slate-400">{p.key}</span>
-                  {p.critical_tasks > 0 && (
-                    <span className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-700">
-                      {p.critical_tasks} critical
+                  <div className="flex items-center gap-1">
+                    {p.critical_tasks > 0 && (
+                      <span className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                        {p.critical_tasks} critical
+                      </span>
+                    )}
+                    <span
+                      className={`rounded px-2 py-0.5 text-xs font-medium ${riskTone(p.risk_level).badge}`}
+                    >
+                      risk {p.risk_score}
                     </span>
-                  )}
+                  </div>
                 </div>
                 <div className="mt-1 font-medium">{p.name}</div>
                 <div className="mt-3 h-2 w-full rounded bg-slate-100">

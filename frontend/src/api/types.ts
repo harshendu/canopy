@@ -222,6 +222,45 @@ export interface ProjectSummary {
   critical_tasks: number;
   project_end: string | null;
   target_date: string | null;
+  risk_score: number;
+  risk_level: RiskLevel;
+}
+
+export type RiskLevel = "low" | "moderate" | "high" | "critical";
+
+export interface RiskIndicator {
+  key: string;
+  label: string;
+  score: number;
+  summary: string;
+  details: string[];
+}
+
+export interface RiskFamily {
+  key: string;
+  label: string;
+  available: boolean;
+  score: number;
+  weight: number;
+  indicators: RiskIndicator[];
+}
+
+export interface RiskMitigation {
+  id: number;
+  project_id: number;
+  indicator_key: string;
+  note: string;
+  owner_engineer_id: number | null;
+  check_in: string | null;
+  resolved: boolean;
+}
+
+export interface RiskResponse {
+  project_id: number;
+  score: number;
+  level: RiskLevel;
+  families: RiskFamily[];
+  mitigations: RiskMitigation[];
 }
 
 export interface PortfolioResponse {

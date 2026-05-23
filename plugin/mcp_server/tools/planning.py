@@ -71,6 +71,40 @@ def register(mcp, client) -> None:
         return await client.get(f"/projects/{project_id}/alerts")
 
     @mcp.tool
+    async def get_risk(project_id: int) -> dict:
+        """Get the project's leading-indicator risk score + drillable breakdown.
+
+        Returns a 0-100 score and families (schedule / capacity / architecture / quality),
+        each with indicators (summary, score, drill-down details) and the open mitigations.
+        Architecture risk includes deferred decisions past decide-by and ADRs stuck in
+        discussion (see the decisions tools). Quality risk is not yet wired.
+        """
+        return await client.get(f"/projects/{project_id}/risk")
+
+    @mcp.tool
+    async def log_risk_mitigation(
+        project_id: int,
+        indicator_key: str,
+        note: str,
+        owner_engineer_id: int | None = None,
+        check_in: str | None = None,
+    ) -> dict:
+        """Acknowledge a risk indicator with a mitigation note, owner, and check-in date.
+
+        `indicator_key` is one from `get_risk` (e.g. deadline_violations, over_allocation,
+        deferred_overdue, stuck_decisions). `check_in` is YYYY-MM-DD.
+        """
+        return await client.post(
+            f"/projects/{project_id}/risk/mitigations",
+            {
+                "indicator_key": indicator_key,
+                "note": note,
+                "owner_engineer_id": owner_engineer_id,
+                "check_in": check_in,
+            },
+        )
+
+    @mcp.tool
     async def create_adr(
         project_id: int,
         title: str,

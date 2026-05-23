@@ -89,3 +89,16 @@ class Dependency(TimestampMixin, table=True):
     successor_id: int = Field(foreign_key="task.id", index=True)
     type: DependencyType = Field(default=DependencyType.FS)
     lag: int = 0  # days
+
+
+class RiskMitigation(TimestampMixin, table=True):
+    """An acknowledgement of a risk indicator: a note, an owner, and a check-in date.
+    The system follows up — an open mitigation past its check-in is itself a nudge."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    indicator_key: str  # which risk indicator this addresses (see services/risk.py)
+    note: str
+    owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    check_in: date | None = None
+    resolved: bool = False

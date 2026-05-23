@@ -10,6 +10,7 @@ from app.api.v1 import (
     gantt,
     milestones,
     projects,
+    risk,
     tasks,
     team,
 )
@@ -26,3 +27,4 @@ api_router.include_router(decisions.router, prefix="/decisions", tags=["decision
 api_router.include_router(connectors.router, prefix="/connectors", tags=["connectors"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])
+api_router.include_router(risk.router, tags=["risk"])

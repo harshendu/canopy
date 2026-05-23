@@ -1,9 +1,14 @@
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.api.v1.risk import report_for
+from app.models.architecture import ArchitectureDecision
 from app.models.base import TaskType
 from app.models.project import Holiday, Project, Task
+from app.models.team import Allocation, Engineer
 from app.schemas.entities import (
     HolidayCreate,
     HolidayRead,
@@ -20,8 +25,27 @@ router = APIRouter()
 @router.get("/portfolio", response_model=PortfolioResponse)
 async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
     projects = (await session.execute(select(Project).order_by(Project.name))).scalars().all()
+
+    # Bulk-load the inputs risk scoring needs once, then group in Python (avoids N+1).
+    all_allocations = (await session.execute(select(Allocation))).scalars().all()
+    all_adrs = (await session.execute(select(ArchitectureDecision))).scalars().all()
+    engineer_names = {
+        e.id: e.name
+        for e in (await session.execute(select(Engineer))).scalars().all()
+        if e.id is not None
+    }
+    allocs_by_project: dict[int, list[Allocation]] = {}
+    for a in all_allocations:
+        if a.project_id is not None:
+            allocs_by_project.setdefault(a.project_id, []).append(a)
+    adrs_by_project: dict[int, list[ArchitectureDecision]] = {}
+    for adr in all_adrs:
+        adrs_by_project.setdefault(adr.project_id, []).append(adr)
+    today = date.today()
+
     summaries: list[ProjectSummary] = []
     for project in projects:
+        assert project.id is not None
         tasks = list(
             (
                 await session.execute(select(Task).where(Task.project_id == project.id))
@@ -32,6 +56,15 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
         completed = sum(1 for t in leaves if t.percent_complete >= 100)
         avg = sum(t.percent_complete for t in leaves) / total if total else 0.0
         ends = [t.end for t in tasks if t.end]
+        report = report_for(
+            tasks=tasks,
+            allocations=allocs_by_project.get(project.id, []),
+            engineer_names=engineer_names,
+            adrs=adrs_by_project.get(project.id, []),
+            project_start=project.start_date,
+            project_target=project.target_date,
+            today=today,
+        )
         summaries.append(
             ProjectSummary(
                 id=project.id,
@@ -43,6 +76,8 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
                 critical_tasks=sum(1 for t in leaves if t.is_critical),
                 project_end=max(ends) if ends else None,
                 target_date=project.target_date,
+                risk_score=report.score,
+                risk_level=report.level,
             )
         )
     return PortfolioResponse(projects=summaries)

@@ -18,6 +18,7 @@ from app.models.project import (
     Holiday,
     Milestone,
     Project,
+    RiskMitigation,
     Task,
     TaskStatusHistory,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "Milestone",
     "Project",
     "PullRequest",
+    "RiskMitigation",
     "Role",
     "Task",
     "TaskStatusHistory",
