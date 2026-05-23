@@ -113,10 +113,11 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   schema: edit models, then `alembic revision --autogenerate -m "..."`, review the file, commit.
   Generated files under `alembic/versions/` are excluded from ruff.
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
-  REST routes (~26 across projects/planning/connectors/team/architecture). Skills are runbooks
-  (`planning-roadmaps`, `writing-adrs`, `syncing-jira`, `capacity-planning`); subagents do isolated
-  multi-step work (`jira-sync`, `gantt-planner`, `risk-analyst`). Add a tool when Claude needs a new
-  verb; register it in `mcp_server/server.py`.
+  REST routes (~50 across projects/planning/connectors/team/architecture). Skills are runbooks
+  (`planning-roadmaps`, `writing-adrs`, `syncing-jira`, `capacity-planning`, `decision-deadline-nudger`,
+  `pr-to-adr-linker`); subagents do isolated multi-step work (`jira-sync`, `gantt-planner`,
+  `risk-analyst`, `drift-sentinel`). Add a tool when Claude needs a new verb; register it in
+  `mcp_server/server.py`.
 - **Observability:** `GET /api/v1/health` (liveness) and `/api/v1/health/ready` (DB check) for
   orchestration; structured logging via `app/core/logging.py`.
 - **Frontend tests:** Vitest (`npm run test`) covers pure helpers (e.g. `src/lib/horizon.ts`); CI

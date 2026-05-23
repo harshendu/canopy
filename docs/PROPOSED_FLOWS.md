@@ -270,12 +270,12 @@ or fixes a referenced-but-missing tool.)
 
 | Tool | Maps to | Why it's needed |
 |------|---------|-----------------|
-| `update_task` | `PATCH /tasks/{id}` | Tactical edits (duration/dates/deadline/parent). Endpoint exists; **no tool today.** |
-| `assign_task` | `PATCH /tasks/{id}` (assignee) | Reassign work — the most common tactical move. |
-| `allocate_engineer` | `POST /team/allocations` | Staffing changes; endpoint exists, **no tool.** |
+| `update_task` ✅ | `PATCH /tasks/{id}` | Tactical edits (name/duration/dates/deadline/percent/parent). **Shipped** (status stays Jira-read-only). |
+| `assign_task` ✅ | `PATCH /tasks/{id}` (assignee) | Reassign work — the most common tactical move. **Shipped** (set/clear assignee). |
+| `allocate_engineer` ✅ | `POST /team/allocations` | Staffing changes. **Shipped.** |
 | `get_capacity` *(extend)* | `GET /team/capacity?project_id=` | Make `project_id` optional → **org-wide** capacity (C2). |
-| `list_adrs` ★ | `GET /architecture/adrs` | **Bug:** `pr-to-adr-linker` calls this; it doesn't exist. |
-| `create_project` | `POST /projects` | Let Claude bootstrap a project conversationally. |
+| `list_adrs` ✅★ | `GET /architecture/adrs` | **Bug fixed:** `pr-to-adr-linker` called a tool that didn't exist. **Shipped.** |
+| `create_project` ✅ | `POST /projects` | Let Claude bootstrap a project conversationally. **Shipped.** |
 | `set_decision_rule` | `PATCH /projects/{id}` | Tune the decision policy (owner/consensus/lazy). |
 | `list_milestones` | `GET /milestones?project_id=` | Read milestones (only `create_milestone` exists). |
 | `raise_blocker` / `resolve_blocker` / `list_blockers` | new `…/blockers` | The blocker signal (D-R2). |
@@ -291,8 +291,10 @@ or fixes a referenced-but-missing tool.)
 ## Sequenced rollout (what to build, in what order)
 
 **Now (unblocks the brief's core promise; mostly leverages existing endpoints):**
-1. **MCP write-parity** (C4) — `update_task`, `assign_task`, `allocate_engineer`, `list_adrs`★,
-   `create_project`. Cheapest, highest-leverage; mostly thin wrappers over endpoints that exist.
+1. ✅ **MCP write-parity** (C4) — `update_task`, `assign_task`, `allocate_engineer`, `list_adrs`★,
+   `create_project` **shipped** (thin wrappers over existing endpoints; `set_decision_rule`,
+   `list_milestones`, `record_risk_snapshot` and the new-model tools remain). Cheapest,
+   highest-leverage first step.
 2. **Org-wide capacity** (F-R1, C2) — make `project_id` optional. Small change, removes a real blind
    spot for the EM persona.
 3. **Fix the risk renormalization trap** (Q-R1, C5) — an Observability Coverage indicator. Small,

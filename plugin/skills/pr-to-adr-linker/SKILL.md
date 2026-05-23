@@ -14,8 +14,8 @@ Connects code changes back to the decisions that govern them.
 2. Pull the project's component **code bindings** (`canopy:list_code_bindings`). Match the PR's
    changed paths against each binding's `path_glob` / `module_prefix` to find the **components the
    PR touches**.
-3. For those components, find the ADRs that cover them: list ADRs (`canopy:list_adrs` if available,
-   else the components' decisions) and use `canopy:adr_impact` to see which decisions name those
+3. For those components, find the ADRs that cover them: list ADRs with `canopy:list_adrs` (pass the
+   `project_id` to scope it) and use `canopy:adr_impact` to see which decisions name those
    components in their blast radius.
 4. For each relevant ADR, judge the PR against it: **implements** (advances the decision),
    **contradicts** (violates it — e.g. introduces a dependency an ADR forbade), or **unrelated**.

@@ -15,6 +15,30 @@ def register(mcp, client) -> None:
         return await client.get(f"/projects/{project_id}")
 
     @mcp.tool
+    async def create_project(
+        key: str,
+        name: str,
+        description: str | None = None,
+        start_date: str | None = None,
+        target_date: str | None = None,
+    ) -> dict:
+        """Create a canopy project.
+
+        `key` is a unique slug (e.g. "PLATFORM"); duplicates are rejected. `start_date` /
+        `target_date` are YYYY-MM-DD and feed the schedule window. Returns the new project.
+        """
+        return await client.post(
+            "/projects",
+            {
+                "key": key,
+                "name": name,
+                "description": description,
+                "start_date": start_date,
+                "target_date": target_date,
+            },
+        )
+
+    @mcp.tool
     async def create_milestone(
         project_id: int, name: str, target_date: str | None = None
     ) -> dict:

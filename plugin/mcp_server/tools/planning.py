@@ -10,6 +10,47 @@ def register(mcp, client) -> None:
         return await client.get("/tasks", params={"project_id": project_id})
 
     @mcp.tool
+    async def update_task(
+        task_id: int,
+        name: str | None = None,
+        duration: int | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        deadline: str | None = None,
+        percent_complete: float | None = None,
+        parent_id: int | None = None,
+    ) -> dict:
+        """Update a task's planning fields (only the arguments you pass are changed).
+
+        `duration` is working days; `start`/`end`/`deadline` are YYYY-MM-DD; `percent_complete`
+        is 0-100 (the progress an engineer reports); `parent_id` moves it under a summary task.
+        Run `replan_schedule` afterward if you changed duration / structure. Task **status** is
+        not settable here — it is mirrored read-only from Jira.
+        """
+        body: dict = {}
+        for field, value in (
+            ("name", name),
+            ("duration", duration),
+            ("start", start),
+            ("end", end),
+            ("deadline", deadline),
+            ("percent_complete", percent_complete),
+            ("parent_id", parent_id),
+        ):
+            if value is not None:
+                body[field] = value
+        return await client.patch(f"/tasks/{task_id}", body)
+
+    @mcp.tool
+    async def assign_task(task_id: int, engineer_id: int | None = None) -> dict:
+        """Assign a task to an engineer (pass engineer_id=null to unassign).
+
+        `engineer_id` is a team Engineer id (see `list_engineers`). Assignment powers the
+        engineer's /me workspace and the per-engineer capacity view.
+        """
+        return await client.patch(f"/tasks/{task_id}", {"assignee_engineer_id": engineer_id})
+
+    @mcp.tool
     async def link_dependency(
         predecessor_id: int,
         successor_id: int,

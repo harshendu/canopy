@@ -43,6 +43,33 @@ def register(mcp, client) -> None:
         return await client.get("/team/capacity", params={"project_id": project_id})
 
     @mcp.tool
+    async def allocate_engineer(
+        engineer_id: int,
+        project_id: int | None = None,
+        percent_allocation: float = 100.0,
+        capacity_hours_per_week: float = 40.0,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict:
+        """Allocate an engineer's capacity to a project over a date range.
+
+        `percent_allocation` is their share of a week (overlapping allocations sum, so >100%
+        across allocations is over-allocation). `start_date`/`end_date` are YYYY-MM-DD; omit
+        for an open-ended allocation. Feeds the capacity grid (`get_capacity`).
+        """
+        return await client.post(
+            "/team/allocations",
+            {
+                "engineer_id": engineer_id,
+                "project_id": project_id,
+                "percent_allocation": percent_allocation,
+                "capacity_hours_per_week": capacity_hours_per_week,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+        )
+
+    @mcp.tool
     async def my_workspace() -> dict:
         """Get the current user's workspace: their linked engineer profile, assigned open
         tasks (most-critical first), and the decisions they own or must review."""

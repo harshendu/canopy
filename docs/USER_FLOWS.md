@@ -107,7 +107,8 @@ allowed; legacy `member` ≈ architect):
 
 ### B2. Create a project
 - **UI:** `/projects` → enter KEY + name → "Add".
-- **API:** `POST /api/v1/projects` (`key`, `name`, optional `start_date`/`target_date`).
+- **API:** `POST /api/v1/projects` (`key`, `name`, optional `start_date`/`target_date`) · **MCP:**
+  `create_project`.
 - **Notes:** `key` is a unique slug (e.g. `PLATFORM`).
 
 ### B3. Open a project (the cockpit)
@@ -133,6 +134,10 @@ allowed; legacy `member` ≈ architect):
 - **API:** `POST /api/v1/tasks` · **MCP:** `create_task`.
 - **Notes:** a **summary** task is a phase/workstream; build the WBS by setting `parent_id`
   (API/MCP — the UI form creates top-level tasks).
+- **Edit / assign:** `PATCH /api/v1/tasks/{id}` (a planner edits any task; an engineer only one
+  assigned to them — §A3a) · **MCP:** `update_task` (planning fields: name/duration/start/end/
+  deadline/percent_complete/parent — **status stays Jira-mirrored, read-only**) and `assign_task`
+  (set/clear `assignee_engineer_id`). Re-run `replan_schedule` after duration/structure changes.
 
 ### C2. Add a dependency
 - **UI:** Gantt tab → "Add dependency (finish → start)" form: pick predecessor + successor → "Link".
@@ -206,7 +211,7 @@ allowed; legacy `member` ≈ architect):
 ### F2. Allocate engineers (capacity)
 - **UI:** project → Capacity tab → "Allocate" form (engineer, percent, date range) → "Add".
 - **API:** `GET/POST /api/v1/team/allocations`, `DELETE /api/v1/team/allocations/{id}`
-  (engineer, project, percent allocation, capacity hours, date range).
+  (engineer, project, percent allocation, capacity hours, date range) · **MCP:** `allocate_engineer`.
 
 ### F3. Capacity heatmap
 - **UI:** project → Capacity tab → an engineer × ISO-week grid shaded by total allocation %;
@@ -254,6 +259,8 @@ review it, alternatives, reversibility, and a discussion thread.
   `decision_owner_id`, `proposed_by_id`, `decide_by`, `rfc_url`, `stakeholder_ids`) · **MCP:**
   `create_adr` (architect records) / `propose_adr` (engineer proposes — sets `proposed_by_id`,
   status `proposed`).
+- **List:** `GET /api/v1/architecture/adrs?project_id=` backs the Decisions-tab list (omit
+  `project_id` for org-wide) · **MCP:** `list_adrs`.
 - **Lifecycle:** `proposed → under_discussion → accepted | rejected → superseded | deprecated`,
   plus **`deferred`** (a conscious postponement — **requires a `decide_by` date**, enforced 400).
   Illegal jumps (e.g. `deprecated → proposed`) are rejected 409. The legal map is in
@@ -506,7 +513,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~46 curated tools that call the REST API.
+  MCP server then exposes ~50 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**

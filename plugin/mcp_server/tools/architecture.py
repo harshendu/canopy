@@ -41,6 +41,17 @@ def register(mcp, client) -> None:
         )
 
     @mcp.tool
+    async def list_adrs(project_id: int | None = None) -> list[dict]:
+        """List ADRs (architecture decisions), newest number first.
+
+        Omit `project_id` for every project's decisions, or pass one to scope it. Each item
+        carries its status, reversibility, owner, stakeholders, and affected component ids —
+        use `get_adr` for the full body + discussion thread.
+        """
+        params = {"project_id": project_id} if project_id is not None else None
+        return await client.get("/architecture/adrs", params=params)
+
+    @mcp.tool
     async def adr_impact(adr_id: int) -> dict:
         """Blast radius of an ADR: directly-affected components + everything depending on them."""
         return await client.get(f"/architecture/adrs/{adr_id}/impact")
