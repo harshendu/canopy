@@ -14,13 +14,14 @@ import type {
 } from "../api/types";
 import GanttChart from "../components/GanttChart";
 import CapacityHeatmap from "../components/CapacityHeatmap";
+import RoadmapView from "../components/RoadmapView";
 
 // Heavy (React Flow / Recharts) — code-split.
 const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
 const ArchitectureView = lazy(() => import("../components/ArchitectureView"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
 
-type Tab = "gantt" | "deps" | "capacity" | "architecture" | "burndown";
+type Tab = "gantt" | "deps" | "capacity" | "architecture" | "roadmap" | "burndown";
 
 export default function ProjectView() {
   const { projectId } = useParams();
@@ -95,19 +96,33 @@ export default function ProjectView() {
     },
   });
 
+  const baseline = useMutation({
+    mutationFn: () => api.post(`/projects/${id}/baseline`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["gantt", id] }),
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">
           {project.data ? project.data.name : "Project"}
         </h1>
-        <button
-          onClick={() => replan.mutate()}
-          disabled={replan.isPending}
-          className="rounded bg-canopy-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-        >
-          {replan.isPending ? "Scheduling…" : "Schedule (CPM)"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => baseline.mutate()}
+            disabled={baseline.isPending}
+            className="rounded border border-canopy-500 px-4 py-2 text-sm font-medium text-canopy-700 disabled:opacity-50"
+          >
+            {baseline.isPending ? "Saving…" : "Set baseline"}
+          </button>
+          <button
+            onClick={() => replan.mutate()}
+            disabled={replan.isPending}
+            className="rounded bg-canopy-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {replan.isPending ? "Scheduling…" : "Schedule (CPM)"}
+          </button>
+        </div>
       </div>
 
       {lastReplan && (
@@ -124,6 +139,7 @@ export default function ProjectView() {
           ["deps", "Dependencies"],
           ["capacity", "Capacity"],
           ["architecture", "Architecture"],
+          ["roadmap", "Roadmap"],
           ["burndown", "Burndown"],
         ] as [Tab, string][]).map(([key, label]) => (
           <button
@@ -170,6 +186,8 @@ export default function ProjectView() {
           <ArchitectureView projectId={id} />
         </Suspense>
       )}
+
+      {tab === "roadmap" && <RoadmapView projectId={id} />}
 
       {tab === "burndown" &&
         (burndown.data ? (

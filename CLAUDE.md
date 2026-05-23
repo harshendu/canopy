@@ -20,10 +20,11 @@ backend/   FastAPI + SQLModel + Alembic + arq. API in app/api/v1, models in app/
            business logic in app/services, integrations in app/connectors + app/webhooks.
 frontend/  Vite + React + TS + Tailwind v4 + TanStack Query. Pages in src/pages
            (Portfolio dashboard, Projects, ProjectView with Gantt/Dependencies/Capacity/
-           Architecture/Burndown tabs, Connectors). Views in src/components: GanttChart
-           (custom SVG, with zoom), DependencyGraph + ArchitectureView (React Flow),
-           CapacityHeatmap (custom grid), BurndownChart + Portfolio (Recharts). Heavy
-           libs (React Flow / Recharts) are React.lazy code-split. API client + types in src/api.
+           Architecture/Roadmap/Burndown tabs, Connectors). Views in src/components:
+           GanttChart (custom SVG, with zoom + baseline/drift overlay), DependencyGraph +
+           ArchitectureView (React Flow), CapacityHeatmap + RoadmapView (custom),
+           BurndownChart + Portfolio (Recharts). Heavy libs (React Flow / Recharts) are
+           React.lazy code-split. API client + types in src/api.
 plugin/    Claude Code plugin. FastMCP server in mcp_server/ (thin client of the REST API),
            skills/, agents/. Manifests: plugin/.claude-plugin/plugin.json, plugin/.mcp.json,
            and .claude-plugin/marketplace.json at repo root.
@@ -59,7 +60,8 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   Dependencies are typed FS/SS/FF/SF with `lag`.
 - **CPM is computed backend-side** in `app/services/scheduling.py` (pure forward/backward pass over
   a `networkx` DAG). `POST /projects/{id}/replan` persists dates, `is_critical`, and float. Keep the
-  scheduler pure and unit-tested; the frontend only renders.
+  scheduler pure and unit-tested; the frontend only renders. `POST /projects/{id}/baseline`
+  snapshots current start/end into `baseline_*` (the Gantt overlays planned-vs-actual drift).
 - Aggregation for the visibility views is also backend-side and pure-where-possible:
   `GET /projects/portfolio` (per-project rollups), `GET /team/capacity?project_id=` (engineer×week
   allocation via `app/services/capacity.py:weekly_capacity`), and `GET /projects/{id}/burndown`

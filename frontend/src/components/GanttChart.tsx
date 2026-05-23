@@ -26,6 +26,8 @@ interface Geom {
   depth: number;
   x: number | null;
   w: number;
+  bx: number | null; // baseline x
+  bw: number; // baseline width
   y: number;
 }
 
@@ -60,7 +62,11 @@ export default function GanttChart({ data }: { data: GanttResponse }) {
       const x = startDay !== null ? (startDay - min) * dayW : null;
       const w =
         startDay !== null && endDay !== null ? Math.max((endDay - startDay) * dayW, 4) : 0;
-      return { task, row, depth: depthOf(task), x, w, y: HEADER_H + row * ROW_H };
+      const bStart = task.baseline_start ? parseDay(task.baseline_start) : null;
+      const bEnd = task.baseline_end ? parseDay(task.baseline_end) : null;
+      const bx = bStart !== null ? (bStart - min) * dayW : null;
+      const bw = bStart !== null && bEnd !== null ? Math.max((bEnd - bStart) * dayW, 4) : 0;
+      return { task, row, depth: depthOf(task), x, w, bx, bw, y: HEADER_H + row * ROW_H };
     });
 
     return {
@@ -171,6 +177,20 @@ export default function GanttChart({ data }: { data: GanttResponse }) {
                 />
               ) : (
                 <g>
+                  {g.bx !== null && !isSummary && (
+                    <rect
+                      x={LABEL_W + g.bx}
+                      y={g.y + ROW_H - 7}
+                      width={g.bw}
+                      height={3}
+                      rx={1}
+                      className="fill-slate-300"
+                    >
+                      <title>
+                        baseline: {g.task.baseline_start} → {g.task.baseline_end}
+                      </title>
+                    </rect>
+                  )}
                   <rect
                     x={LABEL_W + g.x}
                     y={g.y + (isSummary ? 14 : 9)}

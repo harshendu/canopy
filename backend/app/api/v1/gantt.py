@@ -62,6 +62,8 @@ async def get_gantt(session: SessionDep, _: CurrentUser, project_id: int) -> Gan
             text=t.name,
             start_date=t.start,
             end_date=t.end,
+            baseline_start=t.baseline_start,
+            baseline_end=t.baseline_end,
             duration=t.duration,
             progress=round(t.percent_complete / 100.0, 4),
             parent=t.parent_id or 0,
@@ -140,6 +142,23 @@ async def replan(session: SessionDep, _: CurrentUser, project_id: int) -> Replan
         critical_path=critical_path(results),
         project_end=project_end,
     )
+
+
+@router.post("/projects/{project_id}/baseline")
+async def set_baseline(session: SessionDep, _: CurrentUser, project_id: int) -> dict[str, int]:
+    """Snapshot current start/end into baseline_* for every task (drift reference)."""
+    tasks = list(
+        (
+            await session.execute(select(Task).where(Task.project_id == project_id))
+        ).scalars().all()
+    )
+    count = 0
+    for task in tasks:
+        task.baseline_start = task.start
+        task.baseline_end = task.end
+        count += 1
+    await session.commit()
+    return {"baselined": count}
 
 
 @router.get("/projects/{project_id}/burndown", response_model=BurndownResponse)

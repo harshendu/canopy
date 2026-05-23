@@ -224,6 +224,7 @@ class ADRRead(BaseModel):
     consequences: str | None
     supersedes_id: int | None
     pr_links: list[str]
+    component_ids: list[int] = []
 
 
 class ComponentLinkCreate(BaseModel):
@@ -277,6 +278,8 @@ class GanttTask(BaseModel):
     text: str
     start_date: date | None
     end_date: date | None
+    baseline_start: date | None
+    baseline_end: date | None
     duration: int
     progress: float
     parent: int

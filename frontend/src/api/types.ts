@@ -38,12 +38,23 @@ export interface GanttTask {
   text: string;
   start_date: string | null;
   end_date: string | null;
+  baseline_start: string | null;
+  baseline_end: string | null;
   duration: number;
   progress: number;
   parent: number;
   type: TaskType;
   is_critical: boolean;
   total_float: number;
+}
+
+export interface Milestone {
+  id: number;
+  project_id: number;
+  name: string;
+  description: string | null;
+  target_date: string | null;
+  status: string;
 }
 
 export interface GanttLink {
@@ -88,6 +99,7 @@ export interface ADR {
   consequences: string | null;
   supersedes_id: number | null;
   pr_links: string[];
+  component_ids: number[];
 }
 
 export interface Component {

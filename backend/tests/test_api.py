@@ -161,3 +161,64 @@ async def test_capacity_endpoint(client, db_session):
     row = body["rows"][0]
     assert row["engineer_name"] == "Ada"
     assert row["cells"]["2026-01-05"] == 60.0
+
+
+@pytest.mark.asyncio
+async def test_baseline_snapshot(client, db_session):
+    await _seed_admin(db_session)
+    token = await _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    project_id = (
+        await client.post(
+            "/api/v1/projects",
+            json={"key": "PLAT", "name": "Platform", "start_date": "2026-01-01"},
+            headers=headers,
+        )
+    ).json()["id"]
+    await client.post(
+        "/api/v1/tasks",
+        json={"project_id": project_id, "name": "Design", "duration": 2},
+        headers=headers,
+    )
+    await client.post(f"/api/v1/projects/{project_id}/replan", headers=headers)
+
+    base = await client.post(f"/api/v1/projects/{project_id}/baseline", headers=headers)
+    assert base.status_code == 200, base.text
+    assert base.json()["baselined"] == 1
+
+    gantt = (await client.get(f"/api/v1/projects/{project_id}/gantt", headers=headers)).json()
+    task = gantt["tasks"][0]
+    assert task["baseline_start"] == task["start_date"]
+    assert task["baseline_end"] == task["end_date"]
+
+
+@pytest.mark.asyncio
+async def test_adr_component_links(client, db_session):
+    await _seed_admin(db_session)
+    token = await _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    project_id = (
+        await client.post(
+            "/api/v1/projects", json={"key": "PLAT", "name": "Platform"}, headers=headers
+        )
+    ).json()["id"]
+    comp_id = (
+        await client.post(
+            "/api/v1/architecture/components",
+            json={"project_id": project_id, "name": "API", "kind": "service"},
+            headers=headers,
+        )
+    ).json()["id"]
+    await client.post(
+        "/api/v1/architecture/adrs",
+        json={"project_id": project_id, "title": "Use Postgres", "component_ids": [comp_id]},
+        headers=headers,
+    )
+
+    adrs = (
+        await client.get(f"/api/v1/architecture/adrs?project_id={project_id}", headers=headers)
+    ).json()
+    assert adrs[0]["component_ids"] == [comp_id]
+    assert adrs[0]["number"] == 1

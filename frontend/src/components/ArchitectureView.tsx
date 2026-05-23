@@ -4,7 +4,7 @@ import "@xyflow/react/dist/style.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { ADR, Component, ComponentLink } from "../api/types";
+import type { ADR, ADRStatus, Component, ComponentLink } from "../api/types";
 
 const KIND_COLORS: Record<string, string> = {
   service: "#2f855a",
@@ -15,6 +15,7 @@ const KIND_COLORS: Record<string, string> = {
 };
 const KINDS = ["service", "module", "datastore", "external", "ui"];
 const LINK_KINDS = ["depends_on", "calls", "publishes_to", "reads_from"];
+const ADR_STATUSES: ADRStatus[] = ["proposed", "accepted", "superseded", "deprecated"];
 
 export default function ArchitectureView({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
@@ -26,6 +27,9 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
   const [adrTitle, setAdrTitle] = useState("");
   const [adrContext, setAdrContext] = useState("");
   const [adrDecision, setAdrDecision] = useState("");
+  const [adrStatus, setAdrStatus] = useState<ADRStatus>("proposed");
+  const [adrSupersedes, setAdrSupersedes] = useState<number | "">("");
+  const [adrComponentIds, setAdrComponentIds] = useState<number[]>([]);
 
   const components = useQuery({
     queryKey: ["components", projectId],
@@ -71,15 +75,27 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
       api.post("/architecture/adrs", {
         project_id: projectId,
         title: adrTitle,
+        status: adrStatus,
         context: adrContext || null,
         decision: adrDecision || null,
+        supersedes_id: adrSupersedes || null,
+        component_ids: adrComponentIds,
       }),
     onSuccess: () => {
       setAdrTitle("");
       setAdrContext("");
       setAdrDecision("");
+      setAdrStatus("proposed");
+      setAdrSupersedes("");
+      setAdrComponentIds([]);
       qc.invalidateQueries({ queryKey: ["adrs", projectId] });
     },
+  });
+
+  const updateAdrStatus = useMutation({
+    mutationFn: (vars: { id: number; status: string }) =>
+      api.patch(`/architecture/adrs/${vars.id}`, { status: vars.status }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["adrs", projectId] }),
   });
 
   const { nodes, edges } = useMemo(() => {
@@ -105,6 +121,14 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
   }, [components.data, links.data]);
 
   const comps = components.data ?? [];
+  const adrList = adrs.data ?? [];
+  const componentName = (cid: number) => comps.find((c) => c.id === cid)?.name ?? `#${cid}`;
+  const adrNumber = (aid: number) => adrList.find((a) => a.id === aid)?.number;
+
+  const toggleComponent = (cid: number) =>
+    setAdrComponentIds((ids) =>
+      ids.includes(cid) ? ids.filter((x) => x !== cid) : [...ids, cid],
+    );
 
   return (
     <div className="space-y-5">
@@ -236,6 +260,46 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
             rows={2}
             className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
           />
+          <div className="flex gap-2">
+            <select
+              value={adrStatus}
+              onChange={(e) => setAdrStatus(e.target.value as ADRStatus)}
+              className="rounded border border-slate-300 px-3 py-2 text-sm"
+            >
+              {ADR_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <select
+              value={adrSupersedes}
+              onChange={(e) => setAdrSupersedes(e.target.value ? Number(e.target.value) : "")}
+              className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">Supersedes… (none)</option>
+              {adrList.map((a) => (
+                <option key={a.id} value={a.id}>
+                  ADR-{String(a.number).padStart(4, "0")} {a.title}
+                </option>
+              ))}
+            </select>
+          </div>
+          {comps.length > 0 && (
+            <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+              <span className="text-slate-400">Affects:</span>
+              {comps.map((c) => (
+                <label key={c.id} className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={adrComponentIds.includes(c.id)}
+                    onChange={() => toggleComponent(c.id)}
+                  />
+                  {c.name}
+                </label>
+              ))}
+            </div>
+          )}
           <button className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
             Add ADR
           </button>
@@ -243,23 +307,48 @@ export default function ArchitectureView({ projectId }: { projectId: number }) {
 
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <h2 className="mb-2 font-semibold">Decisions</h2>
-          <ul className="space-y-2 text-sm">
-            {(adrs.data ?? []).map((a) => (
-              <li key={a.id} className="flex items-center justify-between">
-                <span>
-                  <span className="font-mono text-xs text-slate-400">
-                    ADR-{String(a.number).padStart(4, "0")}
-                  </span>{" "}
-                  {a.title}
-                </span>
-                <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                  {a.status}
-                </span>
+          <ul className="space-y-3 text-sm">
+            {adrList.map((a) => (
+              <li key={a.id} className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span>
+                    <span className="font-mono text-xs text-slate-400">
+                      ADR-{String(a.number).padStart(4, "0")}
+                    </span>{" "}
+                    {a.title}
+                  </span>
+                  <select
+                    value={a.status}
+                    onChange={(e) => updateAdrStatus.mutate({ id: a.id, status: e.target.value })}
+                    className="rounded border border-slate-200 px-1 py-0.5 text-xs text-slate-600"
+                  >
+                    {ADR_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {a.supersedes_id && adrNumber(a.supersedes_id) && (
+                  <div className="text-xs text-slate-400">
+                    supersedes ADR-{String(adrNumber(a.supersedes_id)).padStart(4, "0")}
+                  </div>
+                )}
+                {a.component_ids.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {a.component_ids.map((cid) => (
+                      <span
+                        key={cid}
+                        className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500"
+                      >
+                        {componentName(cid)}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </li>
             ))}
-            {adrs.data?.length === 0 && (
-              <li className="text-slate-400">No decisions recorded yet.</li>
-            )}
+            {adrList.length === 0 && <li className="text-slate-400">No decisions recorded yet.</li>}
           </ul>
         </div>
       </div>

@@ -109,12 +109,44 @@ async def _set_component_links(
 @router.get("/adrs", response_model=list[ADRRead])
 async def list_adrs(
     session: SessionDep, _: CurrentUser, project_id: int | None = None
-) -> list[ArchitectureDecision]:
+) -> list[ADRRead]:
     stmt = select(ArchitectureDecision)
     if project_id is not None:
         stmt = stmt.where(ArchitectureDecision.project_id == project_id)
-    result = await session.execute(stmt.order_by(col(ArchitectureDecision.number)))
-    return list(result.scalars().all())
+    adrs = list(
+        (await session.execute(stmt.order_by(col(ArchitectureDecision.number)))).scalars().all()
+    )
+    adr_ids = [a.id for a in adrs if a.id is not None]
+    links_by_adr: dict[int, list[int]] = {}
+    if adr_ids:
+        links = (
+            await session.execute(
+                select(ADRComponentLink).where(col(ADRComponentLink.adr_id).in_(adr_ids))
+            )
+        ).scalars().all()
+        for link in links:
+            links_by_adr.setdefault(link.adr_id, []).append(link.component_id)
+
+    out: list[ADRRead] = []
+    for a in adrs:
+        if a.id is None:
+            continue
+        out.append(
+            ADRRead(
+                id=a.id,
+                project_id=a.project_id,
+                number=a.number,
+                title=a.title,
+                status=a.status,
+                context=a.context,
+                decision=a.decision,
+                consequences=a.consequences,
+                supersedes_id=a.supersedes_id,
+                pr_links=a.pr_links,
+                component_ids=links_by_adr.get(a.id, []),
+            )
+        )
+    return out
 
 
 @router.post("/adrs", response_model=ADRRead, status_code=status.HTTP_201_CREATED)
