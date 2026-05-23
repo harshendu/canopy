@@ -105,6 +105,39 @@ def register(mcp, client) -> None:
         )
 
     @mcp.tool
+    async def list_retrospectives(project_id: int) -> list[dict]:
+        """List a project's retrospectives and incident postmortems."""
+        return await client.get(f"/projects/{project_id}/retrospectives")
+
+    @mcp.tool
+    async def create_retrospective(
+        project_id: int, kind: str = "project_retro", title: str | None = None
+    ) -> dict:
+        """Open a retrospective (kind=project_retro auto-seeds its body from project state:
+        milestones, schedule variance, drift, ADR churn) or an incident_postmortem."""
+        return await client.post(
+            f"/projects/{project_id}/retrospectives", {"kind": kind, "title": title}
+        )
+
+    @mcp.tool
+    async def comment_retrospective(project_id: int, retro_id: int, body: str) -> dict:
+        """Add a comment to a retrospective / postmortem thread."""
+        return await client.post(
+            f"/projects/{project_id}/retrospectives/{retro_id}/comments", {"body": body}
+        )
+
+    @mcp.tool
+    async def retrospective_follow_up(
+        project_id: int, retro_id: int, action: str, title: str
+    ) -> dict:
+        """Mint a follow-up from a retrospective. action: task (open a task) | adr (propose
+        an ADR linked to the retro's affected components)."""
+        return await client.post(
+            f"/projects/{project_id}/retrospectives/{retro_id}/follow-up",
+            {"action": action, "title": title},
+        )
+
+    @mcp.tool
     async def create_adr(
         project_id: int,
         title: str,

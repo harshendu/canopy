@@ -332,6 +332,31 @@ export interface User {
   is_active: boolean;
 }
 
+export type RetrospectiveKind = "project_retro" | "incident_postmortem";
+
+export interface Retrospective {
+  id: number;
+  project_id: number;
+  kind: RetrospectiveKind;
+  title: string;
+  body: string | null;
+  status: string;
+  affected_component_ids: number[];
+}
+
+export interface RetrospectiveComment {
+  id: number;
+  retrospective_id: number;
+  engineer_id: number | null;
+  author_name: string | null;
+  body: string;
+  created_at: string;
+}
+
+export interface RetrospectiveDetail extends Retrospective {
+  comments: RetrospectiveComment[];
+}
+
 export interface MyWorkspace {
   user: User;
   engineer: Engineer | null;

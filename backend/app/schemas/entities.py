@@ -8,6 +8,7 @@ from app.models.base import (
     DecisionRule,
     DependencyType,
     Provider,
+    RetrospectiveKind,
     Reversibility,
     TaskType,
 )
@@ -638,6 +639,62 @@ class DriftReconcileResponse(BaseModel):
     event: DriftEventRead
     created_adr_id: int | None = None
     created_task_id: int | None = None
+
+
+# --- Retrospectives & postmortems ---
+class RetrospectiveCreate(BaseModel):
+    kind: RetrospectiveKind = RetrospectiveKind.project_retro
+    title: str | None = None  # defaults from the project/kind when omitted
+    body: str | None = None  # for postmortems; project retros auto-seed if omitted
+    affected_component_ids: list[int] = []
+
+
+class RetrospectiveUpdate(BaseModel):
+    title: str | None = None
+    body: str | None = None
+    status: str | None = None
+    affected_component_ids: list[int] | None = None
+
+
+class RetrospectiveCommentCreate(BaseModel):
+    body: str
+    engineer_id: int | None = None
+    author_name: str | None = None
+
+
+class RetrospectiveCommentRead(BaseModel):
+    model_config = _read
+    id: int
+    retrospective_id: int
+    engineer_id: int | None
+    author_name: str | None
+    body: str
+    created_at: datetime
+
+
+class RetrospectiveRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    kind: RetrospectiveKind
+    title: str
+    body: str | None
+    status: str
+    affected_component_ids: list[int]
+
+
+class RetrospectiveDetail(RetrospectiveRead):
+    comments: list[RetrospectiveCommentRead] = []
+
+
+class RetroFollowUpRequest(BaseModel):
+    action: str  # task | adr
+    title: str
+
+
+class RetroFollowUpResponse(BaseModel):
+    created_task_id: int | None = None
+    created_adr_id: int | None = None
 
 
 # --- Engineer workspace (/me) ---

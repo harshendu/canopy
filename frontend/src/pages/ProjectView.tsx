@@ -23,6 +23,7 @@ const ArchitectureView = lazy(() => import("../components/ArchitectureView"));
 const DecisionsView = lazy(() => import("../components/DecisionsView"));
 const RiskView = lazy(() => import("../components/RiskView"));
 const DriftView = lazy(() => import("../components/DriftView"));
+const RetrosView = lazy(() => import("../components/RetrosView"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
 
 type Tab =
@@ -34,7 +35,8 @@ type Tab =
   | "drift"
   | "roadmap"
   | "burndown"
-  | "risk";
+  | "risk"
+  | "retros";
 
 const TABS: Tab[] = [
   "gantt",
@@ -46,6 +48,7 @@ const TABS: Tab[] = [
   "roadmap",
   "burndown",
   "risk",
+  "retros",
 ];
 
 export default function ProjectView() {
@@ -204,6 +207,7 @@ export default function ProjectView() {
           ["roadmap", "Roadmap"],
           ["burndown", "Burndown"],
           ["risk", "Risk"],
+          ["retros", "Retros"],
         ] as [Tab, string][]).map(([key, label]) => (
           <button
             key={key}
@@ -271,6 +275,12 @@ export default function ProjectView() {
       {tab === "risk" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading risk…</p>}>
           <RiskView projectId={id} />
+        </Suspense>
+      )}
+
+      {tab === "retros" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading retros…</p>}>
+          <RetrosView projectId={id} />
         </Suspense>
       )}
 

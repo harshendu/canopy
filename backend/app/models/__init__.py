@@ -25,6 +25,7 @@ from app.models.project import (
     Task,
     TaskStatusHistory,
 )
+from app.models.retro import Retrospective, RetrospectiveComment
 from app.models.team import Allocation, Engineer, Role
 from app.models.user import User
 
@@ -47,6 +48,8 @@ __all__ = [
     "Milestone",
     "Project",
     "PullRequest",
+    "Retrospective",
+    "RetrospectiveComment",
     "RiskMitigation",
     "Role",
     "Task",

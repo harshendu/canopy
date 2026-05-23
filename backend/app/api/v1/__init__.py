@@ -12,6 +12,7 @@ from app.api.v1 import (
     me,
     milestones,
     projects,
+    retros,
     risk,
     tasks,
     team,
@@ -32,3 +33,4 @@ api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])
 api_router.include_router(risk.router, tags=["risk"])
 api_router.include_router(drift.router, tags=["drift"])
+api_router.include_router(retros.router, tags=["retros"])

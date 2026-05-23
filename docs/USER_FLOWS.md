@@ -107,7 +107,7 @@ allowed; legacy `member` ≈ architect):
 
 ### B3. Open a project (the cockpit)
 - **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Dependencies · Capacity · Decisions ·
-  Architecture · Drift · Roadmap · Burndown · Risk**. The header has a **5-day week** toggle, **Set
+  Architecture · Drift · Roadmap · Burndown · Risk · Retros**. The header has a **5-day week** toggle, **Set
   baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
   `/projects/:id?tab=drift`).
@@ -394,6 +394,30 @@ component map + ADRs and maintains the queue.
 
 ---
 
+## P. Retrospectives & postmortems (Retros tab)
+
+### P1. Project retrospective
+- **UI:** project → **Retros** tab → **New retrospective** (planner) opens a retro whose body is
+  **auto-seeded** from project state: completed milestones, schedule variance (tasks ended off
+  baseline), open drift (§N), and ADR churn (superseded/total). It's editable markdown; engineers
+  **comment**; planners can **close** it.
+- **Follow-ups:** from a retro, mint a **task** or **propose an ADR** (linked to the retro's
+  affected components) — turning lessons into tracked work.
+- **API:** `GET/POST /api/v1/projects/{id}/retrospectives`, `GET/PATCH
+  /api/v1/projects/{id}/retrospectives/{rid}`, `POST .../comments`, `POST .../follow-up`
+  (`task|adr`) · **MCP:** `list_retrospectives`, `create_retrospective`, `comment_retrospective`,
+  `retrospective_follow_up`. The seeder is pure (`app/services/retro.py`).
+- **Roles (§A3a):** create / edit / close / follow-up = planners (admin/architect/eng-manager);
+  comment = any non-viewer; read = anyone.
+
+### P2. Incident postmortem
+- **UI:** **New postmortem** opens a templated postmortem (timeline / impact / root cause / action
+  items) that can record affected components and mint the same follow-ups.
+- **Not built (v2 §P2):** **auto-open from an incident webhook** — that needs the CI/observability
+  connector (§J8); for now a postmortem is opened manually.
+
+---
+
 ## J. Connectors & integrations (Connectors page)
 
 ### J1. Add a connection
@@ -453,7 +477,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~40 curated tools that call the REST API.
+  MCP server then exposes ~44 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -522,8 +546,8 @@ backlog:
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - *(closed previously: decision-impact / blast radius (G5); Risk dashboard (§Q) + portfolio risk
   (§B1); user & role management UI (A3) + engineer workspace (§M); per-role write enforcement
-  (§A3a). Closed this revision: **architecture drift detection** (§N) — code bindings, the Drift
-  tab + queue, reconciliation, portfolio drift badge, and the Drift Sentinel subagent.)*
+  (§A3a); architecture drift detection (§N). Closed this revision: **retrospectives & postmortems**
+  (§P) — auto-seeded project retros, comment threads, follow-ups, and a Retros tab.)*
 
 ## Not built (documented as future)
 - Slack/email **delivery** of alerts (I) and **decision SLA notifications** (G3).
@@ -541,8 +565,9 @@ backlog:
   GitHub PR-metrics work. Folding the **drift score** into Risk's architecture family is a follow-up.
 - **Drift** (§N) limits: no server-side repo crawl (the Drift Sentinel subagent reads code and posts
   observations), Python-only import analysis, and no suppression-management UI.
-- The broader v2 surfaces these slices do **not** touch: **retros/postmortems** (§P), and new
-  connectors (PagerDuty §J7, CI/observability §J8).
+- **Incident postmortems auto-open** (§P2) and the broader v2 surfaces still untouched: new
+  connectors (PagerDuty §J7, CI/observability §J8 — the latter would also drive postmortem
+  auto-open and quality-risk inputs).
 
 ---
 

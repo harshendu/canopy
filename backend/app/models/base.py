@@ -54,6 +54,11 @@ class DecisionRule(StrEnum):
     lazy_consensus = "lazy_consensus"  # accept unless a stakeholder requests changes
 
 
+class RetrospectiveKind(StrEnum):
+    project_retro = "project_retro"
+    incident_postmortem = "incident_postmortem"
+
+
 class Provider(StrEnum):
     jira = "jira"
     github = "github"
