@@ -18,6 +18,7 @@ from app.models.architecture import (
     ADRStakeholder,
     ArchitectureComponent,
     ArchitectureDecision,
+    ComponentCodeBinding,
     ComponentLink,
 )
 from app.models.base import ADRCommentKind, ADRStatus, DecisionRule
@@ -31,6 +32,8 @@ from app.schemas.entities import (
     ADRImportRequest,
     ADRRead,
     ADRUpdate,
+    CodeBindingCreate,
+    CodeBindingRead,
     ComponentCreate,
     ComponentLinkCreate,
     ComponentLinkRead,
@@ -113,6 +116,59 @@ async def delete_component_link(session: SessionDep, _: PlannerWriter, link_id: 
     link = await session.get(ComponentLink, link_id)
     if link is not None:
         await session.delete(link)
+        await session.commit()
+
+
+# --- Code bindings (where a component lives in code — drives drift detection) ---
+@router.get("/code-bindings", response_model=list[CodeBindingRead])
+async def list_project_code_bindings(
+    session: SessionDep, _: CurrentUser, project_id: int
+) -> list[ComponentCodeBinding]:
+    component_ids = set(
+        (
+            await session.execute(
+                select(ArchitectureComponent.id).where(
+                    ArchitectureComponent.project_id == project_id
+                )
+            )
+        ).scalars().all()
+    )
+    if not component_ids:
+        return []
+    result = await session.execute(
+        select(ComponentCodeBinding).where(
+            col(ComponentCodeBinding.component_id).in_(component_ids)
+        )
+    )
+    return list(result.scalars().all())
+
+
+@router.get("/components/{component_id}/code-bindings", response_model=list[CodeBindingRead])
+async def list_code_bindings(
+    session: SessionDep, _: CurrentUser, component_id: int
+) -> list[ComponentCodeBinding]:
+    result = await session.execute(
+        select(ComponentCodeBinding).where(ComponentCodeBinding.component_id == component_id)
+    )
+    return list(result.scalars().all())
+
+
+@router.post("/code-bindings", response_model=CodeBindingRead, status_code=status.HTTP_201_CREATED)
+async def create_code_binding(
+    session: SessionDep, _: PlannerWriter, payload: CodeBindingCreate
+) -> ComponentCodeBinding:
+    binding = ComponentCodeBinding(**payload.model_dump())
+    session.add(binding)
+    await session.commit()
+    await session.refresh(binding)
+    return binding
+
+
+@router.delete("/code-bindings/{binding_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_code_binding(session: SessionDep, _: PlannerWriter, binding_id: int) -> None:
+    binding = await session.get(ComponentCodeBinding, binding_id)
+    if binding is not None:
+        await session.delete(binding)
         await session.commit()
 
 

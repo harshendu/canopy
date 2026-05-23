@@ -4,8 +4,9 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
 from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
+from app.api.v1.drift import drift_score_from_events
 from app.api.v1.risk import report_for
-from app.models.architecture import ArchitectureDecision
+from app.models.architecture import ArchitectureDecision, DriftEvent
 from app.models.base import TaskType
 from app.models.project import Holiday, Project, Task
 from app.models.team import Allocation, Engineer
@@ -18,6 +19,7 @@ from app.schemas.entities import (
     ProjectSummary,
     ProjectUpdate,
 )
+from app.services.drift import level as drift_level
 
 router = APIRouter()
 
@@ -41,6 +43,10 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
     adrs_by_project: dict[int, list[ArchitectureDecision]] = {}
     for adr in all_adrs:
         adrs_by_project.setdefault(adr.project_id, []).append(adr)
+    all_drift = (await session.execute(select(DriftEvent))).scalars().all()
+    drift_by_project: dict[int, list[DriftEvent]] = {}
+    for ev in all_drift:
+        drift_by_project.setdefault(ev.project_id, []).append(ev)
     today = date.today()
 
     summaries: list[ProjectSummary] = []
@@ -65,6 +71,7 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
             project_target=project.target_date,
             today=today,
         )
+        drift = drift_score_from_events(drift_by_project.get(project.id, []))
         summaries.append(
             ProjectSummary(
                 id=project.id,
@@ -78,6 +85,8 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
                 target_date=project.target_date,
                 risk_score=report.score,
                 risk_level=report.level,
+                drift_score=drift,
+                drift_level=drift_level(drift),
             )
         )
     return PortfolioResponse(projects=summaries)

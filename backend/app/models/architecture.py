@@ -78,3 +78,38 @@ class ADRComment(TimestampMixin, table=True):
     author_name: str | None = None  # fallback label when no engineer is linked
     body: str
     kind: ADRCommentKind = Field(default=ADRCommentKind.comment)
+
+
+class ComponentCodeBinding(TimestampMixin, table=True):
+    """Where a component lives in code — the linchpin for drift detection. A component
+    can have several bindings (e.g. a service split across paths)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    component_id: int = Field(foreign_key="architecturecomponent.id", index=True)
+    connection_id: int | None = Field(default=None, foreign_key="connection.id")
+    repo: str | None = None  # owner/repo (defaults to the connection's configured repo)
+    path_glob: str  # e.g. "backend/app/services/**"
+    module_prefix: str | None = None  # e.g. "app.services" — maps imports back to this component
+
+
+class DriftEvent(TimestampMixin, table=True):
+    """A detected divergence between the declared architecture and the code (or the
+    decision record). Triaged via the drift queue; reconciliation sets `status`."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    kind: str  # unexpected_dependency | dead_dependency | unimplemented_adr | implicit_decision
+    rule_key: str = Field(index=True)  # stable id for dedupe + suppression
+    summary: str
+    detail: str | None = None
+    suspected_cause: str | None = None  # PR/commit reference, when known
+    affected_component_ids: list[int] = Field(default_factory=list, sa_column=Column(JSON))
+    status: str = "open"  # open | accepted | rejected | false_positive
+
+
+class DriftSuppression(TimestampMixin, table=True):
+    """A per-project rule the detector learns to ignore (from `false_positive` triage)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    rule_key: str = Field(index=True)

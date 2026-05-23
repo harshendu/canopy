@@ -93,11 +93,12 @@ allowed; legacy `member` ≈ architect):
 
 ### B1. View the portfolio dashboard
 - **UI:** `/portfolio` (landing page). Shows a completion bar chart and a card per project
-  (avg % complete, completed/total tasks, critical-task count, end date, and a **risk score +
-  level badge** — see §Q). Clicking a card opens it.
-- **API:** `GET /api/v1/projects/portfolio` (each `ProjectSummary` now includes `risk_score` +
-  `risk_level`, computed by the same scorer as the Risk tab) · **MCP:** `list_projects`.
-- **Not built (v2 §B1):** drift score, last-decision recency, and sortable columns.
+  (avg % complete, completed/total tasks, critical-task count, end date, and **risk + drift score
+  badges** — see §Q / §N). Clicking a card opens it.
+- **API:** `GET /api/v1/projects/portfolio` (each `ProjectSummary` includes `risk_score`/`risk_level`
+  and `drift_score`/`drift_level`, computed by the same scorers as the Risk/Drift tabs) · **MCP:**
+  `list_projects`.
+- **Not built (v2 §B1):** last-decision recency and sortable columns.
 
 ### B2. Create a project
 - **UI:** `/projects` → enter KEY + name → "Add".
@@ -106,9 +107,10 @@ allowed; legacy `member` ≈ architect):
 
 ### B3. Open a project (the cockpit)
 - **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Dependencies · Capacity · Decisions ·
-  Architecture · Roadmap · Burndown · Alerts**. The header has a **5-day week** toggle, **Set
-  baseline**, and **Schedule (CPM)**. A tab can be deep-linked with `?tab=` (e.g.
-  `/projects/:id?tab=decisions`).
+  Architecture · Drift · Roadmap · Burndown · Risk**. The header has a **5-day week** toggle, **Set
+  baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
+  hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
+  `/projects/:id?tab=drift`).
 
 ### B4. Edit / archive a project · toggle working week
 - **UI:** the "5-day week" checkbox in the project header toggles weekend-aware scheduling.
@@ -229,7 +231,12 @@ review it, alternatives, reversibility, and a discussion thread.
 - **API:** `GET/POST /api/v1/architecture/components`, `GET/POST/DELETE
   /api/v1/architecture/component-links` · **MCP:** `list_components`, `create_component`,
   `link_components`.
-- **Not built:** component **code bindings** + **owner/criticality/tier** (v2 §G1).
+- **Code bindings** (drift linchpin): the Architecture tab has a **Code bindings** section to tie a
+  component to where it lives (`path_glob` + Python `module_prefix`, optional connection/repo) —
+  `GET /api/v1/architecture/code-bindings?project_id=`, `POST/DELETE
+  /api/v1/architecture/code-bindings[/{id}]` (planner-gated) · **MCP:** `list_code_bindings`,
+  `add_code_binding`. These feed drift detection (§N).
+- **Not built:** component **owner / criticality / tier / observability links** (v2 §G1).
 
 ### G2. Record / propose a decision (ADR) — Decisions tab
 - **UI:** Decisions tab → "Propose / record a decision": title, context, decision, consequences,
@@ -338,7 +345,52 @@ digest (§I) sits underneath.
 - **Risk timeline** (8-week small-multiples trend) — needs historical risk snapshots, which aren't
   persisted yet.
 - Automated **check-in follow-ups** / notifications on mitigations past their date.
-- The **quality** family (see Q1) and the **drift score** contribution (v2 §N).
+- The **quality** family (see Q1). The **drift score** (§N) exists but isn't yet folded into the
+  Risk architecture family (a small follow-up).
+
+---
+
+## N. Architecture drift detection (Drift tab)
+
+The central value prop: catch where the code has diverged from the declared architecture. Detection
+is **pure** (`app/services/drift.py` + `app/services/code_analysis.py`); the **Drift Sentinel**
+subagent (§L7) reads code and reports observations, and the server compares them to the declared
+component map + ADRs and maintains the queue.
+
+### N1. Drift score
+- A per-project 0–100 score (higher = more drift), derived from the currently **open** drift events
+  by kind, shown on the **Drift** tab and on every portfolio card (§B1). Computed by the same scorer
+  in both places.
+- Signals: **declared-vs-actual dependencies** (unexpected edges in code / declared edges absent
+  from code = dead architecture), **unimplemented ADRs** (accepted ADRs whose affected components
+  show no activity), and **implicit decisions** (new package / dependency / service / datastore with
+  no ADR).
+- **Code analysis:** Python imports are parsed with the stdlib `ast` and mapped back to components
+  via their code-binding `module_prefix` (`app/services/code_analysis.py`, pure + unit-tested). Other
+  languages can plug in later; the edge-mapping is language-agnostic.
+
+### N2. Drift queue & scan
+- **UI:** Drift tab → the score + the **drift queue** (open events first, then triaged): each event
+  shows its kind, summary, affected components, and suspected cause.
+- **API:** `GET /api/v1/projects/{id}/drift` (score + events) · `POST /api/v1/projects/{id}/drift/scan`
+  (architect-gated) accepts the Sentinel's observations (`actual_edges`, `inactive_component_ids`,
+  `implicit_signals`), runs detection (applying learned suppressions), and upserts events — new
+  findings open, resolved ones disappear, triaged ones persist. **MCP:** `get_drift`, `scan_drift`.
+
+### N3. Reconciliation
+- **UI:** Drift tab → per open event (architect): **Accept → ADR** (auto-proposes an ADR for the
+  change, linking the affected components), **Reject → task** (opens a "Revert drift: …" task), or
+  **False positive** (records a per-project suppression so the rule won't re-fire). The detector
+  "learns" from false positives.
+- **API:** `POST /api/v1/projects/{id}/drift/{event_id}/reconcile` (`accepted|rejected|false_positive`)
+  · **MCP:** `reconcile_drift`.
+
+### N4. Not built / honest limits
+- **No server-side code crawl:** the server doesn't fetch + parse a whole repo itself — the **Drift
+  Sentinel** subagent does the reading (via its tools) and posts observations to the scan endpoint.
+  So the Drift tab is populated by the Sentinel (or the API/plugin), not by a UI button.
+- Only **Python** import analysis is implemented. Per-project **suppression UI** (events are kept as
+  `false_positive`); folding drift into **Risk** (§Q1) — both follow-ups.
 
 ---
 
@@ -401,7 +453,7 @@ digest (§I) sits underneath.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~34 curated tools that call the REST API.
+  MCP server then exposes ~40 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -434,6 +486,14 @@ digest (§I) sits underneath.
 - `my_workspace` returns the caller's linked engineer profile, assigned open tasks, and the
   decisions they own / must review (the API behind §M).
 
+### L8. Detect architecture drift (subagent) **[new — v2 §L7]**
+- The **`drift-sentinel`** subagent reads code via its tools, maps imports back to components using
+  their code-binding `module_prefix`es, flags implicit decisions, and calls `scan_drift` — then
+  reports the refreshed drift score + queue and can `reconcile_drift` with the architect's go-ahead.
+  Tools: `list_components`, `list_code_bindings`, `read_repo_file`, `scan_drift`, `get_drift`,
+  `reconcile_drift`, `adr_impact`. This is the producer behind the Drift tab (§N).
+- **Not built (v2 §L8/§L9):** the decision-deadline nudger and the PR-to-ADR linker skills.
+
 ---
 
 ## M. Engineer workspace (`/me`)
@@ -461,9 +521,9 @@ backlog:
 - ADR **doc-import** (G6) — was dropped from the trimmed Architecture tab; re-add to Decisions.
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - *(closed previously: decision-impact / blast radius (G5); Risk dashboard (§Q) + portfolio risk
-  (§B1); user & role management UI (A3) + engineer workspace (§M). Closed this revision: **per-role
-  write enforcement** across the Roles × flows matrix (§A3a), with the web app hiding controls a
-  role can't use.)*
+  (§B1); user & role management UI (A3) + engineer workspace (§M); per-role write enforcement
+  (§A3a). Closed this revision: **architecture drift detection** (§N) — code bindings, the Drift
+  tab + queue, reconciliation, portfolio drift badge, and the Drift Sentinel subagent.)*
 
 ## Not built (documented as future)
 - Slack/email **delivery** of alerts (I) and **decision SLA notifications** (G3).
@@ -477,10 +537,12 @@ backlog:
 - Hours-based **allocation** / interrupt budget, planned-vs-realized capacity, PTO→CPM, and
   skill-task fit (§F2–F5).
 - Hard-enforced decision **rules/approval gates** (G3) — `can_accept` is advisory today.
-- **Risk timeline** (§Q2) and the **quality** risk family + **drift-score** contribution (§Q1) —
-  need historical snapshots and the GitHub-metrics / drift-detection work respectively.
-- The broader v2 surfaces these slices do **not** touch: architecture **drift detection** (§N),
-  **retros/postmortems** (§P), and new connectors (PagerDuty §J7, CI/observability §J8).
+- **Risk timeline** (§Q2) and the **quality** risk family (§Q1) — need historical snapshots and the
+  GitHub PR-metrics work. Folding the **drift score** into Risk's architecture family is a follow-up.
+- **Drift** (§N) limits: no server-side repo crawl (the Drift Sentinel subagent reads code and posts
+  observations), Python-only import analysis, and no suppression-management UI.
+- The broader v2 surfaces these slices do **not** touch: **retros/postmortems** (§P), and new
+  connectors (PagerDuty §J7, CI/observability §J8).
 
 ---
 

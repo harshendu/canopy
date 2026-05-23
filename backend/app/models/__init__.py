@@ -6,7 +6,10 @@ from app.models.architecture import (
     ADRStakeholder,
     ArchitectureComponent,
     ArchitectureDecision,
+    ComponentCodeBinding,
     ComponentLink,
+    DriftEvent,
+    DriftSuppression,
 )
 from app.models.integration import (
     Connection,
@@ -32,9 +35,12 @@ __all__ = [
     "Allocation",
     "ArchitectureComponent",
     "ArchitectureDecision",
+    "ComponentCodeBinding",
     "ComponentLink",
     "Connection",
     "Dependency",
+    "DriftEvent",
+    "DriftSuppression",
     "Engineer",
     "ExternalRef",
     "Holiday",

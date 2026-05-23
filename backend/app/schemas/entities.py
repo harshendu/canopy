@@ -489,6 +489,8 @@ class ProjectSummary(BaseModel):
     target_date: date | None
     risk_score: int
     risk_level: str
+    drift_score: int
+    drift_level: str
 
 
 class PortfolioResponse(BaseModel):
@@ -571,6 +573,71 @@ class RiskResponse(BaseModel):
     level: str
     families: list[RiskFamilyRead]
     mitigations: list[RiskMitigationRead]
+
+
+# --- Architecture drift ---
+class CodeBindingCreate(BaseModel):
+    component_id: int
+    path_glob: str
+    connection_id: int | None = None
+    repo: str | None = None
+    module_prefix: str | None = None
+
+
+class CodeBindingRead(BaseModel):
+    model_config = _read
+    id: int
+    component_id: int
+    connection_id: int | None
+    repo: str | None
+    path_glob: str
+    module_prefix: str | None
+
+
+class ImplicitSignalIn(BaseModel):
+    kind: str  # new_package | new_dependency | new_service | new_datastore
+    summary: str
+    suspected_cause: str | None = None
+    component_id: int | None = None
+
+
+class DriftScanRequest(BaseModel):
+    """Observations supplied by the Drift Sentinel (or a crawler). Declared edges and
+    accepted ADRs are loaded server-side; these are what the *code* actually shows."""
+
+    actual_edges: list[tuple[int, int]] = []
+    inactive_component_ids: list[int] = []
+    implicit_signals: list[ImplicitSignalIn] = []
+
+
+class DriftEventRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    kind: str
+    rule_key: str
+    summary: str
+    detail: str | None
+    suspected_cause: str | None
+    affected_component_ids: list[int]
+    status: str
+
+
+class DriftResponse(BaseModel):
+    project_id: int
+    score: int
+    level: str
+    events: list[DriftEventRead]
+
+
+class DriftReconcileRequest(BaseModel):
+    action: str  # accepted | rejected | false_positive
+
+
+class DriftReconcileResponse(BaseModel):
+    event: DriftEventRead
+    created_adr_id: int | None = None
+    created_task_id: int | None = None
 
 
 # --- Engineer workspace (/me) ---

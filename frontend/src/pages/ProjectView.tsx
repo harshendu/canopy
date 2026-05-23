@@ -22,6 +22,7 @@ const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
 const ArchitectureView = lazy(() => import("../components/ArchitectureView"));
 const DecisionsView = lazy(() => import("../components/DecisionsView"));
 const RiskView = lazy(() => import("../components/RiskView"));
+const DriftView = lazy(() => import("../components/DriftView"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
 
 type Tab =
@@ -30,6 +31,7 @@ type Tab =
   | "capacity"
   | "decisions"
   | "architecture"
+  | "drift"
   | "roadmap"
   | "burndown"
   | "risk";
@@ -40,6 +42,7 @@ const TABS: Tab[] = [
   "capacity",
   "decisions",
   "architecture",
+  "drift",
   "roadmap",
   "burndown",
   "risk",
@@ -197,6 +200,7 @@ export default function ProjectView() {
           ["capacity", "Capacity"],
           ["decisions", "Decisions"],
           ["architecture", "Architecture"],
+          ["drift", "Drift"],
           ["roadmap", "Roadmap"],
           ["burndown", "Burndown"],
           ["risk", "Risk"],
@@ -244,6 +248,12 @@ export default function ProjectView() {
       {tab === "architecture" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading architecture…</p>}>
           <ArchitectureView projectId={id} />
+        </Suspense>
+      )}
+
+      {tab === "drift" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading drift…</p>}>
+          <DriftView projectId={id} />
         </Suspense>
       )}
 

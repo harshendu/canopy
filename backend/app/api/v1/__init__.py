@@ -6,6 +6,7 @@ from app.api.v1 import (
     connectors,
     decisions,
     dependencies,
+    drift,
     events,
     gantt,
     me,
@@ -30,3 +31,4 @@ api_router.include_router(connectors.router, prefix="/connectors", tags=["connec
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])
 api_router.include_router(risk.router, tags=["risk"])
+api_router.include_router(drift.router, tags=["drift"])

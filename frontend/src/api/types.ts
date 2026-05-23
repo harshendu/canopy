@@ -224,6 +224,36 @@ export interface ProjectSummary {
   target_date: string | null;
   risk_score: number;
   risk_level: RiskLevel;
+  drift_score: number;
+  drift_level: RiskLevel;
+}
+
+export interface CodeBinding {
+  id: number;
+  component_id: number;
+  connection_id: number | null;
+  repo: string | null;
+  path_glob: string;
+  module_prefix: string | null;
+}
+
+export interface DriftEvent {
+  id: number;
+  project_id: number;
+  kind: string;
+  rule_key: string;
+  summary: string;
+  detail: string | null;
+  suspected_cause: string | null;
+  affected_component_ids: number[];
+  status: string;
+}
+
+export interface DriftResponse {
+  project_id: number;
+  score: number;
+  level: RiskLevel;
+  events: DriftEvent[];
 }
 
 export type RiskLevel = "low" | "moderate" | "high" | "critical";

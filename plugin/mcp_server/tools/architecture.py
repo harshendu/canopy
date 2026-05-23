@@ -126,3 +126,72 @@ def register(mcp, client) -> None:
         """
         params = {"project_id": project_id} if project_id is not None else None
         return await client.get("/decisions/queue", params=params)
+
+    # --- Architecture drift ---
+    @mcp.tool
+    async def list_code_bindings(project_id: int) -> list[dict]:
+        """List the code bindings (component → path glob + module prefix) for a project."""
+        return await client.get("/architecture/code-bindings", params={"project_id": project_id})
+
+    @mcp.tool
+    async def add_code_binding(
+        component_id: int,
+        path_glob: str,
+        module_prefix: str | None = None,
+        connection_id: int | None = None,
+        repo: str | None = None,
+    ) -> dict:
+        """Bind a component to where it lives in code (the linchpin for drift detection).
+
+        `path_glob` e.g. "backend/app/services/**"; `module_prefix` e.g. "app.services" maps
+        Python imports back to this component.
+        """
+        return await client.post(
+            "/architecture/code-bindings",
+            {
+                "component_id": component_id,
+                "path_glob": path_glob,
+                "module_prefix": module_prefix,
+                "connection_id": connection_id,
+                "repo": repo,
+            },
+        )
+
+    @mcp.tool
+    async def get_drift(project_id: int) -> dict:
+        """Get the project's drift score + queue (open + triaged drift events)."""
+        return await client.get(f"/projects/{project_id}/drift")
+
+    @mcp.tool
+    async def scan_drift(
+        project_id: int,
+        actual_edges: list[list[int]],
+        inactive_component_ids: list[int] | None = None,
+        implicit_signals: list[dict] | None = None,
+    ) -> dict:
+        """Report what the code actually shows; the server runs drift detection and updates
+        the queue.
+
+        `actual_edges` are observed component-to-component dependencies as [source_id,
+        target_id] pairs (map imports to components via their module prefixes).
+        `inactive_component_ids` are components with no recent commits (for unimplemented-ADR
+        detection). `implicit_signals` are dicts like {"kind": "new_dependency", "summary":
+        "...", "suspected_cause": "PR #42", "component_id": 3} for architectural changes with
+        no ADR. Returns the refreshed drift score + queue.
+        """
+        return await client.post(
+            f"/projects/{project_id}/drift/scan",
+            {
+                "actual_edges": actual_edges,
+                "inactive_component_ids": inactive_component_ids or [],
+                "implicit_signals": implicit_signals or [],
+            },
+        )
+
+    @mcp.tool
+    async def reconcile_drift(project_id: int, event_id: int, action: str) -> dict:
+        """Triage a drift event. action: accepted (auto-propose an ADR) | rejected (open a
+        revert task) | false_positive (suppress this rule on future scans)."""
+        return await client.post(
+            f"/projects/{project_id}/drift/{event_id}/reconcile", {"action": action}
+        )

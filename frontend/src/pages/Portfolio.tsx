@@ -67,6 +67,11 @@ export default function Portfolio() {
                     >
                       risk {p.risk_score}
                     </span>
+                    <span
+                      className={`rounded px-2 py-0.5 text-xs font-medium ${riskTone(p.drift_level).badge}`}
+                    >
+                      drift {p.drift_score}
+                    </span>
                   </div>
                 </div>
                 <div className="mt-1 font-medium">{p.name}</div>
