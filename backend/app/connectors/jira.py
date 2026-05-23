@@ -151,7 +151,20 @@ class JiraConnector(Connector):
         result.watermark = self._to_jql_time(max_updated)
         self.connection.watermark = result.watermark
         await self.session.commit()
+        if result.created:
+            await self._auto_replan()
         return result
+
+    async def _auto_replan(self) -> None:
+        """Reschedule the canopy project after new tasks were imported (best-effort)."""
+        import contextlib
+
+        from app.services.planner import reschedule_project
+        from app.services.scheduling import CycleError
+
+        # Leave dates as-is if the imported graph happens to contain a cycle.
+        with contextlib.suppress(CycleError):
+            await reschedule_project(self.session, self.canopy_project_id)
 
     @staticmethod
     def _to_jql_time(iso_ts: str | None) -> str | None:

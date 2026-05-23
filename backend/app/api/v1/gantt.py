@@ -14,17 +14,12 @@ from app.schemas.entities import (
     GanttResponse,
     GanttTask,
     ReplanResult,
+    WhatIfRequest,
 )
 from app.services.burndown import compute_burndown, is_done_status
 from app.services.capacity import mondays
-from app.services.scheduling import (
-    CycleError,
-    SchedDep,
-    SchedTask,
-    assign_dates,
-    compute_cpm,
-    critical_path,
-)
+from app.services.planner import PlanOutcome, reschedule_project
+from app.services.scheduling import CycleError
 
 router = APIRouter()
 
@@ -43,11 +38,14 @@ async def _load_project_graph(
     return tasks, deps
 
 
-def _project_start(project: Project, tasks: list[Task]) -> date:
-    if project.start_date:
-        return project.start_date
-    starts = [t.start for t in tasks if t.start]
-    return min(starts) if starts else date.today()
+def _to_result(project_id: int, outcome: PlanOutcome) -> ReplanResult:
+    return ReplanResult(
+        project_id=project_id,
+        scheduled_tasks=outcome.scheduled_tasks,
+        critical_path=outcome.critical_path,
+        project_end=outcome.project_end,
+        deadline_violations=outcome.deadline_violations,
+    )
 
 
 @router.get("/projects/{project_id}/gantt", response_model=GanttResponse)
@@ -64,6 +62,7 @@ async def get_gantt(session: SessionDep, _: CurrentUser, project_id: int) -> Gan
             end_date=t.end,
             baseline_start=t.baseline_start,
             baseline_end=t.baseline_end,
+            deadline=t.deadline,
             duration=t.duration,
             progress=round(t.percent_complete / 100.0, 4),
             parent=t.parent_id or 0,
@@ -82,66 +81,29 @@ async def get_gantt(session: SessionDep, _: CurrentUser, project_id: int) -> Gan
 
 @router.post("/projects/{project_id}/replan", response_model=ReplanResult)
 async def replan(session: SessionDep, _: CurrentUser, project_id: int) -> ReplanResult:
-    project = await session.get(Project, project_id)
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-    tasks, deps = await _load_project_graph(session, project_id)
-    start_ref = _project_start(project, tasks)
-
-    sched_tasks: list[SchedTask] = []
-    for t in tasks:
-        if t.id is None:
-            continue
-        sched_tasks.append(
-            SchedTask(
-                id=t.id,
-                duration=0 if t.type == TaskType.milestone else max(t.duration, 0),
-                is_summary=t.type == TaskType.summary,
-                pinned_start_offset=(t.start - start_ref).days if t.start else None,
-            )
-        )
-    sched_deps = [
-        SchedDep(d.predecessor_id, d.successor_id, d.type.value, d.lag) for d in deps
-    ]
-
     try:
-        results = compute_cpm(sched_tasks, sched_deps)
+        outcome = await reschedule_project(session, project_id, persist=True)
     except CycleError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    assign_dates(sched_tasks, results, start_ref)
+    if outcome is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    return _to_result(project_id, outcome)
 
-    by_id = {t.id: t for t in tasks}
-    project_end: date | None = None
-    for tid, res in results.items():
-        task = by_id[tid]
-        task.start = res.start
-        task.end = res.end
-        task.is_critical = res.is_critical
-        task.total_float = res.total_float
-        if res.end and (project_end is None or res.end > project_end):
-            project_end = res.end
 
-    # Roll up summary tasks from their direct children.
-    children: dict[int, list[Task]] = {}
-    for t in tasks:
-        if t.parent_id:
-            children.setdefault(t.parent_id, []).append(t)
-    for t in tasks:
-        if t.type == TaskType.summary and t.id in children:
-            child_starts = [c.start for c in children[t.id] if c.start]
-            child_ends = [c.end for c in children[t.id] if c.end]
-            t.start = min(child_starts) if child_starts else None
-            t.end = max(child_ends) if child_ends else None
-            if t.start and t.end:
-                t.duration = (t.end - t.start).days
-
-    await session.commit()
-    return ReplanResult(
-        project_id=project_id,
-        scheduled_tasks=len(results),
-        critical_path=critical_path(results),
-        project_end=project_end,
-    )
+@router.post("/projects/{project_id}/whatif", response_model=ReplanResult)
+async def whatif(
+    session: SessionDep, _: CurrentUser, project_id: int, payload: WhatIfRequest
+) -> ReplanResult:
+    """Project a schedule with hypothetical duration changes — computed, never persisted."""
+    try:
+        outcome = await reschedule_project(
+            session, project_id, persist=False, duration_overrides=payload.duration_overrides
+        )
+    except CycleError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if outcome is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    return _to_result(project_id, outcome)
 
 
 @router.post("/projects/{project_id}/baseline")

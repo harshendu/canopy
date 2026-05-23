@@ -22,6 +22,7 @@ class ProjectUpdate(BaseModel):
     start_date: date | None = None
     target_date: date | None = None
     archived: bool | None = None
+    skip_weekends: bool | None = None
 
 
 class ProjectRead(BaseModel):
@@ -33,6 +34,20 @@ class ProjectRead(BaseModel):
     start_date: date | None
     target_date: date | None
     archived: bool
+    skip_weekends: bool
+
+
+class HolidayCreate(BaseModel):
+    day: date
+    name: str | None = None
+
+
+class HolidayRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    day: date
+    name: str | None
 
 
 # --- Milestone ---
@@ -66,6 +81,7 @@ class TaskCreate(BaseModel):
     duration: int = 1
     percent_complete: float = 0.0
     status: str | None = None
+    deadline: date | None = None
     assignee_engineer_id: int | None = None
 
 
@@ -79,6 +95,7 @@ class TaskUpdate(BaseModel):
     duration: int | None = None
     percent_complete: float | None = None
     status: str | None = None
+    deadline: date | None = None
     assignee_engineer_id: int | None = None
 
 
@@ -100,6 +117,7 @@ class TaskRead(BaseModel):
     total_float: int
     status: str | None
     sprint: str | None
+    deadline: date | None
     assignee_engineer_id: int | None
 
 
@@ -280,6 +298,7 @@ class GanttTask(BaseModel):
     end_date: date | None
     baseline_start: date | None
     baseline_end: date | None
+    deadline: date | None
     duration: int
     progress: float
     parent: int
@@ -307,6 +326,12 @@ class ReplanResult(BaseModel):
     scheduled_tasks: int
     critical_path: list[int]
     project_end: date | None
+    deadline_violations: list[int] = []
+
+
+class WhatIfRequest(BaseModel):
+    # task_id -> hypothetical duration (working days); applied without persisting.
+    duration_overrides: dict[int, int] = {}
 
 
 # --- Capacity heatmap ---

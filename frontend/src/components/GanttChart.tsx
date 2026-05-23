@@ -28,6 +28,7 @@ interface Geom {
   w: number;
   bx: number | null; // baseline x
   bw: number; // baseline width
+  dx: number | null; // deadline x
   y: number;
 }
 
@@ -49,7 +50,7 @@ export default function GanttChart({ data }: { data: GanttResponse }) {
     };
 
     const days = tasks
-      .flatMap((t) => [t.start_date, t.end_date])
+      .flatMap((t) => [t.start_date, t.end_date, t.deadline])
       .filter((d): d is string => Boolean(d))
       .map(parseDay);
     const min = days.length ? Math.min(...days) : 0;
@@ -66,7 +67,9 @@ export default function GanttChart({ data }: { data: GanttResponse }) {
       const bEnd = task.baseline_end ? parseDay(task.baseline_end) : null;
       const bx = bStart !== null ? (bStart - min) * dayW : null;
       const bw = bStart !== null && bEnd !== null ? Math.max((bEnd - bStart) * dayW, 4) : 0;
-      return { task, row, depth: depthOf(task), x, w, bx, bw, y: HEADER_H + row * ROW_H };
+      const dDay = task.deadline ? parseDay(task.deadline) : null;
+      const dx = dDay !== null ? (dDay - min) * dayW : null;
+      return { task, row, depth: depthOf(task), x, w, bx, bw, dx, y: HEADER_H + row * ROW_H };
     });
 
     return {
@@ -152,8 +155,26 @@ export default function GanttChart({ data }: { data: GanttResponse }) {
               ? "fill-slate-700"
               : "fill-canopy-500";
           const cy = g.y + ROW_H / 2;
+          const missedDeadline =
+            g.dx !== null &&
+            g.task.end_date != null &&
+            g.task.deadline != null &&
+            g.task.end_date > g.task.deadline;
           return (
             <g key={g.task.id}>
+              {g.dx !== null && (
+                <line
+                  x1={LABEL_W + g.dx}
+                  y1={g.y + 4}
+                  x2={LABEL_W + g.dx}
+                  y2={g.y + ROW_H - 4}
+                  className={missedDeadline ? "stroke-red-600" : "stroke-amber-400"}
+                  strokeWidth={2}
+                  strokeDasharray="3 2"
+                >
+                  <title>deadline: {g.task.deadline}</title>
+                </line>
+              )}
               <text
                 x={8 + g.depth * 14}
                 y={cy + 4}

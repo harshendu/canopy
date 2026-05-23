@@ -59,9 +59,13 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
 - A `Task` is the Gantt unit; a `summary` task is a phase/workstream (WBS tree via `parent_id`).
   Dependencies are typed FS/SS/FF/SF with `lag`.
 - **CPM is computed backend-side** in `app/services/scheduling.py` (pure forward/backward pass over
-  a `networkx` DAG). `POST /projects/{id}/replan` persists dates, `is_critical`, and float. Keep the
-  scheduler pure and unit-tested; the frontend only renders. `POST /projects/{id}/baseline`
-  snapshots current start/end into `baseline_*` (the Gantt overlays planned-vs-actual drift).
+  a `networkx` DAG). The CPM works in working-day offsets; a `WorkingCalendar` maps them to dates
+  (skips weekends when `Project.skip_weekends` + project `Holiday`s). `app/services/planner.py`
+  `reschedule_project` loads the graph, runs CPM with the calendar, optionally applies duration
+  overrides (what-if) and/or persists, and reports `deadline` violations. Endpoints:
+  `POST /projects/{id}/replan` (persist), `POST /projects/{id}/whatif` (no persist, duration overrides),
+  `POST /projects/{id}/baseline` (snapshot start/end → `baseline_*`; Gantt overlays drift). A Jira
+  sync that creates tasks auto-replans the project. Keep the scheduler/planner pure-ish and unit-tested.
 - Aggregation for the visibility views is also backend-side and pure-where-possible:
   `GET /projects/portfolio` (per-project rollups), `GET /team/capacity?project_id=` (engineer×week
   allocation via `app/services/capacity.py:weekly_capacity`), and `GET /projects/{id}/burndown`

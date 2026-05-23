@@ -13,6 +13,7 @@ from app.models.integration import (
 )
 from app.models.project import (
     Dependency,
+    Holiday,
     Milestone,
     Project,
     Task,
@@ -31,6 +32,7 @@ __all__ = [
     "Dependency",
     "Engineer",
     "ExternalRef",
+    "Holiday",
     "Milestone",
     "Project",
     "PullRequest",

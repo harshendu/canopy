@@ -222,3 +222,67 @@ async def test_adr_component_links(client, db_session):
     ).json()
     assert adrs[0]["component_ids"] == [comp_id]
     assert adrs[0]["number"] == 1
+
+
+async def _project_with_task(client, headers, **task_fields):
+    project_id = (
+        await client.post(
+            "/api/v1/projects",
+            json={"key": "PLAT", "name": "Platform", "start_date": "2026-01-05"},
+            headers=headers,
+        )
+    ).json()["id"]
+    task_id = (
+        await client.post(
+            "/api/v1/tasks",
+            json={"project_id": project_id, "name": "Build", "duration": 2, **task_fields},
+            headers=headers,
+        )
+    ).json()["id"]
+    return project_id, task_id
+
+
+@pytest.mark.asyncio
+async def test_whatif_does_not_persist(client, db_session):
+    await _seed_admin(db_session)
+    token = await _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, task_id = await _project_with_task(client, headers)
+    await client.post(f"/api/v1/projects/{project_id}/replan", headers=headers)
+
+    resp = await client.post(
+        f"/api/v1/projects/{project_id}/whatif",
+        json={"duration_overrides": {str(task_id): 10}},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["project_end"] == "2026-01-15"  # 2026-01-05 + 10 days, projected
+
+    task = (await client.get(f"/api/v1/tasks/{task_id}", headers=headers)).json()
+    assert task["duration"] == 2  # unchanged — what-if was not persisted
+
+
+@pytest.mark.asyncio
+async def test_deadline_violation_reported(client, db_session):
+    await _seed_admin(db_session)
+    token = await _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, task_id = await _project_with_task(
+        client, headers, duration=5, deadline="2026-01-06"
+    )
+    replan = await client.post(f"/api/v1/projects/{project_id}/replan", headers=headers)
+    assert task_id in replan.json()["deadline_violations"]
+
+
+@pytest.mark.asyncio
+async def test_skip_weekends_extends_schedule(client, db_session):
+    await _seed_admin(db_session)
+    token = await _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    project_id, _ = await _project_with_task(client, headers, duration=5)
+    await client.patch(
+        f"/api/v1/projects/{project_id}", json={"skip_weekends": True}, headers=headers
+    )
+    replan = await client.post(f"/api/v1/projects/{project_id}/replan", headers=headers)
+    # 5 working days from Mon 2026-01-05 skips the weekend -> ends Mon 2026-01-12.
+    assert replan.json()["project_end"] == "2026-01-12"

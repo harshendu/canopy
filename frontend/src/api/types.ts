@@ -11,6 +11,7 @@ export interface Project {
   start_date: string | null;
   target_date: string | null;
   archived: boolean;
+  skip_weekends: boolean;
 }
 
 export interface Task {
@@ -30,6 +31,7 @@ export interface Task {
   total_float: number;
   status: string | null;
   sprint: string | null;
+  deadline: string | null;
   assignee_engineer_id: number | null;
 }
 
@@ -40,6 +42,7 @@ export interface GanttTask {
   end_date: string | null;
   baseline_start: string | null;
   baseline_end: string | null;
+  deadline: string | null;
   duration: number;
   progress: number;
   parent: number;
@@ -76,6 +79,7 @@ export interface ReplanResult {
   scheduled_tasks: number;
   critical_path: number[];
   project_end: string | null;
+  deadline_violations: number[];
 }
 
 export interface Connection {

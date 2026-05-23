@@ -3,8 +3,10 @@ from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.models.base import TaskType
-from app.models.project import Project, Task
+from app.models.project import Holiday, Project, Task
 from app.schemas.entities import (
+    HolidayCreate,
+    HolidayRead,
     PortfolioResponse,
     ProjectCreate,
     ProjectRead,
@@ -91,4 +93,34 @@ async def delete_project(session: SessionDep, _: CurrentUser, project_id: int) -
     project = await session.get(Project, project_id)
     if project is not None:
         await session.delete(project)
+        await session.commit()
+
+
+# --- Scheduling calendar: holidays ---
+@router.get("/{project_id}/holidays", response_model=list[HolidayRead])
+async def list_holidays(session: SessionDep, _: CurrentUser, project_id: int) -> list[Holiday]:
+    result = await session.execute(select(Holiday).where(Holiday.project_id == project_id))
+    return list(result.scalars().all())
+
+
+@router.post(
+    "/{project_id}/holidays", response_model=HolidayRead, status_code=status.HTTP_201_CREATED
+)
+async def create_holiday(
+    session: SessionDep, _: CurrentUser, project_id: int, payload: HolidayCreate
+) -> Holiday:
+    holiday = Holiday(project_id=project_id, day=payload.day, name=payload.name)
+    session.add(holiday)
+    await session.commit()
+    await session.refresh(holiday)
+    return holiday
+
+
+@router.delete("/{project_id}/holidays/{holiday_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_holiday(
+    session: SessionDep, _: CurrentUser, project_id: int, holiday_id: int
+) -> None:
+    holiday = await session.get(Holiday, holiday_id)
+    if holiday is not None:
+        await session.delete(holiday)
         await session.commit()

@@ -31,6 +31,7 @@ export default function ProjectView() {
   const [taskName, setTaskName] = useState("");
   const [taskDuration, setTaskDuration] = useState(3);
   const [taskType, setTaskType] = useState<TaskType>("task");
+  const [taskDeadline, setTaskDeadline] = useState("");
   const [pred, setPred] = useState<number | "">("");
   const [succ, setSucc] = useState<number | "">("");
   const [lastReplan, setLastReplan] = useState<ReplanResult | null>(null);
@@ -71,10 +72,21 @@ export default function ProjectView() {
         name: taskName,
         duration: taskDuration,
         type: taskType,
+        deadline: taskDeadline || null,
       }),
     onSuccess: () => {
       setTaskName("");
+      setTaskDeadline("");
       invalidate();
+    },
+  });
+
+  const toggleWeekends = useMutation({
+    mutationFn: (skip: boolean) =>
+      api.patch<Project>(`/projects/${id}`, { skip_weekends: skip }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["project", id] });
+      qc.invalidateQueries({ queryKey: ["gantt", id] });
     },
   });
 
@@ -107,7 +119,15 @@ export default function ProjectView() {
         <h1 className="text-2xl font-bold">
           {project.data ? project.data.name : "Project"}
         </h1>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={project.data?.skip_weekends ?? false}
+              onChange={(e) => toggleWeekends.mutate(e.target.checked)}
+            />
+            5-day week
+          </label>
           <button
             onClick={() => baseline.mutate()}
             disabled={baseline.isPending}
@@ -126,10 +146,18 @@ export default function ProjectView() {
       </div>
 
       {lastReplan && (
-        <div className="rounded border border-canopy-500/30 bg-canopy-50 px-4 py-2 text-sm text-canopy-700">
-          Scheduled {lastReplan.scheduled_tasks} tasks · critical path:{" "}
-          {lastReplan.critical_path.join(" → ") || "none"} · ends{" "}
-          {lastReplan.project_end ?? "—"}
+        <div className="space-y-1">
+          <div className="rounded border border-canopy-500/30 bg-canopy-50 px-4 py-2 text-sm text-canopy-700">
+            Scheduled {lastReplan.scheduled_tasks} tasks · critical path:{" "}
+            {lastReplan.critical_path.join(" → ") || "none"} · ends{" "}
+            {lastReplan.project_end ?? "—"}
+          </div>
+          {lastReplan.deadline_violations.length > 0 && (
+            <div className="rounded border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700">
+              ⚠ {lastReplan.deadline_violations.length} task(s) miss their deadline:{" "}
+              {lastReplan.deadline_violations.join(", ")}
+            </div>
+          )}
         </div>
       )}
 
@@ -230,10 +258,19 @@ export default function ProjectView() {
               <option value="milestone">Milestone</option>
               <option value="summary">Summary / phase</option>
             </select>
-            <button className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-500">
+            Deadline (optional)
+            <input
+              type="date"
+              value={taskDeadline}
+              onChange={(e) => setTaskDeadline(e.target.value)}
+              className="rounded border border-slate-300 px-2 py-1 text-sm"
+            />
+            <button className="ml-auto rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
               Add
             </button>
-          </div>
+          </label>
         </form>
 
         <form

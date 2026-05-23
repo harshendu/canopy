@@ -3,10 +3,36 @@ from datetime import date
 from app.services.scheduling import (
     SchedDep,
     SchedTask,
+    WorkingCalendar,
+    add_working_days,
     assign_dates,
     compute_cpm,
     critical_path,
+    working_days_between,
 )
+
+
+def test_add_working_days_skips_weekend():
+    # 2026-01-02 is a Friday; +1 working day lands on Monday 2026-01-05.
+    cal = WorkingCalendar(weekend=frozenset({5, 6}))
+    assert add_working_days(date(2026, 1, 2), 1, cal) == date(2026, 1, 5)
+
+
+def test_working_days_between_skips_weekend():
+    cal = WorkingCalendar(weekend=frozenset({5, 6}))
+    assert working_days_between(date(2026, 1, 2), date(2026, 1, 5), cal) == 1
+
+
+def test_trivial_calendar_is_plain_calendar_days():
+    cal = WorkingCalendar()
+    assert add_working_days(date(2026, 1, 2), 3, cal) == date(2026, 1, 5)
+    assert working_days_between(date(2026, 1, 1), date(2026, 1, 6), cal) == 5
+
+
+def test_holidays_are_skipped():
+    cal = WorkingCalendar(weekend=frozenset({5, 6}), holidays=frozenset({date(2026, 1, 6)}))
+    # Mon 01-05 + 1 working day skips the Tue 01-06 holiday -> Wed 01-07.
+    assert add_working_days(date(2026, 1, 5), 1, cal) == date(2026, 1, 7)
 
 # Diamond DAG:  A(2) -> B(3) -> D(2)  and  A(2) -> C(4) -> D(2)  (all FS).
 # Hand-computed critical path is A -> C -> D (length 8); B has 1 day of float.

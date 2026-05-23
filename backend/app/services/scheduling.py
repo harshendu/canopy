@@ -1,8 +1,9 @@
 """Critical Path Method (CPM) scheduler.
 
 Pure, dependency-injected logic so it can be unit-tested without a database.
-Works in integer day-offsets from a project start date (calendar days for the
-slice; a working-calendar is a future enhancement). Supports FS/SS/FF/SF
+The CPM passes work in integer working-day offsets; a WorkingCalendar maps those
+offsets to calendar dates, skipping weekends/holidays. The default calendar treats
+every day as a working day (preserving plain-calendar behavior). Supports FS/SS/FF/SF
 dependency types with lag, computes early/late start/finish, total float, and
 flags the critical path (float <= 0).
 """
@@ -13,6 +14,53 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 import networkx as nx
+
+
+@dataclass(frozen=True)
+class WorkingCalendar:
+    """Defines which days count as working days. Empty sets => every day works."""
+
+    weekend: frozenset[int] = frozenset()  # weekday ints, Mon=0 … Sun=6 (e.g. {5, 6})
+    holidays: frozenset[date] = frozenset()
+
+    @property
+    def trivial(self) -> bool:
+        return not self.weekend and not self.holidays
+
+    def is_working(self, day: date) -> bool:
+        return day.weekday() not in self.weekend and day not in self.holidays
+
+
+def add_working_days(start: date, n: int, calendar: WorkingCalendar | None = None) -> date:
+    """The date `n` working days from `start` (n may be negative). Offset 0 == start."""
+    cal = calendar or WorkingCalendar()
+    if cal.trivial or n == 0:
+        return start + timedelta(days=n)
+    step = 1 if n > 0 else -1
+    remaining = abs(n)
+    day = start
+    while remaining > 0:
+        day += timedelta(days=step)
+        if cal.is_working(day):
+            remaining -= 1
+    return day
+
+
+def working_days_between(start: date, end: date, calendar: WorkingCalendar | None = None) -> int:
+    """Count of working days from `start` to `end` (signed). Inverse of add_working_days."""
+    cal = calendar or WorkingCalendar()
+    if cal.trivial:
+        return (end - start).days
+    if end == start:
+        return 0
+    step = 1 if end > start else -1
+    count = 0
+    day = start
+    while day != end:
+        day += timedelta(days=step)
+        if cal.is_working(day):
+            count += step
+    return count
 
 
 @dataclass
@@ -128,12 +176,14 @@ def assign_dates(
     tasks: list[SchedTask],
     results: dict[int, SchedResult],
     project_start: date,
+    calendar: WorkingCalendar | None = None,
 ) -> None:
-    """Populate start/end dates on each SchedResult from its day offsets."""
+    """Populate start/end dates on each SchedResult, mapping offsets through the calendar."""
+    cal = calendar or WorkingCalendar()
     durations = {t.id: t.duration for t in tasks}
     for tid, res in results.items():
-        res.start = project_start + timedelta(days=res.es)
-        res.end = project_start + timedelta(days=res.es + durations.get(tid, 0))
+        res.start = add_working_days(project_start, res.es, cal)
+        res.end = add_working_days(project_start, res.es + durations.get(tid, 0), cal)
 
 
 def critical_path(results: dict[int, SchedResult]) -> list[int]:

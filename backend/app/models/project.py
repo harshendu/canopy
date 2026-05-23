@@ -13,6 +13,16 @@ class Project(TimestampMixin, table=True):
     start_date: date | None = None
     target_date: date | None = None
     archived: bool = False
+    skip_weekends: bool = False  # schedule on a 5-day working week (+ holidays)
+
+
+class Holiday(TimestampMixin, table=True):
+    """A non-working day for a project's scheduling calendar."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    day: date = Field(index=True)
+    name: str | None = None
 
 
 class Milestone(TimestampMixin, table=True):
@@ -53,6 +63,8 @@ class Task(TimestampMixin, table=True):
     status: str | None = None
     # Active Jira sprint name (from the Agile API), when applicable.
     sprint: str | None = None
+    # Hard deadline; the scheduler flags tasks whose computed end exceeds it.
+    deadline: date | None = None
     assignee_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
 
 
