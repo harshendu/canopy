@@ -5,6 +5,7 @@ rollup so a project's card and its Risk tab agree."""
 from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
@@ -115,6 +116,21 @@ def report_for(
             open_incidents=open_incidents,
         )
     )
+
+
+async def run_risk_snapshots(session: AsyncSession) -> int:
+    """Capture a risk snapshot for every project — the worker's nightly sweep, so the risk
+    timeline (§Q2) is a real trend instead of only-on-demand points. Returns the count."""
+    projects = (await session.execute(select(Project))).scalars().all()
+    count = 0
+    for project in projects:
+        if project.id is None:
+            continue
+        report = await _compute_report(session, project)
+        session.add(RiskSnapshot(project_id=project.id, score=report.score, level=report.level))
+        count += 1
+    await session.commit()
+    return count
 
 
 async def _mitigations(session: SessionDep, project_id: int) -> list[RiskMitigation]:

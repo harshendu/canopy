@@ -10,6 +10,7 @@ from app.models.architecture import (
     ComponentCodeBinding,
     ComponentLink,
     DriftEvent,
+    DriftScan,
     DriftSuppression,
 )
 from app.models.integration import (
@@ -49,6 +50,7 @@ __all__ = [
     "Connection",
     "Dependency",
     "DriftEvent",
+    "DriftScan",
     "DriftSuppression",
     "Engineer",
     "ExternalRef",

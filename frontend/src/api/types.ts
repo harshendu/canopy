@@ -334,6 +334,8 @@ export interface DriftResponse {
   score: number;
   level: RiskLevel;
   events: DriftEvent[];
+  last_scanned_at: string | null;
+  scan_due: boolean;
 }
 
 export type RiskLevel = "low" | "moderate" | "high" | "critical";

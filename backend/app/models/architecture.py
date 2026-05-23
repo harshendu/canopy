@@ -117,3 +117,12 @@ class DriftSuppression(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
     rule_key: str = Field(index=True)
+
+
+class DriftScan(TimestampMixin, table=True):
+    """A log entry per drift scan, so 'scanned and clean' is distinguishable from 'never
+    scanned'. `created_at` is when the scan ran; powers the drift staleness signal (scan_due)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    finding_count: int = 0

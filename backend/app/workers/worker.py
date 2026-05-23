@@ -42,10 +42,23 @@ async def process_webhook(ctx: dict[str, Any], connection_id: int, payload: dict
             await get_connector(connection, session).handle_webhook(payload)
 
 
+async def capture_risk_snapshots(ctx: dict[str, Any]) -> dict[str, int]:
+    """Nightly sweep: snapshot every project's risk score so the timeline is a real trend."""
+    from app.api.v1.risk import run_risk_snapshots
+
+    async with async_session_factory() as session:
+        count = await run_risk_snapshots(session)
+    return {"snapshots": count}
+
+
 _poll_minutes = set(range(0, 60, max(1, min(settings.JIRA_POLL_MINUTES, 30))))
 
 
 class WorkerSettings:
-    functions: ClassVar = [jira_incremental_sync, process_webhook]
-    cron_jobs: ClassVar = [cron(jira_incremental_sync, minute=_poll_minutes, run_at_startup=False)]
+    functions: ClassVar = [jira_incremental_sync, process_webhook, capture_risk_snapshots]
+    cron_jobs: ClassVar = [
+        cron(jira_incremental_sync, minute=_poll_minutes, run_at_startup=False),
+        # Nightly risk snapshot (03:00) — the trend matters more than any single value.
+        cron(capture_risk_snapshots, hour={3}, minute={0}, run_at_startup=False),
+    ]
     redis_settings = redis_settings()

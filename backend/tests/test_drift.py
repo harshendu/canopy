@@ -205,3 +205,70 @@ async def test_false_positive_suppresses_on_next_scan(client, db_session):
     ).json()
     assert second["score"] == 0
     assert all(e["status"] != "open" for e in second["events"])
+
+
+@pytest.mark.asyncio
+async def test_drift_scan_due_staleness(client, db_session):
+    from datetime import datetime, timedelta
+
+    from app.models.architecture import DriftScan
+
+    await _seed_admin(db_session)
+    headers = {"Authorization": f"Bearer {await _token(client)}"}
+
+    async def make_project(key: str) -> int:
+        return (
+            await client.post(
+                "/api/v1/projects", json={"key": key, "name": key}, headers=headers
+            )
+        ).json()["id"]
+
+    async def bind(project_id: int) -> None:
+        comp_id = (
+            await client.post(
+                "/api/v1/architecture/components",
+                json={"project_id": project_id, "name": "Svc"},
+                headers=headers,
+            )
+        ).json()["id"]
+        await client.post(
+            "/api/v1/architecture/code-bindings",
+            json={"component_id": comp_id, "path_glob": "app/**", "module_prefix": "app"},
+            headers=headers,
+        )
+
+    # (1) Bindings but never scanned -> scan is due, no last_scanned_at.
+    p1 = await make_project("BIND")
+    await bind(p1)
+    d1 = (await client.get(f"/api/v1/projects/{p1}/drift", headers=headers)).json()
+    assert d1["scan_due"] is True
+    assert d1["last_scanned_at"] is None
+
+    # After a scan -> not due, timestamp recorded.
+    scan = (
+        await client.post(
+            f"/api/v1/projects/{p1}/drift/scan", json={"actual_edges": []}, headers=headers
+        )
+    ).json()
+    assert scan["scan_due"] is False
+    assert scan["last_scanned_at"] is not None
+
+    # (2) No code bindings -> nothing to scan, never due.
+    p2 = await make_project("NOBIND")
+    d2 = (await client.get(f"/api/v1/projects/{p2}/drift", headers=headers)).json()
+    assert d2["scan_due"] is False
+
+    # (3) Bindings + only an old scan (10 days ago) -> stale, due again.
+    p3 = await make_project("STALE")
+    await bind(p3)
+    db_session.add(
+        DriftScan(
+            project_id=p3,
+            finding_count=0,
+            created_at=datetime.utcnow() - timedelta(days=10),
+        )
+    )
+    await db_session.commit()
+    d3 = (await client.get(f"/api/v1/projects/{p3}/drift", headers=headers)).json()
+    assert d3["scan_due"] is True
+    assert d3["last_scanned_at"] is not None

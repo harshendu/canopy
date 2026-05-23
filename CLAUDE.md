@@ -144,6 +144,11 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   `pr-to-adr-linker`); subagents do isolated multi-step work (`jira-sync`, `gantt-planner`,
   `risk-analyst`, `drift-sentinel`). Add a tool when Claude needs a new verb; register it in
   `mcp_server/server.py`.
+- **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the Jira
+  reconciliation poll and a **nightly risk-snapshot sweep** (`capture_risk_snapshots` → `run_risk_snapshots`)
+  so the risk timeline is a real trend. Drift carries a **scan log** (`DriftScan`): `GET .../drift`
+  returns `last_scanned_at` + `scan_due` (true when code bindings exist but the scan is missing or
+  >7 days old), surfacing staleness so the Drift Sentinel re-scans (the server can't crawl code).
 - **Observability:** `GET /api/v1/health` (liveness) and `/api/v1/health/ready` (DB check) for
   orchestration; structured logging via `app/core/logging.py`.
 - **Frontend tests:** Vitest (`npm run test`) covers pure helpers (e.g. `src/lib/horizon.ts`); CI

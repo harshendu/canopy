@@ -806,6 +806,8 @@ class DriftResponse(BaseModel):
     score: int
     level: str
     events: list[DriftEventRead]
+    last_scanned_at: datetime | None = None  # when drift was last assessed (any scan)
+    scan_due: bool = False  # code bindings exist and the last scan is missing or stale
 
 
 class DriftReconcileRequest(BaseModel):

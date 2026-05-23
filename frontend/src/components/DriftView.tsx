@@ -98,6 +98,19 @@ export default function DriftView({ projectId }: { projectId: number }) {
             <span className={`rounded px-2 py-0.5 text-xs font-medium ${tone.badge}`}>
               {tone.label}
             </span>
+            {data.scan_due && (
+              <span
+                className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
+                title="Code bindings exist but the drift scan is missing or stale — run the Drift Sentinel."
+              >
+                scan due
+              </span>
+            )}
+            <span className="text-xs text-slate-400">
+              {data.last_scanned_at
+                ? `last scanned ${new Date(data.last_scanned_at).toLocaleDateString()}`
+                : "never scanned"}
+            </span>
           </div>
           <div className="mt-1 h-2 w-full overflow-hidden rounded bg-slate-100">
             <div className={`h-full ${tone.bar}`} style={{ width: `${data.score}%` }} />

@@ -229,6 +229,33 @@ async def test_activity_events_make_quality_risk_available(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_run_risk_snapshots_sweeps_all_projects(client, db_session):
+    from app.api.v1.risk import run_risk_snapshots
+
+    await _seed_admin(db_session)
+    headers = {"Authorization": f"Bearer {await _token(client)}"}
+    ids = []
+    for key in ("ALPHA", "BETA"):
+        ids.append(
+            (
+                await client.post(
+                    "/api/v1/projects", json={"key": key, "name": key}, headers=headers
+                )
+            ).json()["id"]
+        )
+
+    # The worker's nightly sweep captures one snapshot per project.
+    captured = await run_risk_snapshots(db_session)
+    assert captured == 2
+    for pid in ids:
+        timeline = (
+            await client.get(f"/api/v1/projects/{pid}/risk/timeline", headers=headers)
+        ).json()
+        assert len(timeline) == 1
+        assert "score" in timeline[0]
+
+
+@pytest.mark.asyncio
 async def test_risk_timeline_captures_snapshots(client, db_session):
     await _seed_admin(db_session)
     headers = {"Authorization": f"Bearer {await _token(client)}"}

@@ -191,9 +191,9 @@ The decision model is the best part of the product. The gap is *traceability* an
   **WIP/aging** (C-R2), **cycle-time trend**, **PR review latency** (J-R1), and **decision latency**
   (G-R4). The current families lean lagging (burndown, deadline-missed, drift-after-the-fact).
   Leading indicators are what let the architect act *before* the slip.
-- **Q-R3 — Auto-capture the risk snapshot.** A trend captured "on demand" is no trend. Wire a
-  scheduled snapshot (nightly via the plugin/cron, or the arq worker) so `risk/timeline` is real.
-  Same for the drift scan (N-R1).
+- **Q-R3 — Auto-capture the risk snapshot. ✅ Shipped.** The arq worker runs a nightly cron
+  (`capture_risk_snapshots` → `run_risk_snapshots`) that snapshots every project, so `risk/timeline`
+  is a real trend instead of only on-demand points.
 - **Q-R4 — Mitigation follow-ups actually follow up.** Promote the §Q4 "not built": a mitigation
   past its `check_in` date raises its own (gentle) alert and pings the owner. An acknowledged risk
   with no follow-through is worse than an unacknowledged one.
@@ -202,10 +202,12 @@ The decision model is the best part of the product. The gap is *traceability* an
 
 Drift is the differentiator; today it's the most fragile flow (manual, Python-only, open-loop).
 
-- **N-R1 — Close the loop: CI/webhook-triggered scans.** A GitHub push/merge webhook (the substrate
-  exists — §J4/§J8) enqueues a drift scan for the affected project. The Drift Sentinel still does the
-  reading, but it's *triggered by reality* instead of remembered by a human. Plus a nightly full
-  sweep. Drift you have to remember to check is drift you'll discover too late.
+- **N-R1 — Close the loop: drift staleness. ◐ Partly shipped.** Every scan is now logged
+  (`DriftScan`); `GET .../drift` returns `last_scanned_at` + `scan_due`, and the Drift tab shows a
+  "scan due" badge when bindings exist but the scan is missing or >7 days old — so stale drift is
+  *surfaced* instead of silently forgotten. **Remaining:** a GitHub push/merge webhook that
+  *enqueues* the Drift Sentinel (the server can't crawl code itself, so the actual scan stays
+  agent-driven; the webhook→agent trigger is the open piece).
 - **N-R2 — Beyond the import graph.** Structural/import drift is necessary, not sufficient.
   Architectural coherence also means **contract drift** (API schema / event-payload changes vs. the
   declared interface) and **fitness-function drift** (G-R1). Add these as drift signal kinds. A team
@@ -328,7 +330,9 @@ or fixes a referenced-but-missing tool.)
    `/me` flag/resolve + alerts digest) and the flow board (status lanes + WIP + cycle-time-P85
    aging, Board tab + `get_board`). *(Open follow-ups: blocked-time in the risk score; persisted
    WIP limits.)*
-8. **CI/webhook-triggered drift + auto-captured risk snapshots** (N-R1, Q-R3, C6) — close the loops.
+8. ◐ **Auto-captured risk snapshots + drift staleness** (N-R1, Q-R3, C6). **Shipped:** nightly
+   risk-snapshot sweep (arq worker) and drift scan-log + `scan_due` staleness badge. **Remaining:**
+   a GitHub push-webhook that enqueues the Drift Sentinel (agent-driven scan).
 
 **Later (depth):**
 9. **Decision fitness functions + traceability ledger** (G-R1, T, C6) — verified coherence.

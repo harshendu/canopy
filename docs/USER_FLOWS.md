@@ -458,10 +458,13 @@ digest (§I) sits underneath.
   portfolio card's `risk_score` (§B1).
 
 ### Q2. Risk timeline
-- **UI:** Risk tab → a sparkline of recent risk **snapshots** next to the score; planners can
-  **Capture snapshot** on demand (run nightly via the plugin for a real trend).
+- **UI:** Risk tab → a sparkline of recent risk **snapshots** next to the score; planners can also
+  **Capture snapshot** on demand.
 - **API:** `GET /api/v1/projects/{id}/risk/timeline`, `POST /api/v1/projects/{id}/risk/snapshot`.
   Snapshots persist score + level; the trend matters more than any single value.
+- **Auto-capture (v2 §Q-R3):** the arq **worker** runs a nightly cron (`capture_risk_snapshots`,
+  03:00) that snapshots **every** project, so the trend is real without anyone clicking. The job is
+  `run_risk_snapshots` in `app/api/v1/risk.py`.
 
 ### Q3. Mitigation log
 - **UI:** Risk tab → **Acknowledge** any indicator with a note, an owner, and a check-in date; open
@@ -472,8 +475,8 @@ digest (§I) sits underneath.
 
 ### Q4. Not built (v2 §Q)
 - Automated **check-in follow-ups** / notifications on mitigations past their date.
-- PR-latency / churn **quality** metrics (need GitHub PR-metrics, §J6); the timeline is captured on
-  demand rather than on an automatic nightly schedule (wire the plugin/cron for that).
+- PR-latency / churn **quality** metrics (need GitHub PR-metrics, §J6). *(The nightly risk-snapshot
+  schedule is now built — the arq worker captures it; see Q2.)*
 
 ---
 
@@ -499,10 +502,16 @@ component map + ADRs and maintains the queue.
 ### N2. Drift queue & scan
 - **UI:** Drift tab → the score + the **drift queue** (open events first, then triaged): each event
   shows its kind, summary, affected components, and suspected cause.
-- **API:** `GET /api/v1/projects/{id}/drift` (score + events) · `POST /api/v1/projects/{id}/drift/scan`
+- **API:** `GET /api/v1/projects/{id}/drift` (score + events + **`last_scanned_at`** and
+  **`scan_due`**) · `POST /api/v1/projects/{id}/drift/scan`
   (architect-gated) accepts the Sentinel's observations (`actual_edges`, `inactive_component_ids`,
   `implicit_signals`), runs detection (applying learned suppressions), and upserts events — new
   findings open, resolved ones disappear, triaged ones persist. **MCP:** `get_drift`, `scan_drift`.
+- **Scan staleness (v2 §N-R1):** every scan is logged (`DriftScan`), so the Drift tab shows
+  **last scanned** and a **scan due** badge when code bindings exist but the scan is missing or
+  older than ~7 days — prompting a Sentinel re-scan. (The server can't crawl code itself, so the
+  loop is: staleness surfaced here → the Drift Sentinel re-scans. A push-webhook that *enqueues* the
+  Sentinel is the remaining piece — N4.)
 
 ### N3. Reconciliation
 - **UI:** Drift tab → per open event (architect): **Accept → ADR** (auto-proposes an ADR for the
@@ -722,8 +731,9 @@ backlog:
   quality-risk family is fed by §J8 events instead.
 - Smaller follow-ups: Slack/email **alert delivery** (I) + **decision SLA notifications** (G3);
   hard-enforced decision **approval gates** (G3, `can_accept` is advisory); connector **RBAC**;
-  resource **leveling**; drift **suppression-management UI** + non-Python analysis; nightly
-  **schedulers** for drift scans / risk snapshots (run via the plugin today).
+  resource **leveling**; drift **suppression-management UI** + non-Python analysis. *(Nightly
+  **risk-snapshot** scheduling is built — arq worker, §Q2. Nightly **drift scans** still need the
+  Drift Sentinel agent; a push-webhook that enqueues it is the remaining piece — §N.)*
 
 ---
 
