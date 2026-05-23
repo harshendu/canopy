@@ -33,6 +33,20 @@ docker compose up --build
 - Web: http://localhost:5173
 - Migrations (`alembic upgrade head`) and superuser seeding run automatically on start.
 
+## Developer setup & CI (no GitHub Actions)
+
+```bash
+./scripts/setup.sh        # bootstrap env on a vanilla VM (venv + pip + npm), idempotent
+./scripts/ci.sh           # basic CI: setup + backend pytest + frontend build
+./scripts/install-hooks.sh  # enable the git hooks for this clone
+```
+
+- **pre-commit** runs backend `pytest` / frontend build only for the layers you change
+  (`RUN_ALL=1` forces both).
+- **pre-push** runs `scripts/ci.sh` — it self-bootstraps the environment, so a freshly cloned
+  vanilla VM (with `python3` and `node`/`npm` installed) can push and have CI run. A failure aborts
+  the push.
+
 ## Backend (local dev)
 
 ```bash

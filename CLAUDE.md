@@ -67,7 +67,14 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   without a browser). SVAR/frappe are a possible upgrade.
 - The `User` table is named `app_user` (`user` is reserved in Postgres).
 
-## Before committing
-A pre-commit hook runs backend `pytest` (if `backend/` changed) and the frontend `npm run build`
-(if `frontend/` changed). Install it once with `scripts/install-hooks.sh`. Set `RUN_ALL=1` to force
-both. Don't bypass with `--no-verify` — fix the failure.
+## Setup, CI, and git hooks
+- `scripts/setup.sh` — idempotent environment bootstrap: creates `backend/.venv`, installs Python +
+  Node deps, and only reinstalls when something is missing or a lockfile changed. Works on a vanilla
+  VM with just the repo checked out (requires `python3` and `node`/`npm` on PATH).
+- `scripts/ci.sh` — basic CI: runs `setup.sh`, then backend `pytest` + frontend `npm run build`.
+- **pre-commit** hook (`.githooks/pre-commit`): backend `pytest` (if `backend/` changed) and frontend
+  build (if `frontend/` changed). `RUN_ALL=1` forces both.
+- **pre-push** hook (`.githooks/pre-push`): runs `scripts/ci.sh` (full CI, self-bootstrapping) before
+  every push; a failure aborts the push.
+- Install both hooks once per clone: `scripts/install-hooks.sh` (sets `core.hooksPath=.githooks`).
+- Don't bypass with `--no-verify` — fix the failure.
