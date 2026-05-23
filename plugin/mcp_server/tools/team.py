@@ -38,9 +38,16 @@ def register(mcp, client) -> None:
         )
 
     @mcp.tool
-    async def get_capacity(project_id: int) -> dict:
-        """Get the weekly capacity grid (engineer × week allocation %) for a project."""
-        return await client.get("/team/capacity", params={"project_id": project_id})
+    async def get_capacity(project_id: int | None = None) -> dict:
+        """Get the weekly capacity grid (engineer × week allocation %).
+
+        Pass a `project_id` for one project, or omit it for an **org-wide** grid that sums each
+        engineer's allocation across all projects — the only way to see cross-project
+        over-allocation (someone at 50% on three projects = 150%). Cells over 100% are
+        over-allocated; each row lists the project keys contributing to it.
+        """
+        params = {"project_id": project_id} if project_id is not None else None
+        return await client.get("/team/capacity", params=params)
 
     @mcp.tool
     async def allocate_engineer(

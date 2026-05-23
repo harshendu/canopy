@@ -208,10 +208,11 @@ export interface CapacityRow {
   engineer_id: number;
   engineer_name: string;
   cells: Record<string, number>;
+  projects?: string[]; // contributing project keys (org-wide view)
 }
 
 export interface CapacityResponse {
-  project_id: number;
+  project_id: number | null; // null = org-wide
   weeks: string[];
   rows: CapacityRow[];
 }

@@ -125,12 +125,14 @@ migration cutover). But stop treating it as *the* spine. Add the flow lens the b
 
 This is the EM's surface and it's currently the weakest quantitative one.
 
-- **F-R1 — Org-wide capacity (the C2 fix).** Make `project_id` optional on `GET /team/capacity`; when
-  omitted, return each engineer's allocation **summed across all projects**, with per-project
-  breakdown on hover. Over-allocation that spans projects is the overload that actually bites, and
-  today it's invisible.
-  - API: `GET /team/capacity` (project_id now optional) · MCP `get_capacity(project_id=None)`.
-  - UI: an org capacity view on `/team` and on the initiative dashboard.
+- **F-R1 — Org-wide capacity (the C2 fix). ✅ Shipped.** `project_id` is now optional on
+  `GET /team/capacity`; omitted, it returns each engineer's allocation **summed across all
+  projects**, with the contributing project keys per row (rows split across >1 project are
+  flagged). Over-allocation that spans projects — the overload that actually bites — is now visible.
+  - API: `GET /team/capacity` (project_id optional; response `project_id` may be `null`, rows carry
+    `projects`) · MCP `get_capacity(project_id=None)`.
+  - UI: a "Capacity across all projects" grid on `/team`. (Still to come: surfacing it on the
+    future initiative dashboard, R.)
 - **F-R2 — Allocation via MCP + hours model.** Add `allocate_engineer` MCP (there's a `POST
   /team/allocations` endpoint but no tool — C4). Then begin the deferred §F2 hours model: allocation
   in committed hours/week (already a field on `Engineer`) with an explicit **interrupt budget**
@@ -273,7 +275,7 @@ or fixes a referenced-but-missing tool.)
 | `update_task` ✅ | `PATCH /tasks/{id}` | Tactical edits (name/duration/dates/deadline/percent/parent). **Shipped** (status stays Jira-read-only). |
 | `assign_task` ✅ | `PATCH /tasks/{id}` (assignee) | Reassign work — the most common tactical move. **Shipped** (set/clear assignee). |
 | `allocate_engineer` ✅ | `POST /team/allocations` | Staffing changes. **Shipped.** |
-| `get_capacity` *(extend)* | `GET /team/capacity?project_id=` | Make `project_id` optional → **org-wide** capacity (C2). |
+| `get_capacity` *(extend)* ✅ | `GET /team/capacity?project_id=` | `project_id` now optional → **org-wide** capacity. **Shipped** (C2). |
 | `list_adrs` ✅★ | `GET /architecture/adrs` | **Bug fixed:** `pr-to-adr-linker` called a tool that didn't exist. **Shipped.** |
 | `create_project` ✅ | `POST /projects` | Let Claude bootstrap a project conversationally. **Shipped.** |
 | `set_decision_rule` | `PATCH /projects/{id}` | Tune the decision policy (owner/consensus/lazy). |
@@ -295,8 +297,8 @@ or fixes a referenced-but-missing tool.)
    `create_project` **shipped** (thin wrappers over existing endpoints; `set_decision_rule`,
    `list_milestones`, `record_risk_snapshot` and the new-model tools remain). Cheapest,
    highest-leverage first step.
-2. **Org-wide capacity** (F-R1, C2) — make `project_id` optional. Small change, removes a real blind
-   spot for the EM persona.
+2. ✅ **Org-wide capacity** (F-R1, C2) — `project_id` now optional; cross-project overload is
+   visible on `/team`. **Shipped.**
 3. **Fix the risk renormalization trap** (Q-R1, C5) — an Observability Coverage indicator. Small,
    corrects a *backwards* signal.
 4. **Reframe schedule "drift" → variance; reserve "drift" for architecture** (C-R4). Mostly naming +

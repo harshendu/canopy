@@ -7,13 +7,15 @@ function cellColor(pct: number): string {
   return `rgba(47,133,90,${alpha.toFixed(2)})`; // canopy green scale
 }
 
-export default function CapacityHeatmap({ data }: { data: CapacityResponse }) {
+export default function CapacityHeatmap({
+  data,
+  emptyHint = "No allocations yet — assign engineers to this project to see capacity.",
+}: {
+  data: CapacityResponse;
+  emptyHint?: string;
+}) {
   if (data.rows.length === 0) {
-    return (
-      <p className="text-sm text-slate-500">
-        No allocations yet — assign engineers to this project to see capacity.
-      </p>
-    );
+    return <p className="text-sm text-slate-500">{emptyHint}</p>;
   }
   return (
     <div className="overflow-auto rounded-lg border border-slate-200 bg-white">
@@ -35,6 +37,14 @@ export default function CapacityHeatmap({ data }: { data: CapacityResponse }) {
             <tr key={row.engineer_id}>
               <td className="sticky left-0 bg-white px-3 py-2 font-medium">
                 {row.engineer_name}
+                {row.projects && row.projects.length > 1 && (
+                  <span
+                    className="ml-1 text-[10px] font-normal text-amber-600"
+                    title={`Split across ${row.projects.length} projects: ${row.projects.join(", ")}`}
+                  >
+                    · {row.projects.length} projects
+                  </span>
+                )}
               </td>
               {data.weeks.map((w) => {
                 const pct = row.cells[w] ?? 0;

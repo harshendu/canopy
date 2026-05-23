@@ -171,6 +171,47 @@ async def test_capacity_endpoint(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_capacity_org_wide_sums_across_projects(client, db_session):
+    await _seed_admin(db_session)
+    token = await _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async def make_project(key: str) -> int:
+        resp = await client.post(
+            "/api/v1/projects",
+            json={"key": key, "name": key, "start_date": "2026-01-05",
+                  "target_date": "2026-01-11"},
+            headers=headers,
+        )
+        return resp.json()["id"]
+
+    p1 = await make_project("ALPHA")
+    p2 = await make_project("BETA")
+    eng_id = (
+        await client.post("/api/v1/team/engineers", json={"name": "Ada"}, headers=headers)
+    ).json()["id"]
+    for pid in (p1, p2):
+        await client.post(
+            "/api/v1/team/allocations",
+            json={"engineer_id": eng_id, "project_id": pid, "percent_allocation": 60,
+                  "start_date": "2026-01-05", "end_date": "2026-01-11"},
+            headers=headers,
+        )
+
+    # Per project: 60% — looks fine. Org-wide: 120% — over-allocated.
+    per_project = (
+        await client.get(f"/api/v1/team/capacity?project_id={p1}", headers=headers)
+    ).json()
+    assert per_project["rows"][0]["cells"]["2026-01-05"] == 60.0
+
+    org = (await client.get("/api/v1/team/capacity", headers=headers)).json()
+    assert org["project_id"] is None
+    row = org["rows"][0]
+    assert row["cells"]["2026-01-05"] == 120.0
+    assert row["projects"] == ["ALPHA", "BETA"]
+
+
+@pytest.mark.asyncio
 async def test_baseline_snapshot(client, db_session):
     await _seed_admin(db_session)
     token = await _token(client)

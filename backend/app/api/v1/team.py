@@ -107,20 +107,33 @@ async def create_allocation(
 
 
 @router.get("/capacity", response_model=CapacityResponse)
-async def capacity(session: SessionDep, _: CurrentUser, project_id: int) -> CapacityResponse:
-    project = await session.get(Project, project_id)
-    if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+async def capacity(
+    session: SessionDep, _: CurrentUser, project_id: int | None = None
+) -> CapacityResponse:
+    # Single project: scope to its allocations and prefer its date window. Org-wide
+    # (project_id omitted): sum every allocation per engineer so cross-project
+    # over-allocation — invisible per-project — surfaces.
+    default_start: date | None = None
+    default_end: date | None = None
+    if project_id is not None:
+        project = await session.get(Project, project_id)
+        if project is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+        stmt = select(Allocation).where(Allocation.project_id == project_id)
+        default_start, default_end = project.start_date, project.target_date
+    else:
+        stmt = select(Allocation)
+    allocations = list((await session.execute(stmt)).scalars().all())
 
-    allocations = list(
-        (
-            await session.execute(select(Allocation).where(Allocation.project_id == project_id))
-        ).scalars().all()
-    )
     engineers = {
         e.id: e.name
         for e in (await session.execute(select(Engineer))).scalars().all()
         if e.id is not None
+    }
+    project_keys = {
+        p.id: p.key
+        for p in (await session.execute(select(Project))).scalars().all()
+        if p.id is not None
     }
 
     spans = [
@@ -129,19 +142,25 @@ async def capacity(session: SessionDep, _: CurrentUser, project_id: int) -> Capa
     ]
     alloc_starts = [a.start_date for a in allocations if a.start_date]
     alloc_ends = [a.end_date for a in allocations if a.end_date]
-    window_start = project.start_date or (min(alloc_starts) if alloc_starts else date.today())
-    window_end = (
-        project.target_date
-        or (max(alloc_ends) if alloc_ends else window_start + timedelta(weeks=8))
+    window_start = default_start or (min(alloc_starts) if alloc_starts else date.today())
+    window_end = default_end or (
+        max(alloc_ends) if alloc_ends else window_start + timedelta(weeks=8)
     )
 
     grid = weekly_capacity(spans, window_start, window_end)
     weeks = [w.isoformat() for w in mondays(window_start, window_end)]
+
+    projects_by_engineer: dict[int, set[str]] = {}
+    for a in allocations:
+        if a.project_id is not None and a.project_id in project_keys:
+            projects_by_engineer.setdefault(a.engineer_id, set()).add(project_keys[a.project_id])
+
     rows = [
         CapacityRow(
             engineer_id=eng_id,
             engineer_name=engineers.get(eng_id, f"#{eng_id}"),
             cells={week.isoformat(): pct for week, pct in by_week.items()},
+            projects=sorted(projects_by_engineer.get(eng_id, set())),
         )
         for eng_id, by_week in sorted(grid.items())
     ]

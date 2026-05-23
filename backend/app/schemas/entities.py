@@ -478,10 +478,11 @@ class CapacityRow(BaseModel):
     engineer_id: int
     engineer_name: str
     cells: dict[str, float]  # week-start ISO date -> summed allocation %
+    projects: list[str] = []  # contributing project keys (org-wide view)
 
 
 class CapacityResponse(BaseModel):
-    project_id: int
+    project_id: int | None  # None = org-wide (summed across all projects)
     weeks: list[str]  # week-start ISO dates
     rows: list[CapacityRow]
 

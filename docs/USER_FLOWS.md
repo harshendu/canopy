@@ -213,10 +213,15 @@ allowed; legacy `member` ≈ architect):
 - **API:** `GET/POST /api/v1/team/allocations`, `DELETE /api/v1/team/allocations/{id}`
   (engineer, project, percent allocation, capacity hours, date range) · **MCP:** `allocate_engineer`.
 
-### F3. Capacity heatmap
+### F3. Capacity heatmap (per-project **and** org-wide)
 - **UI:** project → Capacity tab → an engineer × ISO-week grid shaded by total allocation %;
-  over-allocation (>100%) is red.
-- **API:** `GET /api/v1/team/capacity?project_id=` · **MCP:** `get_capacity`.
+  over-allocation (>100%) is red. The **Team** page (`/team`) shows the same grid **summed across
+  every project** ("Capacity across all projects") — so cross-project overload (someone at 50% on
+  three projects = 150%) is visible where per-project views hide it; rows split across >1 project
+  are flagged with their contributing project keys.
+- **API:** `GET /api/v1/team/capacity?project_id=` (omit `project_id` for the org-wide grid;
+  `project_id` is `null` in the response and each row carries `projects` = contributing keys) ·
+  **MCP:** `get_capacity` (`project_id` now optional). Closes the v2 §F cross-project blind spot.
 
 ---
 
