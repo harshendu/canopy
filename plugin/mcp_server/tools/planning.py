@@ -97,9 +97,11 @@ def register(mcp, client) -> None:
         )
 
     @mcp.tool
-    async def set_baseline(project_id: int) -> dict:
-        """Snapshot the current schedule as the baseline (for plan-vs-actual drift)."""
-        return await client.post(f"/projects/{project_id}/baseline")
+    async def set_baseline(project_id: int, note: str | None = None) -> dict:
+        """Snapshot the current schedule as the baseline (the plan-of-record for schedule
+        variance). Re-baselining is a deliberate, logged act — pass a `note` saying why the
+        plan was reset. Returns the logged baseline event."""
+        return await client.post(f"/projects/{project_id}/baseline", {"note": note})
 
     @mcp.tool
     async def get_burndown(project_id: int) -> dict:

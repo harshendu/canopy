@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type {
+  Baseline,
   BurndownResponse,
   GanttResponse,
   Project,
@@ -69,6 +70,8 @@ export default function ProjectView() {
   const [pred, setPred] = useState<number | "">("");
   const [succ, setSucc] = useState<number | "">("");
   const [lastReplan, setLastReplan] = useState<ReplanResult | null>(null);
+  const [baselining, setBaselining] = useState(false);
+  const [baselineNote, setBaselineNote] = useState("");
   const [tab, setTab] = useState<Tab>(initialTab);
   const { data: me } = useCurrentUser();
   const mayPlan = isPlanner(me?.role);
@@ -140,9 +143,21 @@ export default function ProjectView() {
     },
   });
 
+  const baselines = useQuery({
+    queryKey: ["baselines", id],
+    queryFn: () => api.get<Baseline[]>(`/projects/${id}/baselines`),
+    enabled: tab === "gantt",
+  });
+
   const baseline = useMutation({
-    mutationFn: () => api.post(`/projects/${id}/baseline`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["gantt", id] }),
+    mutationFn: (note: string) =>
+      api.post(`/projects/${id}/baseline`, { note: note || null }),
+    onSuccess: () => {
+      setBaselining(false);
+      setBaselineNote("");
+      qc.invalidateQueries({ queryKey: ["gantt", id] });
+      qc.invalidateQueries({ queryKey: ["baselines", id] });
+    },
   });
 
   return (
@@ -164,13 +179,44 @@ export default function ProjectView() {
           )}
           {mayPlan && (
             <>
-              <button
-                onClick={() => baseline.mutate()}
-                disabled={baseline.isPending}
-                className="rounded border border-canopy-500 px-4 py-2 text-sm font-medium text-canopy-700 disabled:opacity-50"
-              >
-                {baseline.isPending ? "Saving…" : "Set baseline"}
-              </button>
+              {baselining ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    baseline.mutate(baselineNote);
+                  }}
+                  className="flex items-center gap-1"
+                >
+                  <input
+                    autoFocus
+                    value={baselineNote}
+                    onChange={(e) => setBaselineNote(e.target.value)}
+                    placeholder="Why re-baseline? (optional)"
+                    className="w-56 rounded border border-slate-300 px-2 py-2 text-sm"
+                  />
+                  <button
+                    type="submit"
+                    disabled={baseline.isPending}
+                    className="rounded bg-canopy-700 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {baseline.isPending ? "Saving…" : "Save baseline"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBaselining(false)}
+                    className="px-2 py-2 text-sm text-slate-500"
+                  >
+                    Cancel
+                  </button>
+                </form>
+              ) : (
+                <button
+                  onClick={() => setBaselining(true)}
+                  className="rounded border border-canopy-500 px-4 py-2 text-sm font-medium text-canopy-700"
+                >
+                  Set baseline
+                </button>
+              )}
               <button
                 onClick={() => replan.mutate()}
                 disabled={replan.isPending}
@@ -227,14 +273,39 @@ export default function ProjectView() {
         ))}
       </div>
 
-      {tab === "gantt" &&
-        (gantt.data && gantt.data.tasks.length > 0 ? (
-          <GanttChart data={gantt.data} />
-        ) : (
-          <p className="text-sm text-slate-500">
-            No tasks yet — add tasks below, then run “Schedule (CPM)”.
-          </p>
-        ))}
+      {tab === "gantt" && (
+        <>
+          {gantt.data && gantt.data.tasks.length > 0 ? (
+            <GanttChart data={gantt.data} />
+          ) : (
+            <p className="text-sm text-slate-500">
+              No tasks yet — add tasks below, then run “Schedule (CPM)”.
+            </p>
+          )}
+          {(baselines.data?.length ?? 0) > 0 && (
+            <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
+              <h2 className="mb-1 font-semibold">Baseline history</h2>
+              <p className="mb-2 text-xs text-slate-500">
+                The Gantt shows current-vs-baseline as <strong>schedule variance</strong>.
+                Re-baselining is a deliberate reset of the plan-of-record — here’s when and why.
+              </p>
+              <ul className="space-y-1 text-sm">
+                {(baselines.data ?? []).map((b) => (
+                  <li key={b.id} className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-medium tabular-nums">
+                      {new Date(b.created_at).toLocaleDateString()}
+                    </span>
+                    <span className="text-slate-600">{b.note || "(no reason given)"}</span>
+                    <span className="ml-auto text-xs text-slate-400">
+                      {b.task_count} tasks{b.project_end ? ` · ends ${b.project_end}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
 
       {tab === "deps" &&
         (gantt.data && gantt.data.tasks.length > 0 ? (

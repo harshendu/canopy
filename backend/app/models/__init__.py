@@ -18,6 +18,7 @@ from app.models.integration import (
     PullRequest,
 )
 from app.models.project import (
+    Baseline,
     Dependency,
     Holiday,
     Milestone,
@@ -39,6 +40,7 @@ __all__ = [
     "Allocation",
     "ArchitectureComponent",
     "ArchitectureDecision",
+    "Baseline",
     "ComponentCodeBinding",
     "ComponentLink",
     "Connection",

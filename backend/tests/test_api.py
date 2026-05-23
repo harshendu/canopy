@@ -231,14 +231,28 @@ async def test_baseline_snapshot(client, db_session):
     )
     await client.post(f"/api/v1/projects/{project_id}/replan", headers=headers)
 
-    base = await client.post(f"/api/v1/projects/{project_id}/baseline", headers=headers)
-    assert base.status_code == 200, base.text
-    assert base.json()["baselined"] == 1
+    base = await client.post(
+        f"/api/v1/projects/{project_id}/baseline",
+        json={"note": "Re-scoped after Jira sync"},
+        headers=headers,
+    )
+    assert base.status_code == 201, base.text
+    body = base.json()
+    assert body["task_count"] == 1
+    assert body["note"] == "Re-scoped after Jira sync"
 
     gantt = (await client.get(f"/api/v1/projects/{project_id}/gantt", headers=headers)).json()
     task = gantt["tasks"][0]
     assert task["baseline_start"] == task["start_date"]
     assert task["baseline_end"] == task["end_date"]
+
+    # The re-baseline is logged with its reason.
+    history = (
+        await client.get(f"/api/v1/projects/{project_id}/baselines", headers=headers)
+    ).json()
+    assert len(history) == 1
+    assert history[0]["note"] == "Re-scoped after Jira sync"
+    assert history[0]["task_count"] == 1
 
 
 @pytest.mark.asyncio

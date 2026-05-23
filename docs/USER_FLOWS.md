@@ -153,10 +153,16 @@ allowed; legacy `member` ≈ architect):
   project's working calendar (weekends + holidays) and any task's set start date (treated as
   start-no-earlier-than). Cycles return a 409 error.
 
-### C4. Set / view a baseline (drift)
-- **UI:** project header → **Set baseline** snapshots current start/end. The Gantt then draws a faint
-  gray "planned" strip under each bar so plan-vs-actual drift is visible.
-- **API:** `POST /api/v1/projects/{id}/baseline` · **MCP:** `set_baseline`.
+### C4. Set / view a baseline (schedule variance)
+- **UI:** project header → **Set baseline** opens a note field ("Why re-baseline?") and snapshots
+  current start/end as the plan-of-record. The Gantt draws a faint gray "planned" strip under each
+  bar so **schedule variance** (current-vs-baseline) is visible. Re-baselining is a deliberate,
+  *reasoned* reset — re-planning is a feature, not a failure — so each one is logged and shown in a
+  **Baseline history** panel under the Gantt (date · reason · task count · planned end). The word
+  **"drift" is reserved for architecture drift** (§N); the schedule's plan-vs-actual is *variance*.
+- **API:** `POST /api/v1/projects/{id}/baseline` (optional `{note}`, returns the logged
+  `Baseline`), `GET /api/v1/projects/{id}/baselines` (the history, newest first) · **MCP:**
+  `set_baseline` (accepts a `note`).
 
 ### C5. What-if scheduling
 - **Actor:** architect via Claude (or API) · **MCP:** `whatif_schedule` · **API:**

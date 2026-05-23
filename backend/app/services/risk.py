@@ -3,7 +3,7 @@
 A leading-indicator companion to the lagging Alerts digest. Turns raw project signals
 into a 0-100 risk score with a drillable breakdown across four families:
 
-  * **schedule**     — deadline misses, baseline drift, critical-path float consumption
+  * **schedule**     — deadline misses, schedule variance vs baseline, critical-path float
   * **capacity**     — engineer-week over-allocation
   * **architecture** — deferred decisions past their decide-by, decisions stuck in
                        discussion (both from the decisions slice)
@@ -117,7 +117,7 @@ def _schedule_family(s: RiskSignals) -> RiskFamily:
             key="schedule_variance",
             label="Schedule variance vs baseline",
             score=_cap(len(s.drifted_tasks) * 15),
-            summary=f"{len(s.drifted_tasks)} task(s) drifted from baseline",
+            summary=f"{len(s.drifted_tasks)} task(s) off baseline (schedule variance)",
             details=[f"#{tid} {name}" for tid, name in s.drifted_tasks],
         ),
         RiskIndicator(

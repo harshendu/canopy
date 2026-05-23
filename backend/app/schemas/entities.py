@@ -473,6 +473,21 @@ class WhatIfRequest(BaseModel):
     duration_overrides: dict[int, int] = {}
 
 
+# --- Baseline (logged re-baseline events) ---
+class BaselineRequest(BaseModel):
+    note: str | None = None  # why the baseline is being (re)set
+
+
+class BaselineRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    note: str | None
+    task_count: int
+    project_end: date | None
+    created_at: datetime
+
+
 # --- Capacity heatmap ---
 class CapacityRow(BaseModel):
     engineer_id: int

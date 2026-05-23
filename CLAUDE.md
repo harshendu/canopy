@@ -28,7 +28,7 @@ backend/   FastAPI + SQLModel + Alembic + arq. API in app/api/v1, models in app/
 frontend/  Vite + React + TS + Tailwind v4 + TanStack Query. Pages in src/pages
            (Portfolio dashboard, Projects, ProjectView with Gantt/Dependencies/Capacity/
            Architecture/Roadmap/Burndown tabs, Connectors). Views in src/components:
-           GanttChart (custom SVG, with zoom + baseline/drift overlay), DependencyGraph +
+           GanttChart (custom SVG, with zoom + baseline/variance overlay), DependencyGraph +
            ArchitectureView (React Flow), CapacityHeatmap + RoadmapView (custom),
            BurndownChart + Portfolio (Recharts). Heavy libs (React Flow / Recharts) are
            React.lazy code-split. API client + types in src/api.
@@ -72,8 +72,10 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   `reschedule_project` loads the graph, runs CPM with the calendar, optionally applies duration
   overrides (what-if) and/or persists, and reports `deadline` violations. Endpoints:
   `POST /projects/{id}/replan` (persist), `POST /projects/{id}/whatif` (no persist, duration overrides),
-  `POST /projects/{id}/baseline` (snapshot start/end → `baseline_*`; Gantt overlays drift). A Jira
-  sync that creates tasks auto-replans the project. Keep the scheduler/planner pure-ish and unit-tested.
+  `POST /projects/{id}/baseline` (snapshot start/end → `baseline_*`; logs a reasoned `Baseline`
+  event — `GET .../baselines`; the Gantt overlays current-vs-baseline as **schedule variance**, and
+  "drift" is reserved for architecture drift §N). A Jira sync that creates tasks auto-replans the
+  project. Keep the scheduler/planner pure-ish and unit-tested.
 - **Alerts/digest:** `GET /projects/{id}/alerts` turns project state into actionable alerts
   (deadline misses, overdue milestones, over-allocations, unscheduled work) via
   `app/services/alerts.py` (pure). Slack/email *delivery* is a future hook over this output.

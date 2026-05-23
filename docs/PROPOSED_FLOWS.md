@@ -97,11 +97,13 @@ migration cutover). But stop treating it as *the* spine. Add the flow lens the b
 - **C-R3 — PTO & calendars feed CPM *and* forecast.** Promote the deferred §F "PTO→CPM" item: the
   `WorkingCalendar` already skips weekends + holidays; extend it to per-engineer availability
   (A-R2). A plan that ignores who's actually out is not a plan.
-- **C-R4 — Re-baseline as a deliberate, logged act — and reframe "drift."** Rename schedule
-  "drift-from-baseline" to **schedule variance**, and make re-baselining a first-class, *reasoned*
-  event (it requires a note and shows on the timeline). Reserve the word "drift" for *architecture*
-  drift (§N), which is the differentiated meaning. Today a replan after a scope change looks like
-  "drift" — penalizing exactly the agility we want.
+- **C-R4 — Re-baseline as a deliberate, logged act — and reframe "drift." ✅ Shipped.** Schedule
+  "drift-from-baseline" is renamed **schedule variance** throughout (risk indicator copy, Gantt
+  overlay, docs); "drift" now means *architecture* drift only (§N). Re-baselining takes an optional
+  **note** and is logged as a `Baseline` event (`POST .../baseline` → `GET .../baselines`), shown in
+  a **Baseline history** panel under the Gantt — re-planning is a feature, not a failure, so the
+  reset of the plan-of-record carries its reason and a trail. (`models.Baseline` + migration;
+  `set_baseline` MCP takes a note.)
 - **C-R5 — `update_task` everywhere.** `PATCH /tasks/{id}` exists (with the own-task guard) but has
   **no MCP tool**. Add `update_task` (duration, dates, deadline, parent) and `assign_task`
   (assignee) so Claude can act tactically — see C4 / the MCP table.
@@ -304,8 +306,9 @@ or fixes a referenced-but-missing tool.)
    visible on `/team`. **Shipped.**
 3. ✅ **Fix the risk renormalization trap** (Q-R1, C5) — an Observability Coverage indicator +
    `confidence` flag; a blind project no longer looks safer. **Shipped.**
-4. **Reframe schedule "drift" → variance; reserve "drift" for architecture** (C-R4). Mostly naming +
-   a re-baseline note; defuses the agility-vs-baseline tension.
+4. ✅ **Reframe schedule "drift" → variance; reserve "drift" for architecture** (C-R4). Naming +
+   a logged, reasoned re-baseline (note + history). **Shipped** — defuses the agility-vs-baseline
+   tension. *(Completes the "Now" tier.)*
 
 **Next (the structural bets):**
 5. **Initiative/Program layer + cross-project dependencies + initiative cockpit** (C1; B-R1, D-R1, R).

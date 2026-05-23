@@ -94,6 +94,15 @@ export interface ReplanResult {
   deadline_violations: number[];
 }
 
+export interface Baseline {
+  id: number;
+  project_id: number;
+  note: string | null;
+  task_count: number;
+  project_end: string | null;
+  created_at: string;
+}
+
 export interface Connection {
   id: number;
   provider: Provider;

@@ -112,3 +112,18 @@ class RiskSnapshot(TimestampMixin, table=True):
     project_id: int = Field(foreign_key="project.id", index=True)
     score: int
     level: str
+
+
+class Baseline(TimestampMixin, table=True):
+    """A logged re-baseline event: the moment the current schedule was snapshotted into
+    each task's baseline_* as the new plan-of-record, plus the reason it was reset.
+
+    The Gantt overlays current-vs-baseline as **schedule variance** — re-planning is a
+    feature, not a failure, so resetting the baseline is a deliberate, reasoned act we keep
+    a history of. (The word "drift" is reserved for *architecture* drift, §N.)"""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    note: str | None = None  # why the baseline was (re)set
+    task_count: int = 0  # tasks snapshotted at this baseline
+    project_end: date | None = None  # the planned end captured at baseline time

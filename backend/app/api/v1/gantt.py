@@ -7,11 +7,20 @@ from sqlmodel import col, select
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.core.events import publish
 from app.models.base import TaskType
-from app.models.project import Dependency, Milestone, Project, Task, TaskStatusHistory
+from app.models.project import (
+    Baseline,
+    Dependency,
+    Milestone,
+    Project,
+    Task,
+    TaskStatusHistory,
+)
 from app.models.team import Allocation, Engineer
 from app.schemas.entities import (
     AlertRead,
     AlertsResponse,
+    BaselineRead,
+    BaselineRequest,
     BurndownPoint,
     BurndownResponse,
     GanttLink,
@@ -117,22 +126,58 @@ async def whatif(
     return _to_result(project_id, outcome)
 
 
-@router.post("/projects/{project_id}/baseline")
-async def set_baseline(session: SessionDep, _: PlannerWriter, project_id: int) -> dict[str, int]:
-    """Snapshot current start/end into baseline_* for every task (drift reference)."""
+@router.post(
+    "/projects/{project_id}/baseline",
+    response_model=BaselineRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def set_baseline(
+    session: SessionDep,
+    _: PlannerWriter,
+    project_id: int,
+    payload: BaselineRequest | None = None,
+) -> Baseline:
+    """Snapshot current start/end into baseline_* for every task as the new plan-of-record.
+
+    Re-baselining is a deliberate, reasoned act — pass a `note` explaining why the plan was
+    reset. The event is logged (see `GET .../baselines`) so the schedule-variance reference
+    carries its own history. ("Drift" is reserved for architecture drift, §N.)
+    """
     tasks = list(
         (
             await session.execute(select(Task).where(Task.project_id == project_id))
         ).scalars().all()
     )
+    ends = [t.end for t in tasks if t.end]
     count = 0
     for task in tasks:
         task.baseline_start = task.start
         task.baseline_end = task.end
         count += 1
+    baseline = Baseline(
+        project_id=project_id,
+        note=payload.note if payload else None,
+        task_count=count,
+        project_end=max(ends) if ends else None,
+    )
+    session.add(baseline)
     await session.commit()
+    await session.refresh(baseline)
     await publish({"type": "baseline", "project_id": project_id})
-    return {"baselined": count}
+    return baseline
+
+
+@router.get("/projects/{project_id}/baselines", response_model=list[BaselineRead])
+async def list_baselines(
+    session: SessionDep, _: CurrentUser, project_id: int
+) -> list[Baseline]:
+    """The log of re-baseline events (newest first) — when the plan was reset and why."""
+    rows = await session.execute(
+        select(Baseline)
+        .where(Baseline.project_id == project_id)
+        .order_by(col(Baseline.id).desc())
+    )
+    return list(rows.scalars().all())
 
 
 @router.get("/projects/{project_id}/burndown", response_model=BurndownResponse)
