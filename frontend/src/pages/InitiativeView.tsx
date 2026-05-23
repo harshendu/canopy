@@ -2,7 +2,11 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { InitiativeCriticalPath, InitiativeRollup } from "../api/types";
+import type {
+  ForecastResponse,
+  InitiativeCriticalPath,
+  InitiativeRollup,
+} from "../api/types";
 import { riskTone } from "../lib/risk";
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -27,12 +31,17 @@ export default function InitiativeView() {
     queryKey: ["initiative-critical-path", id],
     queryFn: () => api.get<InitiativeCriticalPath>(`/initiatives/${id}/critical-path`),
   });
+  const forecast = useQuery({
+    queryKey: ["initiative-forecast", id],
+    queryFn: () => api.get<ForecastResponse>(`/initiatives/${id}/forecast`),
+  });
 
   if (!rollup.data) {
     return <p className="text-sm text-slate-500">Loading initiative…</p>;
   }
   const r = rollup.data;
   const cp = criticalPath.data;
+  const fc = forecast.data;
   const risk = riskTone(r.risk_level);
   const drift = riskTone(r.drift_level);
 
@@ -59,7 +68,7 @@ export default function InitiativeView() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <Stat
           label="Progress"
           value={`${r.avg_percent_complete}%`}
@@ -77,9 +86,18 @@ export default function InitiativeView() {
         </div>
         <Stat label="Open decisions" value={String(r.open_decisions)} hint="proposed / in discussion" />
         <Stat
-          label="Latest end"
+          label="Latest end (CPM)"
           value={r.project_end ?? "—"}
           hint={r.initiative.target_date ? `target ${r.initiative.target_date}` : "no target"}
+        />
+        <Stat
+          label="Forecast (P85)"
+          value={fc?.sufficient ? fc.p85_date ?? "—" : "—"}
+          hint={
+            fc?.sufficient
+              ? `P50 ${fc.p50_date}`
+              : "needs throughput history"
+          }
         />
       </div>
 

@@ -116,7 +116,8 @@ projects and rolls up their health.
 ### R3. Initiative cockpit (rolled-up health)
 - **UI:** `/initiatives/:id` — outcome statement, an **on track / behind target** badge, aggregate
   cards (progress, **worst** sub-project risk, **worst** drift, open-decision backlog, latest end
-  vs target), and the sub-project cards (each with its own risk/drift, linking into the project).
+  vs target, **P85 forecast** §C8), the **cross-project critical path** (§R4), and the sub-project
+  cards (each with its own risk/drift, linking into the project).
 - **API:** `GET /api/v1/initiatives/{id}/rollup` (per-project summaries + aggregates: total/completed
   tasks, avg %, latest `project_end`, max `risk_score`/`drift_score` with the owning level,
   `open_decisions` = ADRs proposed/under-discussion, `on_track`) · **MCP:** `get_initiative_rollup`.
@@ -224,6 +225,19 @@ projects and rolls up their health.
 ### C7. Working calendar (weekends + holidays)
 - **UI:** "5-day week" toggle (weekends). **Holidays** are API-only:
   `GET/POST/DELETE /api/v1/projects/{id}/holidays`. Both feed the CPM scheduler.
+
+### C8. Probabilistic forecast (Monte-Carlo) **[new — v2 §C-R1]**
+- **UI:** Gantt tab → a **Probabilistic forecast** card shows **P50 (likely)** and **P85 (safe)**
+  completion dates next to the deterministic CPM date — the honest "when will it ship?" for
+  knowledge work. If there isn't enough completed-work history yet, it says so (no fake precision).
+  The initiative cockpit (§R) shows the same P50/P85 for the whole program.
+- **API:** `GET /api/v1/projects/{id}/forecast`, `GET /api/v1/initiatives/{id}/forecast` · **MCP:**
+  `get_forecast` (pass `project_id` *or* `initiative_id`).
+- **How:** `app/services/forecast.py` (pure) runs a Monte-Carlo simulation — repeatedly burning down
+  the remaining items by sampling the team's **historical weekly throughput** (completed items/week,
+  including stall weeks, from `TaskStatusHistory` — the same source as burndown §H). Needs no
+  per-task estimates; reports a distribution, not a single date. Insufficient until ~3 weeks of
+  throughput exist.
 
 ---
 
@@ -572,7 +586,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~55 curated tools that call the REST API.
+  MCP server then exposes ~56 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**

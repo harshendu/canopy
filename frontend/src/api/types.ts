@@ -155,6 +155,20 @@ export interface Baseline {
   created_at: string;
 }
 
+export interface ForecastResponse {
+  scope: "project" | "initiative";
+  id: number;
+  sufficient: boolean;
+  reason: string | null;
+  remaining_items: number;
+  history_weeks: number;
+  trials: number;
+  p50_weeks: number | null;
+  p85_weeks: number | null;
+  p50_date: string | null;
+  p85_date: string | null;
+}
+
 export interface Connection {
   id: number;
   provider: Provider;

@@ -84,15 +84,15 @@ concurrently.
 Keep CPM — it's genuinely useful for hard-sequenced, well-estimated work (a launch runbook, a
 migration cutover). But stop treating it as *the* spine. Add the flow lens the brief actually needs.
 
-- **C-R1 — Probabilistic forecast (the headline addition).** Alongside the CPM end date, compute a
-  **Monte-Carlo forecast** from the team's historical throughput / cycle-time distribution: "P50
-  May 30, P85 Jun 14." This is the honest answer to "when will it ship?" for knowledge work and it
-  *embraces* uncertainty instead of faking precision.
-  - Service `app/services/forecast.py` (pure, unit-tested, like `scheduling.py`) ·
-    API `GET /projects/{id}/forecast` and `GET /initiatives/{id}/forecast` · MCP `get_forecast`.
-  - UI: a confidence band on the Gantt header and the portfolio/initiative cards (replaces the
-    single hard end-date as the *primary* number; CPM date stays as the "if-everything-goes-to-plan"
-    line).
+- **C-R1 — Probabilistic forecast. ✅ Shipped.** Alongside the CPM date, a **Monte-Carlo forecast**
+  from the team's historical weekly **throughput** reports **P50 / P85** completion dates — the
+  honest answer to "when will it ship?" for knowledge work, embracing uncertainty instead of faking
+  precision. Insufficient (with a reason) until ~3 weeks of throughput exist.
+  - Service `app/services/forecast.py` (pure, unit-tested) · API `GET /projects/{id}/forecast` and
+    `GET /initiatives/{id}/forecast` · MCP `get_forecast`.
+  - UI: a forecast card on the Gantt tab and a **P85** stat on the initiative cockpit.
+  - *Still open:* surfacing it on the portfolio cards (N forecasts is expensive — deferred);
+    cycle-time-based forecasting as an alternative to throughput.
 - **C-R2 — Flow board + WIP limits.** A Kanban view over the same tasks (status lanes from Jira),
   with a per-lane/per-engineer **WIP limit** and an **aging** highlight (items older than the
   cycle-time P85 glow red). This is where decentralized execution actually happens day-to-day.
@@ -291,7 +291,7 @@ or fixes a referenced-but-missing tool.)
 | `set_decision_rule` | `PATCH /projects/{id}` | Tune the decision policy (owner/consensus/lazy). |
 | `list_milestones` | `GET /milestones?project_id=` | Read milestones (only `create_milestone` exists). |
 | `raise_blocker` / `resolve_blocker` / `list_blockers` | new `…/blockers` | The blocker signal (D-R2). |
-| `get_forecast` | `GET /projects|initiatives/{id}/forecast` | Probabilistic delivery date (C-R1). |
+| `get_forecast` ✅ | `GET /projects\|initiatives/{id}/forecast` | Probabilistic delivery date (C-R1). **Shipped.** |
 | `get_delivery_metrics` | `GET …/delivery` | DORA + flow metrics (S). |
 | `add_adr_fitness` | `POST .../adrs/{id}/fitness` | Machine-checkable decision (G-R1). |
 | `get_decision_traceability` | `GET …/traceability` | Decision→code loop (T). |
@@ -319,7 +319,8 @@ or fixes a referenced-but-missing tool.)
 5. ✅ **Initiative/Program layer + cross-project dependencies + initiative cockpit** (C1; B-R1, D-R1, R).
    **Shipped:** initiative model + project linkage + CRUD + rollup + cockpit (slice 1), then
    cross-project dependencies + cross-project critical path with hand-offs (slice 2). **C1 complete.**
-6. **Probabilistic forecast** (C-R1, C3) — the honest delivery-date answer.
+6. ✅ **Probabilistic forecast** (C-R1, C3) — Monte-Carlo P50/P85 from throughput, on the Gantt tab
+   and initiative cockpit. **Shipped.**
 7. **Blockers + flow board + WIP** (D-R2, C-R2) — the decentralized day-to-day surface.
 8. **CI/webhook-triggered drift + auto-captured risk snapshots** (N-R1, Q-R3, C6) — close the loops.
 

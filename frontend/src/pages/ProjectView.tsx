@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import type {
   Baseline,
   BurndownResponse,
+  ForecastResponse,
   GanttResponse,
   Project,
   ReplanResult,
@@ -148,6 +149,11 @@ export default function ProjectView() {
     queryFn: () => api.get<Baseline[]>(`/projects/${id}/baselines`),
     enabled: tab === "gantt",
   });
+  const forecast = useQuery({
+    queryKey: ["forecast", id],
+    queryFn: () => api.get<ForecastResponse>(`/projects/${id}/forecast`),
+    enabled: tab === "gantt",
+  });
 
   const baseline = useMutation({
     mutationFn: (note: string) =>
@@ -281,6 +287,44 @@ export default function ProjectView() {
             <p className="text-sm text-slate-500">
               No tasks yet — add tasks below, then run “Schedule (CPM)”.
             </p>
+          )}
+          {forecast.data && (
+            <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2">
+                <h2 className="font-semibold">Probabilistic forecast</h2>
+                <span className="text-xs text-slate-400">
+                  Monte-Carlo from past throughput — the honest answer next to the CPM date
+                </span>
+              </div>
+              {forecast.data.sufficient ? (
+                <div className="mt-2 flex flex-wrap gap-6 text-sm">
+                  <div>
+                    <span className="text-xs uppercase tracking-wide text-slate-400">
+                      P50 (likely)
+                    </span>
+                    <div className="text-lg font-bold tabular-nums">
+                      {forecast.data.p50_date}
+                    </div>
+                    <div className="text-xs text-slate-400">~{forecast.data.p50_weeks} wk</div>
+                  </div>
+                  <div>
+                    <span className="text-xs uppercase tracking-wide text-slate-400">
+                      P85 (safe)
+                    </span>
+                    <div className="text-lg font-bold tabular-nums text-amber-700">
+                      {forecast.data.p85_date}
+                    </div>
+                    <div className="text-xs text-slate-400">~{forecast.data.p85_weeks} wk</div>
+                  </div>
+                  <div className="self-center text-xs text-slate-400">
+                    {forecast.data.remaining_items} items left · {forecast.data.history_weeks} weeks
+                    of throughput
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-2 text-sm text-slate-500">{forecast.data.reason}</p>
+              )}
+            </div>
           )}
           {(baselines.data?.length ?? 0) > 0 && (
             <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4">

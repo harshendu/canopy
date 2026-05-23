@@ -23,6 +23,7 @@ from app.schemas.entities import (
     BaselineRequest,
     BurndownPoint,
     BurndownResponse,
+    ForecastResponse,
     GanttLink,
     GanttResponse,
     GanttTask,
@@ -37,6 +38,7 @@ from app.services.alerts import (
 )
 from app.services.burndown import compute_burndown, is_done_status
 from app.services.capacity import AllocationSpan, mondays, weekly_capacity
+from app.services.forecast import monte_carlo_forecast, weekly_throughput
 from app.services.planner import PlanOutcome, reschedule_project
 from app.services.scheduling import CycleError
 
@@ -214,6 +216,45 @@ async def burndown(session: SessionDep, _: CurrentUser, project_id: int) -> Burn
         for p in compute_burndown(total, done_dates, weeks)
     ]
     return BurndownResponse(project_id=project_id, points=points)
+
+
+@router.get("/projects/{project_id}/forecast", response_model=ForecastResponse)
+async def project_forecast(
+    session: SessionDep, _: CurrentUser, project_id: int
+) -> ForecastResponse:
+    """Probabilistic (Monte-Carlo) completion forecast from historical weekly throughput."""
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    tasks = list(
+        (
+            await session.execute(select(Task).where(Task.project_id == project_id))
+        ).scalars().all()
+    )
+    leaves = [t for t in tasks if t.type != TaskType.summary]
+    remaining = sum(1 for t in leaves if t.percent_complete < 100)
+    task_ids = {t.id for t in tasks}
+    history = (
+        await session.execute(
+            select(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids))
+        )
+    ).scalars().all()
+    done_dates = sorted(h.changed_at.date() for h in history if is_done_status(h.to_status))
+    today = date.today()
+    result = monte_carlo_forecast(remaining, weekly_throughput(done_dates, today), today)
+    return ForecastResponse(
+        scope="project",
+        id=project_id,
+        sufficient=result.sufficient,
+        reason=result.reason,
+        remaining_items=result.remaining_items,
+        history_weeks=result.history_weeks,
+        trials=result.trials,
+        p50_weeks=result.p50_weeks,
+        p85_weeks=result.p85_weeks,
+        p50_date=result.p50_date,
+        p85_date=result.p85_date,
+    )
 
 
 @router.get("/projects/{project_id}/alerts", response_model=AlertsResponse)

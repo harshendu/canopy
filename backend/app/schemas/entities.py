@@ -476,6 +476,21 @@ class WhatIfRequest(BaseModel):
     duration_overrides: dict[int, int] = {}
 
 
+# --- Probabilistic forecast (Monte-Carlo throughput) ---
+class ForecastResponse(BaseModel):
+    scope: str  # "project" | "initiative"
+    id: int
+    sufficient: bool
+    reason: str | None = None
+    remaining_items: int
+    history_weeks: int
+    trials: int
+    p50_weeks: int | None = None
+    p85_weeks: int | None = None
+    p50_date: date | None = None
+    p85_date: date | None = None
+
+
 # --- Baseline (logged re-baseline events) ---
 class BaselineRequest(BaseModel):
     note: str | None = None  # why the baseline is being (re)set

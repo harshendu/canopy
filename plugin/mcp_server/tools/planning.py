@@ -109,6 +109,22 @@ def register(mcp, client) -> None:
         return await client.get(f"/projects/{project_id}/burndown")
 
     @mcp.tool
+    async def get_forecast(
+        project_id: int | None = None, initiative_id: int | None = None
+    ) -> dict:
+        """Probabilistic (Monte-Carlo) completion forecast — pass exactly one of project_id /
+        initiative_id.
+
+        Simulates finishing the remaining items by sampling the team's historical weekly
+        throughput, returning P50 / P85 completion dates (the honest answer for knowledge work,
+        next to the deterministic CPM date). If `sufficient` is false there isn't enough
+        completed-work history yet — see `reason`.
+        """
+        if initiative_id is not None:
+            return await client.get(f"/initiatives/{initiative_id}/forecast")
+        return await client.get(f"/projects/{project_id}/forecast")
+
+    @mcp.tool
     async def list_alerts(project_id: int) -> dict:
         """Get the project's alerts digest: deadline misses, overdue milestones, over-allocations."""
         return await client.get(f"/projects/{project_id}/alerts")

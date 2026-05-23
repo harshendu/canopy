@@ -77,6 +77,11 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   event — `GET .../baselines`; the Gantt overlays current-vs-baseline as **schedule variance**, and
   "drift" is reserved for architecture drift §N). A Jira sync that creates tasks auto-replans the
   project. Keep the scheduler/planner pure-ish and unit-tested.
+- **Probabilistic forecast:** `GET /projects/{id}/forecast` and `GET /initiatives/{id}/forecast`
+  run a Monte-Carlo simulation (`app/services/forecast.py`, pure) — burn down the remaining items by
+  sampling historical weekly throughput (from `TaskStatusHistory`, incl. zero weeks) to report
+  P50/P85 completion dates next to the deterministic CPM date. Needs ~3 weeks of throughput;
+  reports `sufficient=false` with a reason otherwise. MCP: `get_forecast`.
 - **Alerts/digest:** `GET /projects/{id}/alerts` turns project state into actionable alerts
   (deadline misses, overdue milestones, over-allocations, unscheduled work) via
   `app/services/alerts.py` (pure). Slack/email *delivery* is a future hook over this output.
