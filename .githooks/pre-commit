@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# canopy pre-commit hook — validates the layers that changed:
+#   backend/  -> pytest
+#   frontend/ -> npm run build (tsc typecheck + vite build)
+# Force both regardless of what changed:  RUN_ALL=1 git commit ...
+# Install for everyone:  scripts/install-hooks.sh
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+CHANGED="$(git diff --cached --name-only --diff-filter=ACMR || true)"
+RUN_ALL="${RUN_ALL:-0}"
+
+changed_under() { [ "$RUN_ALL" = "1" ] || printf '%s\n' "$CHANGED" | grep -q "^$1/"; }
+info() { printf '\033[1m▶ pre-commit:\033[0m %s\n' "$1"; }
+warn() { printf '\033[33m⚠ pre-commit:\033[0m %s\n' "$1" >&2; }
+fail() { printf '\033[31m✖ pre-commit:\033[0m %s\n' "$1" >&2; exit 1; }
+
+# --- Backend: tests ---
+if changed_under backend; then
+  PY="$REPO_ROOT/backend/.venv/bin/python"
+  [ -x "$PY" ] || PY="$(command -v python3 || true)"
+  if [ -z "$PY" ] || ! "$PY" -c "import pytest" >/dev/null 2>&1; then
+    warn "backend changed but pytest isn't available (run: cd backend && pip install -e '.[dev]'); skipping"
+  else
+    info "backend pytest"
+    ( cd "$REPO_ROOT/backend" && "$PY" -m pytest -q ) || fail "backend tests failed"
+  fi
+fi
+
+# --- Frontend: typecheck + build ---
+if changed_under frontend; then
+  if ! command -v npm >/dev/null 2>&1; then
+    warn "frontend changed but npm isn't available; skipping"
+  elif [ ! -d "$REPO_ROOT/frontend/node_modules" ]; then
+    warn "frontend changed but node_modules is missing (run: cd frontend && npm install); skipping"
+  else
+    info "frontend build (tsc + vite)"
+    ( cd "$REPO_ROOT/frontend" && npm run build ) || fail "frontend build failed"
+  fi
+fi
+
+printf '\033[32m✓ pre-commit checks passed\033[0m\n'
