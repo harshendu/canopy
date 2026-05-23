@@ -1,5 +1,6 @@
 """Importing this package registers every table on SQLModel.metadata."""
 
+from app.models.activity import ActivityEvent
 from app.models.architecture import (
     ADRComment,
     ADRComponentLink,
@@ -33,6 +34,7 @@ __all__ = [
     "ADRComment",
     "ADRComponentLink",
     "ADRStakeholder",
+    "ActivityEvent",
     "Allocation",
     "ArchitectureComponent",
     "ArchitectureDecision",

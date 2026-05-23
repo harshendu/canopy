@@ -3,6 +3,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict
 
 from app.models.base import (
+    ActivityKind,
     ADRCommentKind,
     ADRStatus,
     DecisionRule,
@@ -639,6 +640,27 @@ class DriftReconcileResponse(BaseModel):
     event: DriftEventRead
     created_adr_id: int | None = None
     created_task_id: int | None = None
+
+
+# --- Activity / observability events ---
+class ActivityEventCreate(BaseModel):
+    kind: ActivityKind
+    summary: str
+    component_id: int | None = None
+    source: str = "ci"
+    reference: str | None = None
+
+
+class ActivityEventRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    kind: str
+    summary: str
+    component_id: int | None
+    source: str
+    reference: str | None
+    created_at: datetime
 
 
 # --- Retrospectives & postmortems ---

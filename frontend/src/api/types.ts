@@ -332,6 +332,19 @@ export interface User {
   is_active: boolean;
 }
 
+export type ActivityKind = "deploy" | "build_failure" | "incident_open" | "incident_close";
+
+export interface ActivityEvent {
+  id: number;
+  project_id: number;
+  kind: string;
+  summary: string;
+  component_id: number | null;
+  source: string;
+  reference: string | null;
+  created_at: string;
+}
+
 export type RetrospectiveKind = "project_retro" | "incident_postmortem";
 
 export interface Retrospective {

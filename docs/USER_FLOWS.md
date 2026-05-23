@@ -107,7 +107,7 @@ allowed; legacy `member` ≈ architect):
 
 ### B3. Open a project (the cockpit)
 - **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Dependencies · Capacity · Decisions ·
-  Architecture · Drift · Roadmap · Burndown · Risk · Retros**. The header has a **5-day week** toggle, **Set
+  Architecture · Drift · Roadmap · Burndown · Risk · Retros · Activity**. The header has a **5-day week** toggle, **Set
   baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
   `/projects/:id?tab=drift`).
@@ -460,6 +460,24 @@ component map + ADRs and maintains the queue.
 - **API:** `GET /api/v1/connectors/github/{id}/file?path=`, `.../github/{id}/pulls`,
   `.../github/cached-prs`; `GET /api/v1/connectors/gdrive/{id}/docs`, `.../gdrive/{id}/docs/{file_id}`
   · **MCP:** `read_repo_file`, `list_open_prs`, `read_design_doc`.
+- **Not built (v2 §J6):** PR **review metrics** (time-to-review, churn, test status) and commit
+  attribution to components — these would feed a PR-latency quality-risk indicator (the quality
+  family is currently fed by §J8 build failures / incidents instead).
+
+### J8. CI / observability events **[new — minimal viable]**
+- A generic event substrate: `kind` ∈ `deploy | build_failure | incident_open | incident_close`,
+  optionally tagged to a component. Events appear in the **Activity** feed (§B3) and feed the
+  **quality-risk** family (§Q1); an `incident_open` **auto-opens a postmortem** (§P2).
+- **Webhook:** `POST /webhooks/events` (HMAC via `EVENTS_WEBHOOK_SECRET`; recorded inline — it's a
+  light write). **API/UI:** `GET /api/v1/projects/{id}/activity` (feed) and
+  `POST /api/v1/projects/{id}/activity` (planner-gated manual ingest, used by the Activity tab and
+  the plugin) · **MCP:** `get_activity`, `record_activity`. Datadog / Sentry / GitHub Actions can be
+  layered on this substrate.
+
+### J7. PagerDuty / on-call **[not built]**
+- Deferred: an optional connector to pull on-call schedules into capacity (v2 §J7). Needs the
+  external PagerDuty integration; the interrupt-budget/on-call capacity model (§F2/§F4) is also not
+  built, so there's nothing to feed yet.
 
 ---
 

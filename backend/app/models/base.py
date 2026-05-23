@@ -59,6 +59,13 @@ class RetrospectiveKind(StrEnum):
     incident_postmortem = "incident_postmortem"
 
 
+class ActivityKind(StrEnum):
+    deploy = "deploy"
+    build_failure = "build_failure"
+    incident_open = "incident_open"
+    incident_close = "incident_close"
+
+
 class Provider(StrEnum):
     jira = "jira"
     github = "github"
