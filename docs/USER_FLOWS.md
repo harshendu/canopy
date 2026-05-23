@@ -128,10 +128,9 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 
 ## E. Milestones & roadmap
 
-### E1. Define a milestone *(API/MCP-only)*
-- **API:** `POST /api/v1/milestones` · **MCP:** `create_milestone` (name, target date).
-- **UI gap:** there is no milestone-creation form yet; milestones are created via API/MCP and
-  displayed on the Roadmap.
+### E1. Define a milestone
+- **UI:** Roadmap tab → "Add milestone" form (name, target date) → "Add milestone".
+- **API:** `POST /api/v1/milestones` · **MCP:** `create_milestone`.
 
 ### E2. Roadmap (now / next / later)
 - **UI:** Roadmap tab groups the project's milestones into **Now** (≤30 days / overdue),
@@ -147,10 +146,10 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 - **API:** `GET/POST /api/v1/team/engineers`, `PATCH/DELETE /api/v1/team/engineers/{id}`,
   `GET/POST /api/v1/team/roles` · **MCP:** `list_engineers`, `add_engineer`.
 
-### F2. Allocate engineers (capacity) *(API/MCP-only)*
+### F2. Allocate engineers (capacity)
+- **UI:** project → Capacity tab → "Allocate" form (engineer, percent, date range) → "Add".
 - **API:** `GET/POST /api/v1/team/allocations`, `DELETE /api/v1/team/allocations/{id}`
   (engineer, project, percent allocation, capacity hours, date range).
-- **UI gap:** no allocation form yet; allocations are created via API/MCP and then visualized.
 
 ### F3. Capacity heatmap
 - **UI:** project → Capacity tab → an engineer × ISO-week grid shaded by total allocation %;
@@ -294,7 +293,6 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 ## Known UI gaps (currently API/MCP-only)
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
-- Creating **milestones** (E1), **allocations** (F2).
 - **What-if** scheduling (C5) and **decision-impact** visualization (G4).
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - **User registration** (A3).

@@ -6,7 +6,6 @@ import { api } from "../api/client";
 import type {
   AlertsResponse,
   BurndownResponse,
-  CapacityResponse,
   GanttResponse,
   Project,
   ReplanResult,
@@ -14,7 +13,7 @@ import type {
   TaskType,
 } from "../api/types";
 import GanttChart from "../components/GanttChart";
-import CapacityHeatmap from "../components/CapacityHeatmap";
+import CapacityView from "../components/CapacityView";
 import RoadmapView from "../components/RoadmapView";
 
 // Heavy (React Flow / Recharts) — code-split.
@@ -55,11 +54,6 @@ export default function ProjectView() {
   const tasks = useQuery({
     queryKey: ["tasks", id],
     queryFn: () => api.get<Task[]>(`/tasks?project_id=${id}`),
-  });
-  const capacity = useQuery({
-    queryKey: ["capacity", id],
-    queryFn: () => api.get<CapacityResponse>(`/team/capacity?project_id=${id}`),
-    enabled: tab === "capacity",
   });
   const burndown = useQuery({
     queryKey: ["burndown", id],
@@ -215,12 +209,7 @@ export default function ProjectView() {
           <p className="text-sm text-slate-500">No tasks to graph yet.</p>
         ))}
 
-      {tab === "capacity" &&
-        (capacity.data ? (
-          <CapacityHeatmap data={capacity.data} />
-        ) : (
-          <p className="text-sm text-slate-500">Loading capacity…</p>
-        ))}
+      {tab === "capacity" && <CapacityView projectId={id} />}
 
       {tab === "architecture" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading architecture…</p>}>
