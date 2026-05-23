@@ -19,6 +19,7 @@ from app.models.integration import (
 )
 from app.models.project import (
     Baseline,
+    Blocker,
     Dependency,
     Holiday,
     Initiative,
@@ -42,6 +43,7 @@ __all__ = [
     "ArchitectureComponent",
     "ArchitectureDecision",
     "Baseline",
+    "Blocker",
     "ComponentCodeBinding",
     "ComponentLink",
     "Connection",

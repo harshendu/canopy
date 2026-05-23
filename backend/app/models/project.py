@@ -143,3 +143,16 @@ class Baseline(TimestampMixin, table=True):
     note: str | None = None  # why the baseline was (re)set
     task_count: int = 0  # tasks snapshotted at this baseline
     project_end: date | None = None  # the planned end captured at baseline time
+
+
+class Blocker(TimestampMixin, table=True):
+    """A flagged impediment on a task — the leading signal that work has stalled. `created_at`
+    is when it was opened; `resolved_at` is set when cleared (None = still open). Optionally
+    points at the `blocking_task_id` that must finish first."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="task.id", index=True)
+    reason: str
+    raised_by_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    blocking_task_id: int | None = Field(default=None, foreign_key="task.id")
+    resolved_at: datetime | None = None

@@ -241,6 +241,29 @@ projects and rolls up their health.
 
 ---
 
+## D0. Blockers (flagged impediments) **[new — v2 §D-R2]**
+
+The leading signal that work has stalled: an engineer flags an impediment on a task, and it
+surfaces where decisions get made — the engineer workspace and the project alerts digest.
+
+### D0.1 Raise / resolve a blocker
+- **UI:** `/me` → **Blockers** section → "Flag a blocker on…" (pick one of your tasks + a reason);
+  open blockers list with a **resolve** action. (Raising is also possible per task via the API/MCP.)
+- **API:** `POST /api/v1/tasks/{task_id}/blockers` (`reason`, optional `blocking_task_id`;
+  `raised_by_engineer_id` defaults to the caller's engineer), `GET /api/v1/tasks/{task_id}/blockers`,
+  `GET /api/v1/blockers?project_id=&open_only=`, `PATCH /api/v1/blockers/{id}` (`resolved`),
+  `DELETE /api/v1/blockers/{id}` (planner) · **MCP:** `raise_blocker`, `list_blockers`,
+  `resolve_blocker`. Raise/resolve = any contributor; delete = planner.
+
+### D0.2 Where blockers surface
+- **`/me` workspace (§M):** open blockers on your tasks or raised by you (`MyWorkspaceResponse.blockers`).
+- **Alerts digest (§I/Q):** each open blocker is a `blocked` warning in the project's alerts list
+  (shown in the Risk tab).
+- **Not yet:** blocked-time folded into the composite **risk score** (Q-R2) and a red marker on the
+  Gantt/dependency-graph nodes — follow-ups.
+
+---
+
 ## D. Dependencies tab
 - **UI:** Dependencies tab → a graph (React Flow) of tasks as nodes and dependencies as arrows,
   laid out left-to-right by topological level; critical-path nodes/edges are red.
@@ -390,7 +413,7 @@ review it, alternatives, reversibility, and a discussion thread.
 ## I. Alerts / digest
 - **UI:** the old standalone **Alerts** tab is **gone** — alerts now live as the *lagging-indicator*
   section inside the **Risk** tab (§Q). Same content: deadline misses (error), overdue milestones /
-  over-allocations (warning), unscheduled work (info).
+  over-allocations / **open blockers** (warning), unscheduled work (info).
 - **API:** `GET /api/v1/projects/{id}/alerts` (unchanged) · **MCP:** `list_alerts`.
 - **Notes:** delivery to Slack/email is **not built** — alerts are computed and shown/queried; a
   delivery integration is a future hook over this output.
@@ -586,7 +609,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~56 curated tools that call the REST API.
+  MCP server then exposes ~59 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -647,7 +670,8 @@ team member via `Engineer.user_id` (§A5).
   engineer's GitHub / timezone / committed hours / skill tags), their **assigned open tasks**
   (most-critical first, then soonest due), and the **decisions they own** and **decisions to
   review** — each linking into the owning project's Gantt / Decisions tab.
-- **API:** `GET /api/v1/me/workspace` · **MCP:** `my_workspace`.
+- **API:** `GET /api/v1/me/workspace` · **MCP:** `my_workspace`. The response also includes
+  **`blockers`** — open impediments on your tasks or raised by you (§D0), with flag/resolve in the UI.
 - **Note:** if no engineer is linked to the account, the page prompts to have an admin link one on
   the Team page; tasks/decisions are empty until then.
 

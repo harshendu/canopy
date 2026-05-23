@@ -476,6 +476,29 @@ class WhatIfRequest(BaseModel):
     duration_overrides: dict[int, int] = {}
 
 
+# --- Blockers (flagged impediments) ---
+class BlockerCreate(BaseModel):
+    reason: str
+    raised_by_engineer_id: int | None = None  # defaults to the caller's engineer
+    blocking_task_id: int | None = None
+
+
+class BlockerUpdate(BaseModel):
+    reason: str | None = None
+    resolved: bool | None = None  # True -> set resolved_at=now; False -> reopen
+
+
+class BlockerRead(BaseModel):
+    model_config = _read
+    id: int
+    task_id: int
+    reason: str
+    raised_by_engineer_id: int | None
+    blocking_task_id: int | None
+    resolved_at: datetime | None
+    created_at: datetime
+
+
 # --- Probabilistic forecast (Monte-Carlo throughput) ---
 class ForecastResponse(BaseModel):
     scope: str  # "project" | "initiative"
@@ -860,3 +883,4 @@ class MyWorkspaceResponse(BaseModel):
     assigned_tasks: list[TaskRead]
     owned_decisions: list[ADRRead]
     stakeholder_decisions: list[ADRRead]
+    blockers: list[BlockerRead] = []  # open blockers on my tasks or raised by me

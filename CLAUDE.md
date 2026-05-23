@@ -83,8 +83,12 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   P50/P85 completion dates next to the deterministic CPM date. Needs ~3 weeks of throughput;
   reports `sufficient=false` with a reason otherwise. MCP: `get_forecast`.
 - **Alerts/digest:** `GET /projects/{id}/alerts` turns project state into actionable alerts
-  (deadline misses, overdue milestones, over-allocations, unscheduled work) via
+  (deadline misses, overdue milestones, over-allocations, open blockers, unscheduled work) via
   `app/services/alerts.py` (pure). Slack/email *delivery* is a future hook over this output.
+- **Blockers** (`app/api/v1/blockers.py`, `Blocker` model) are flagged impediments on a task — the
+  leading "work has stalled" signal. Any contributor raises one (`POST /tasks/{id}/blockers`);
+  open blockers surface in the `/me` workspace and the alerts digest. Folding blocked-time into the
+  composite risk score is a follow-up.
 - **Live refresh (SSE):** web-process mutations (replan/baseline) `publish()` to an in-process
   broker (`app/core/events.py`); `GET /api/v1/events/stream?token=` streams them; the frontend
   `useEventStream` invalidates query caches. Single-process only (worker syncs don't propagate) —

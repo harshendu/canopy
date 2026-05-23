@@ -4,6 +4,7 @@ from app.api.v1 import (
     activity,
     architecture,
     auth,
+    blockers,
     connectors,
     decisions,
     dependencies,
@@ -38,3 +39,4 @@ api_router.include_router(risk.router, tags=["risk"])
 api_router.include_router(drift.router, tags=["drift"])
 api_router.include_router(retros.router, tags=["retros"])
 api_router.include_router(activity.router, tags=["activity"])
+api_router.include_router(blockers.router, tags=["blockers"])

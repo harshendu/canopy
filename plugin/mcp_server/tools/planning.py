@@ -51,6 +51,41 @@ def register(mcp, client) -> None:
         return await client.patch(f"/tasks/{task_id}", {"assignee_engineer_id": engineer_id})
 
     @mcp.tool
+    async def raise_blocker(
+        task_id: int,
+        reason: str,
+        blocking_task_id: int | None = None,
+        raised_by_engineer_id: int | None = None,
+    ) -> dict:
+        """Flag a blocker (impediment) on a task — the leading signal that work has stalled.
+
+        `blocking_task_id` optionally names the task that must finish first. `raised_by_engineer_id`
+        defaults to the calling user's engineer. Open blockers show in the engineer workspace and
+        the project alerts digest.
+        """
+        return await client.post(
+            f"/tasks/{task_id}/blockers",
+            {
+                "reason": reason,
+                "blocking_task_id": blocking_task_id,
+                "raised_by_engineer_id": raised_by_engineer_id,
+            },
+        )
+
+    @mcp.tool
+    async def list_blockers(project_id: int | None = None, open_only: bool = True) -> list[dict]:
+        """List blockers, newest first. Scope to a project and/or to open (unresolved) ones."""
+        params: dict = {"open_only": open_only}
+        if project_id is not None:
+            params["project_id"] = project_id
+        return await client.get("/blockers", params=params)
+
+    @mcp.tool
+    async def resolve_blocker(blocker_id: int, resolved: bool = True) -> dict:
+        """Resolve a blocker (or reopen it with resolved=false)."""
+        return await client.patch(f"/blockers/{blocker_id}", {"resolved": resolved})
+
+    @mcp.tool
     async def link_dependency(
         predecessor_id: int,
         successor_id: int,

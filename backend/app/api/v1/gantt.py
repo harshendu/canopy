@@ -9,6 +9,7 @@ from app.core.events import publish
 from app.models.base import TaskType
 from app.models.project import (
     Baseline,
+    Blocker,
     Dependency,
     Milestone,
     Project,
@@ -31,6 +32,7 @@ from app.schemas.entities import (
     WhatIfRequest,
 )
 from app.services.alerts import (
+    AlertBlocker,
     AlertMilestone,
     AlertTask,
     OverAllocation,
@@ -311,7 +313,20 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
         for m in milestones
         if m.id is not None
     ]
-    computed = compute_alerts(date.today(), alert_tasks, alert_milestones, over)
+    task_names = {t.id: t.name for t in tasks if t.id is not None}
+    open_blockers = (
+        await session.execute(
+            select(Blocker).where(
+                col(Blocker.task_id).in_(set(task_names)),
+                col(Blocker.resolved_at).is_(None),
+            )
+        )
+    ).scalars().all()
+    alert_blockers = [
+        AlertBlocker(b.task_id, task_names.get(b.task_id, f"#{b.task_id}"), b.reason)
+        for b in open_blockers
+    ]
+    computed = compute_alerts(date.today(), alert_tasks, alert_milestones, over, alert_blockers)
     return AlertsResponse(
         project_id=project_id,
         alerts=[

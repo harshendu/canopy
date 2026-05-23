@@ -460,12 +460,23 @@ export interface RetrospectiveDetail extends Retrospective {
   comments: RetrospectiveComment[];
 }
 
+export interface Blocker {
+  id: number;
+  task_id: number;
+  reason: string;
+  raised_by_engineer_id: number | null;
+  blocking_task_id: number | null;
+  resolved_at: string | null;
+  created_at: string;
+}
+
 export interface MyWorkspace {
   user: User;
   engineer: Engineer | null;
   assigned_tasks: Task[];
   owned_decisions: ADR[];
   stakeholder_decisions: ADR[];
+  blockers: Blocker[];
 }
 
 export interface MyToday {

@@ -119,12 +119,14 @@ migration cutover). But stop treating it as *the* spine. Add the flow lens the b
   computes the **cross-project critical path** at the initiative level (reusing `compute_cpm` over
   the union graph) and surfaces the cross-project **hand-offs** — the between-team dependencies most
   likely to slip — on the initiative cockpit. Per-project replan stays project-local. (`get_initiative_critical_path` MCP.)
-- **D-R2 — Live blockers as a first-class signal.** Add a lightweight `Blocker { task_id,
-  raised_by, reason, blocking_task_id?, opened_at, resolved_at }`. An engineer raises a blocker from
-  `/me`; it surfaces on the dependency graph (red halo), in the daily digest, and as a **leading**
-  risk indicator (blocked-time is a far better predictor of slip than burndown).
-  - UI: "Flag blocker" on `/me` and the Board card · API `POST /tasks/{id}/blockers`,
-    `PATCH /blockers/{id}` · MCP `raise_blocker`, `resolve_blocker`, `list_blockers`.
+- **D-R2 — Live blockers as a first-class signal. ✅ Shipped.** `Blocker { task_id, reason,
+  raised_by_engineer_id, blocking_task_id?, created_at(opened), resolved_at }`. An engineer raises a
+  blocker from `/me`; open blockers surface in the workspace and the project alerts digest.
+  - UI: "Flag a blocker" + resolve on `/me` · API `POST /tasks/{id}/blockers`,
+    `GET /blockers?project_id=&open_only=`, `PATCH /blockers/{id}`, `DELETE /blockers/{id}` · MCP
+    `raise_blocker`, `list_blockers`, `resolve_blocker`.
+  - *Still open:* the **red halo** on the dependency-graph/Gantt node and folding **blocked-time**
+    into the composite risk score (Q-R2) — for now blockers show in the lagging alerts digest.
 - **D-R3 — UI for non-FS links + lag.** Today the UI only creates FS links (§C2/D); expose SS/FF/SF
   + lag in the form (the API/MCP already support them).
 
@@ -290,7 +292,7 @@ or fixes a referenced-but-missing tool.)
 | `create_project` ✅ | `POST /projects` | Let Claude bootstrap a project conversationally. **Shipped.** |
 | `set_decision_rule` | `PATCH /projects/{id}` | Tune the decision policy (owner/consensus/lazy). |
 | `list_milestones` | `GET /milestones?project_id=` | Read milestones (only `create_milestone` exists). |
-| `raise_blocker` / `resolve_blocker` / `list_blockers` | new `…/blockers` | The blocker signal (D-R2). |
+| `raise_blocker` / `resolve_blocker` / `list_blockers` ✅ | `…/blockers` | The blocker signal (D-R2). **Shipped.** |
 | `get_forecast` ✅ | `GET /projects\|initiatives/{id}/forecast` | Probabilistic delivery date (C-R1). **Shipped.** |
 | `get_delivery_metrics` | `GET …/delivery` | DORA + flow metrics (S). |
 | `add_adr_fitness` | `POST .../adrs/{id}/fitness` | Machine-checkable decision (G-R1). |
@@ -321,7 +323,9 @@ or fixes a referenced-but-missing tool.)
    cross-project dependencies + cross-project critical path with hand-offs (slice 2). **C1 complete.**
 6. ✅ **Probabilistic forecast** (C-R1, C3) — Monte-Carlo P50/P85 from throughput, on the Gantt tab
    and initiative cockpit. **Shipped.**
-7. **Blockers + flow board + WIP** (D-R2, C-R2) — the decentralized day-to-day surface.
+7. ◐ **Blockers + flow board + WIP** (D-R2, C-R2). **Blockers shipped** (D-R2: model + CRUD + MCP +
+   `/me` flag/resolve + alerts digest). **Remaining:** the flow board (Kanban + WIP limits + aging,
+   C-R2).
 8. **CI/webhook-triggered drift + auto-captured risk snapshots** (N-R1, Q-R3, C6) — close the loops.
 
 **Later (depth):**
