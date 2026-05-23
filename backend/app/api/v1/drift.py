@@ -16,6 +16,7 @@ from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
 from app.api.v1.architecture import _next_number, _set_component_links
 from app.models.architecture import (
     ADRComponentLink,
+    ADRFitnessFunction,
     ArchitectureComponent,
     ArchitectureDecision,
     ComponentCodeBinding,
@@ -35,6 +36,7 @@ from app.schemas.entities import (
 )
 from app.services.drift import (
     DriftInputs,
+    FitnessRule,
     ImplicitSignal,
     level,
     run_detection,
@@ -99,8 +101,34 @@ async def _declared_inputs(session: SessionDep, project_id: int) -> DriftInputs:
     accepted_adrs = [
         (a.number, a.title, adr_components.get(a.id, [])) for a in accepted if a.id is not None
     ]
+    # Machine-checkable fitness rules from accepted ADRs (evaluated vs the actual edges).
+    fitness_rules: list[FitnessRule] = []
+    if accepted:
+        number_by_id = {a.id: a.number for a in accepted if a.id is not None}
+        ffs = (
+            await session.execute(
+                select(ADRFitnessFunction).where(
+                    col(ADRFitnessFunction.adr_id).in_(list(number_by_id))
+                )
+            )
+        ).scalars().all()
+        fitness_rules = [
+            FitnessRule(
+                id=ff.id,
+                adr_number=number_by_id[ff.adr_id],
+                kind=ff.kind,
+                source_component_id=ff.source_component_id,
+                target_component_id=ff.target_component_id,
+                description=ff.description,
+            )
+            for ff in ffs
+            if ff.id is not None and ff.adr_id in number_by_id
+        ]
     return DriftInputs(
-        component_names=names, declared_edges=declared, accepted_adrs=accepted_adrs
+        component_names=names,
+        declared_edges=declared,
+        accepted_adrs=accepted_adrs,
+        fitness_rules=fitness_rules,
     )
 
 

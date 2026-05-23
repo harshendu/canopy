@@ -4,6 +4,7 @@ from app.models.activity import ActivityEvent
 from app.models.architecture import (
     ADRComment,
     ADRComponentLink,
+    ADRFitnessFunction,
     ADRStakeholder,
     ArchitectureComponent,
     ArchitectureDecision,
@@ -38,6 +39,7 @@ from app.models.user import User
 __all__ = [
     "ADRComment",
     "ADRComponentLink",
+    "ADRFitnessFunction",
     "ADRStakeholder",
     "ActivityEvent",
     "Allocation",

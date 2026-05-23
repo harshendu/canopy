@@ -352,9 +352,27 @@ class ReviewSummaryRead(BaseModel):
     can_accept: bool
 
 
+class FitnessFunctionCreate(BaseModel):
+    kind: str = "forbid"  # forbid | require
+    source_component_id: int
+    target_component_id: int
+    description: str | None = None
+
+
+class FitnessFunctionRead(BaseModel):
+    model_config = _read
+    id: int
+    adr_id: int
+    kind: str
+    source_component_id: int
+    target_component_id: int
+    description: str | None
+
+
 class ADRDetail(ADRRead):
     comments: list[ADRCommentRead] = []
     review: ReviewSummaryRead
+    fitness_functions: list[FitnessFunctionRead] = []
 
 
 class DecisionQueueItem(BaseModel):

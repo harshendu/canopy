@@ -120,6 +120,11 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
 - Jira (`app/connectors/jira.py`): enhanced JQL search + Agile API (`sync_active_sprints` tags tasks
   with their sprint when `board_id` is configured) + changelog → `TaskStatusHistory`
   (`sync_status_history`). Jira status stays read-only.
+- **Decision fitness functions:** an ADR can carry machine-checkable dependency rules
+  (`ADRFitnessFunction`: forbid|require between two components). The drift scan evaluates accepted
+  ADRs' rules against the observed edges (`FitnessRule` in `app/services/drift.py`); a violation is a
+  `fitness_violation` drift event (heaviest weight) that auto-resolves when fixed. MCP:
+  `add_adr_fitness`. (`Task.implements_adr_id` + a full traceability ledger are a planned follow-up.)
 - **Architecture depth:** `POST /architecture/adrs/import` reads a markdown doc from a GitHub/Drive
   connection and parses it into an ADR (`app/services/markdown_adr.py`, pure). `GET /architecture/adrs/{id}/impact`
   returns directly-affected components plus everything that transitively depends on them

@@ -411,6 +411,20 @@ review it, alternatives, reversibility, and a discussion thread.
   path/file id → the markdown is parsed (title + context/decision/consequences) into an ADR.
 - **API:** `POST /api/v1/architecture/adrs/import` · **MCP:** `import_adr`.
 
+### G7. Fitness functions (machine-checkable decisions) **[new — v2 §G-R1]**
+- **What:** a decision can carry **fitness functions** — dependency rules over the component graph
+  the drift scan enforces. `forbid`: source must NOT depend on target; `require`: it MUST. When the
+  ADR is **accepted**, a violation appears in the drift queue as a `fitness_violation` (the heaviest
+  drift signal — an accepted decision isn't being honored), and **auto-resolves** when the code is
+  fixed. This is the decision→verification spine: a decision that defends itself.
+- **UI:** Decisions tab → expand an ADR → **Fitness functions** (list + add `forbid`/`require` rule
+  picking source/target components). Violations show on the **Drift** tab (§N).
+- **API:** `GET/POST /api/v1/architecture/adrs/{id}/fitness`, `DELETE /api/v1/architecture/fitness/{id}`
+  (components must be in the ADR's project) · **MCP:** `add_adr_fitness`. The ADR detail
+  (`GET .../adrs/{id}`) includes `fitness_functions`.
+- **Not built:** `Task.implements_adr_id` (decision→task traceability) and a full **traceability
+  ledger** joining decision → tasks → PRs → fitness status (v2 §T) — the next slice.
+
 ---
 
 ## H. Progress: burndown
@@ -631,7 +645,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~60 curated tools that call the REST API.
+  MCP server then exposes ~61 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**

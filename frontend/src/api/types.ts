@@ -219,9 +219,19 @@ export interface ReviewSummary {
   can_accept: boolean;
 }
 
+export interface FitnessFunction {
+  id: number;
+  adr_id: number;
+  kind: string; // forbid | require
+  source_component_id: number;
+  target_component_id: number;
+  description: string | null;
+}
+
 export interface ADRDetail extends ADR {
   comments: ADRComment[];
   review: ReviewSummary;
+  fitness_functions: FitnessFunction[];
 }
 
 export interface DecisionQueueItem {

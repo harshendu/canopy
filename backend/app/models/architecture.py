@@ -126,3 +126,16 @@ class DriftScan(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
     finding_count: int = 0
+
+
+class ADRFitnessFunction(TimestampMixin, table=True):
+    """A machine-checkable assertion attached to an ADR — a dependency rule over the component
+    graph that the drift scan evaluates. `forbid`: the source must NOT depend on the target;
+    `require`: it MUST. A violation on an *accepted* ADR is the strongest drift signal."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    adr_id: int = Field(foreign_key="architecturedecision.id", index=True)
+    kind: str = "forbid"  # forbid | require
+    source_component_id: int = Field(foreign_key="architecturecomponent.id")
+    target_component_id: int = Field(foreign_key="architecturecomponent.id")
+    description: str | None = None

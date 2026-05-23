@@ -93,6 +93,31 @@ def register(mcp, client) -> None:
         )
 
     @mcp.tool
+    async def add_adr_fitness(
+        adr_id: int,
+        source_component_id: int,
+        target_component_id: int,
+        kind: str = "forbid",
+        description: str | None = None,
+    ) -> dict:
+        """Attach a machine-checkable fitness function to an ADR — a dependency rule the drift
+        scan evaluates.
+
+        kind=`forbid` (source must NOT depend on target) | `require` (it MUST). When the ADR is
+        accepted, a violation surfaces in the drift queue as a `fitness_violation` — the strongest
+        signal that a decision isn't being honored. Components must be in the ADR's project.
+        """
+        return await client.post(
+            f"/architecture/adrs/{adr_id}/fitness",
+            {
+                "kind": kind,
+                "source_component_id": source_component_id,
+                "target_component_id": target_component_id,
+                "description": description,
+            },
+        )
+
+    @mcp.tool
     async def transition_adr(adr_id: int, status: str, decide_by: str | None = None) -> dict:
         """Move an ADR through its lifecycle (e.g. under_discussion, accepted, deferred).
 

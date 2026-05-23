@@ -15,6 +15,7 @@ from app.connectors.github import GitHubConnector
 from app.models.architecture import (
     ADRComment,
     ADRComponentLink,
+    ADRFitnessFunction,
     ADRStakeholder,
     ArchitectureComponent,
     ArchitectureDecision,
@@ -38,6 +39,8 @@ from app.schemas.entities import (
     ComponentLinkCreate,
     ComponentLinkRead,
     ComponentRead,
+    FitnessFunctionCreate,
+    FitnessFunctionRead,
     ImpactResponse,
     ReviewSummaryRead,
 )
@@ -398,11 +401,70 @@ async def get_adr(session: SessionDep, _: CurrentUser, adr_id: int) -> ADRDetail
     rule = project.decision_rule if project else DecisionRule.owner_decides
     summary = review_summary(stakeholder_ids, latest, rule)
     base = _adr_read(adr, component_ids, stakeholder_ids)
+    fitness = await _fitness_functions(session, adr_id)
     return ADRDetail(
         **base.model_dump(),
         comments=[ADRCommentRead.model_validate(c) for c in comments],
         review=ReviewSummaryRead.model_validate(summary, from_attributes=True),
+        fitness_functions=[FitnessFunctionRead.model_validate(f) for f in fitness],
     )
+
+
+async def _fitness_functions(
+    session: AsyncSession, adr_id: int
+) -> list[ADRFitnessFunction]:
+    rows = await session.execute(
+        select(ADRFitnessFunction)
+        .where(ADRFitnessFunction.adr_id == adr_id)
+        .order_by(col(ADRFitnessFunction.id))
+    )
+    return list(rows.scalars().all())
+
+
+@router.get("/adrs/{adr_id}/fitness", response_model=list[FitnessFunctionRead])
+async def list_fitness_functions(
+    session: SessionDep, _: CurrentUser, adr_id: int
+) -> list[ADRFitnessFunction]:
+    return await _fitness_functions(session, adr_id)
+
+
+@router.post(
+    "/adrs/{adr_id}/fitness",
+    response_model=FitnessFunctionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_fitness_function(
+    session: SessionDep, _: ContributorWriter, adr_id: int, payload: FitnessFunctionCreate
+) -> ADRFitnessFunction:
+    adr = await session.get(ArchitectureDecision, adr_id)
+    if adr is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ADR not found")
+    if payload.kind not in {"forbid", "require"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="kind must be forbid|require"
+        )
+    for cid in (payload.source_component_id, payload.target_component_id):
+        comp = await session.get(ArchitectureComponent, cid)
+        if comp is None or comp.project_id != adr.project_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Components must belong to the ADR's project",
+            )
+    ff = ADRFitnessFunction(adr_id=adr_id, **payload.model_dump())
+    session.add(ff)
+    await session.commit()
+    await session.refresh(ff)
+    return ff
+
+
+@router.delete("/fitness/{fitness_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_fitness_function(
+    session: SessionDep, _: ContributorWriter, fitness_id: int
+) -> None:
+    ff = await session.get(ADRFitnessFunction, fitness_id)
+    if ff is not None:
+        await session.delete(ff)
+        await session.commit()
 
 
 @router.post(

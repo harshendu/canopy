@@ -158,13 +158,15 @@ This is the EM's surface and it's currently the weakest quantitative one.
 
 The decision model is the best part of the product. The gap is *traceability* and *enforcement*.
 
-- **G-R1 — Decision → work → verification spine.** Let an ADR spawn and own its implementing tasks
-  (`Task.implements_adr_id`) and its **fitness function** (a machine-checkable assertion — e.g. "no
-  module under `app.api` imports `app.connectors` directly"). The ADR's status then reflects
-  *reality*: `accepted` but fitness-failing = the drift queue's strongest signal, far better than the
-  current "components show no commits" proxy for "unimplemented."
-  - API `POST /architecture/adrs/{id}/fitness` (declare a check), the drift scan evaluates it ·
-    MCP `add_adr_fitness`, surfaced in `get_adr`.
+- **G-R1 — Decision → work → verification spine. ◐ Partly shipped.** An ADR can carry
+  **fitness functions** — machine-checkable dependency rules (forbid/require between components). The
+  drift scan evaluates accepted ADRs' rules against the observed edges; a violation is a
+  `fitness_violation` drift event (heaviest weight) that auto-resolves when fixed — so `accepted`
+  but fitness-failing is now the drift queue's strongest signal, far better than the "components show
+  no commits" proxy.
+  - API `GET/POST /architecture/adrs/{id}/fitness`, `DELETE /architecture/fitness/{id}`; evaluated in
+    the drift scan; surfaced in `get_adr` + the Decisions tab · MCP `add_adr_fitness`.
+  - **Remaining:** `Task.implements_adr_id` (decision→task ownership) — feeds T.
 - **G-R2 — The missing `list_adrs` MCP tool (a real bug).** The `pr-to-adr-linker` skill calls
   `canopy:list_adrs` "if available" — it is **not** available, though `GET /architecture/adrs`
   exists. Add the tool. Without it, the PR-to-ADR-linker can't reliably do step 3.
@@ -335,7 +337,9 @@ or fixes a referenced-but-missing tool.)
    a GitHub push-webhook that enqueues the Drift Sentinel (agent-driven scan).
 
 **Later (depth):**
-9. **Decision fitness functions + traceability ledger** (G-R1, T, C6) — verified coherence.
+9. ◐ **Decision fitness functions + traceability ledger** (G-R1, T, C6). **Fitness functions
+   shipped** (machine-checkable forbid/require rules enforced by the drift scan; `add_adr_fitness`).
+   **Remaining:** `Task.implements_adr_id` + the traceability ledger (T).
 10. **Delivery (DORA+flow) metrics + DoD-as-policy** (S, U) — the quality/velocity backbone.
 11. **Hours-based + reality-checked capacity, skill-fit, PR metrics** (F-R2/3/4, J-R1).
 12. **Contract drift + non-Python analyzers + suppression UI** (N-R2/3).
