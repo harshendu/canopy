@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
@@ -19,9 +19,18 @@ import RoadmapView from "../components/RoadmapView";
 // Heavy (React Flow / Recharts) — code-split.
 const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
 const ArchitectureView = lazy(() => import("../components/ArchitectureView"));
+const DecisionsView = lazy(() => import("../components/DecisionsView"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
 
-type Tab = "gantt" | "deps" | "capacity" | "architecture" | "roadmap" | "burndown" | "alerts";
+type Tab =
+  | "gantt"
+  | "deps"
+  | "capacity"
+  | "decisions"
+  | "architecture"
+  | "roadmap"
+  | "burndown"
+  | "alerts";
 
 const SEVERITY_STYLES: Record<string, string> = {
   error: "border-red-300 bg-red-50 text-red-700",
@@ -29,10 +38,24 @@ const SEVERITY_STYLES: Record<string, string> = {
   info: "border-slate-200 bg-slate-50 text-slate-600",
 };
 
+const TABS: Tab[] = [
+  "gantt",
+  "deps",
+  "capacity",
+  "decisions",
+  "architecture",
+  "roadmap",
+  "burndown",
+  "alerts",
+];
+
 export default function ProjectView() {
   const { projectId } = useParams();
   const id = Number(projectId);
   const qc = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const initialTab: Tab = TABS.includes(requestedTab as Tab) ? (requestedTab as Tab) : "gantt";
 
   const [taskName, setTaskName] = useState("");
   const [taskDuration, setTaskDuration] = useState(3);
@@ -41,7 +64,7 @@ export default function ProjectView() {
   const [pred, setPred] = useState<number | "">("");
   const [succ, setSucc] = useState<number | "">("");
   const [lastReplan, setLastReplan] = useState<ReplanResult | null>(null);
-  const [tab, setTab] = useState<Tab>("gantt");
+  const [tab, setTab] = useState<Tab>(initialTab);
 
   const project = useQuery({
     queryKey: ["project", id],
@@ -172,6 +195,7 @@ export default function ProjectView() {
           ["gantt", "Gantt"],
           ["deps", "Dependencies"],
           ["capacity", "Capacity"],
+          ["decisions", "Decisions"],
           ["architecture", "Architecture"],
           ["roadmap", "Roadmap"],
           ["burndown", "Burndown"],
@@ -210,6 +234,12 @@ export default function ProjectView() {
         ))}
 
       {tab === "capacity" && <CapacityView projectId={id} />}
+
+      {tab === "decisions" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading decisions…</p>}>
+          <DecisionsView projectId={id} />
+        </Suspense>
+      )}
 
       {tab === "architecture" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading architecture…</p>}>

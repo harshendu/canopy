@@ -7,6 +7,7 @@ import Login from "./pages/Login";
 import Projects from "./pages/Projects";
 import ProjectView from "./pages/ProjectView";
 import Connectors from "./pages/Connectors";
+import Decisions from "./pages/Decisions";
 import Team from "./pages/Team";
 
 const Portfolio = lazy(() => import("./pages/Portfolio")); // Recharts — load on demand
@@ -36,6 +37,9 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
           </NavLink>
           <NavLink to="/projects" className={navClass}>
             Projects
+          </NavLink>
+          <NavLink to="/decisions" className={navClass}>
+            Decisions
           </NavLink>
           <NavLink to="/team" className={navClass}>
             Team
@@ -91,6 +95,14 @@ export default function App() {
         element={
           <ProtectedLayout>
             <ProjectView />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/decisions"
+        element={
+          <ProtectedLayout>
+            <Decisions />
           </ProtectedLayout>
         }
       />

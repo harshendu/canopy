@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from sqlmodel import Field
 
-from app.models.base import DependencyType, TaskType, TimestampMixin
+from app.models.base import DecisionRule, DependencyType, TaskType, TimestampMixin
 
 
 class Project(TimestampMixin, table=True):
@@ -14,6 +14,10 @@ class Project(TimestampMixin, table=True):
     target_date: date | None = None
     archived: bool = False
     skip_weekends: bool = False  # schedule on a 5-day working week (+ holidays)
+    # How an ADR reaches `accepted` once its stakeholders have weighed in, and how long
+    # a freshly `proposed` ADR may sit before its owner must triage it.
+    decision_rule: DecisionRule = Field(default=DecisionRule.owner_decides)
+    decision_sla_hours: int = 72
 
 
 class Holiday(TimestampMixin, table=True):

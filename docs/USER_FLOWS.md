@@ -63,9 +63,10 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 - **Notes:** `key` is a unique slug (e.g. `PLATFORM`).
 
 ### B3. Open a project (the cockpit)
-- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Dependencies · Capacity · Architecture ·
-  Roadmap · Burndown · Alerts**. The header has a **5-day week** toggle, **Set baseline**, and
-  **Schedule (CPM)**.
+- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Dependencies · Capacity · Decisions ·
+  Architecture · Roadmap · Burndown · Alerts**. The header has a **5-day week** toggle, **Set
+  baseline**, and **Schedule (CPM)**. A tab can be deep-linked with `?tab=` (e.g.
+  `/projects/:id?tab=decisions`).
 
 ### B4. Edit / archive a project · toggle working week
 - **UI:** the "5-day week" checkbox in the project header toggles weekend-aware scheduling.
@@ -158,34 +159,79 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 
 ---
 
-## G. Architecture & decisions (Architecture tab)
+## G. Architecture & decisions (Architecture + Decisions tabs)
 
-### G1. Map components
+Components and the system map live on the **Architecture** tab (G1). ADRs are now first-class
+**decisions** on their own **Decisions** tab (G2–G6) plus a team-wide **`/decisions`** page — the
+architect's unit of work is the decision, so it carries a lifecycle, an owner, stakeholders who
+review it, alternatives, reversibility, and a discussion thread.
+
+> **Identity note (current slice):** decision **owner**, **proposer**, **stakeholders**, and
+> **comment authors** all reference **Engineer** records (the existing team model). Role-based
+> *enforcement* (engineer vs architect vs owner) and engineer↔user unification are **not built**
+> yet — any authenticated user can currently perform any of these actions. The roles matrix in the
+> v2 spec (§"Roles × flows") is aspirational until the auth/roles slice lands.
+
+### G1. Map components (Architecture tab)
 - **UI:** Architecture tab → add components (name + kind: service/module/datastore/external/ui) and
   relationships (source → target, kind: depends_on/calls/publishes_to/reads_from). The system map
   (React Flow) shows components colored by kind with relationship edges.
 - **API:** `GET/POST /api/v1/architecture/components`, `GET/POST/DELETE
   /api/v1/architecture/component-links` · **MCP:** `list_components`, `create_component`,
   `link_components`.
+- **Not built:** component **code bindings** + **owner/criticality/tier** (v2 §G1).
 
-### G2. Record an ADR
-- **UI:** Architecture tab → "Record an ADR": title, context, decision, status (proposed/accepted/
-  superseded/deprecated), supersedes (another ADR), affected components → "Add ADR". The ADR list
-  shows each decision with an editable status, supersession reference, and component chips.
-- **API:** `POST /api/v1/architecture/adrs`, `PATCH /api/v1/architecture/adrs/{id}` · **MCP:**
-  `create_adr`.
+### G2. Record / propose a decision (ADR) — Decisions tab
+- **UI:** Decisions tab → "Propose / record a decision": title, context, decision, consequences,
+  **alternatives** (one per line), **reversibility** (one-way / two-way door), **decision owner**,
+  **proposed by**, **stakeholders** (must review), supersedes, affected components → "Save". The
+  team-wide `/decisions` page has a lighter "Propose a decision" form (engineer flow).
+- **API:** `POST /api/v1/architecture/adrs` (now also accepts `alternatives`, `reversibility`,
+  `decision_owner_id`, `proposed_by_id`, `decide_by`, `rfc_url`, `stakeholder_ids`) · **MCP:**
+  `create_adr` (architect records) / `propose_adr` (engineer proposes — sets `proposed_by_id`,
+  status `proposed`).
+- **Lifecycle:** `proposed → under_discussion → accepted | rejected → superseded | deprecated`,
+  plus **`deferred`** (a conscious postponement — **requires a `decide_by` date**, enforced 400).
+  Illegal jumps (e.g. `deprecated → proposed`) are rejected 409. The legal map is in
+  `app/services/decisions.py:valid_transition` (mirrored client-side in `src/lib/decisions.ts`).
 
-### G3. Import an ADR from a doc
-- **UI:** Architecture tab → "Or import from a doc": pick a GitHub/Drive connection + path/file id →
-  "Import". The markdown is parsed (title + context/decision/consequences sections) into an ADR.
-- **API:** `POST /api/v1/architecture/adrs/import` · **MCP:** `import_adr`.
+### G3. Discuss & review a decision
+- **UI:** Decisions tab → click an ADR to expand: full context/decision/consequences/alternatives,
+  a **status control** (only legal transitions; a `decide_by` date appears when deferring), a
+  **review summary** (approved / changes-requested / rejected / pending + whether the project's
+  decision rule is met to accept), a **blast-radius** button (G5), and the **discussion thread**.
+  Post a comment with a **kind**: `comment` | `approve` | `request_changes` | `reject` (a
+  non-comment kind is a formal review action, attributable to an engineer).
+- **API:** `GET /api/v1/architecture/adrs/{id}` (detail: fields + comments + review summary),
+  `POST /api/v1/architecture/adrs/{id}/comments`, `PATCH /api/v1/architecture/adrs/{id}`
+  (status transitions, stakeholders, all fields) · **MCP:** `get_adr`, `comment_adr`,
+  `transition_adr`.
+- **Decision rule** (per project, `PATCH /api/v1/projects/{id}` → `decision_rule` =
+  `owner_decides` | `consensus` | `lazy_consensus`, `decision_sla_hours`): drives the advisory
+  `can_accept` in the review summary. It is surfaced, **not hard-enforced** — the owner can still
+  decide. Per-stakeholder approval *gates* and SLA *notifications* are **not built** yet.
 
-### G4. Decision-impact analysis
-- **Actor:** architect via Claude (or API) · **MCP:** `adr_impact` · **API:**
-  `GET /api/v1/architecture/adrs/{id}/impact`.
-- **Result:** the components an ADR directly affects, plus everything that transitively depends on
-  them (the blast radius).
-- **UI gap:** surfaced via Claude / API; not yet drawn on the map.
+### G4. Decision queue
+- **UI:** the **`/decisions`** page (team-wide, also in the sidebar) and the top of each project's
+  Decisions tab show the queue, grouped by bucket: **needs_triage** (proposed, with the owner's
+  SLA), **stuck** (under discussion > 14 days), **deferred_soon** (`decide_by` within 14 days /
+  past), **discussing**. Overdue items sort first; rows link into the owning project's Decisions tab.
+- **API:** `GET /api/v1/decisions/queue?project_id=` (omit `project_id` for org-wide) · **MCP:**
+  `decision_queue`. Logic is pure in `app/services/decisions.py:build_decision_queue`.
+- **Not built:** **implicit decisions** (architectural choices made in code without an ADR) require
+  drift detection (v2 §N) and are not surfaced here yet.
+
+### G5. Decision-impact analysis (blast radius)
+- **UI:** Decisions tab → expand an ADR → **Blast radius**: the components it directly affects plus
+  everything that transitively depends on them. (v2 §G4: now in the UI, no longer Claude/API-only.)
+- **API:** `GET /api/v1/architecture/adrs/{id}/impact` · **MCP:** `adr_impact`.
+- **Not built:** `whatif_supersede` preview (v2 §G4).
+
+### G6. Import an ADR from a doc
+- **API:** `POST /api/v1/architecture/adrs/import` · **MCP:** `import_adr`. The markdown is parsed
+  (title + context/decision/consequences) into an ADR.
+- **UI gap:** the import form was on the old Architecture tab and was dropped when ADRs moved to the
+  Decisions tab — re-adding it there is a small follow-up.
 
 ---
 
@@ -265,7 +311,7 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~26 curated tools that call the REST API.
+  MCP server then exposes ~30 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -276,9 +322,14 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 - Ask Claude to "sync Jira". The **`syncing-jira`** skill / **`jira-sync`** subagent find the Jira
   connection, run an incremental (or full) sync, then reconcile the plan (`replan_schedule`).
 
-### L4. Write / import ADRs (skill)
+### L4. Write, propose & shepherd decisions (skill)
 - The **`writing-adrs`** skill drafts an ADR with a consistent template and records it (`create_adr`),
-  or imports one from a repo/Drive doc (`import_adr`).
+  proposes one on an engineer's behalf (`propose_adr`), runs it through the review lifecycle
+  (`transition_adr`), discusses/reviews it (`comment_adr`, `get_adr`), or imports one from a
+  repo/Drive doc (`import_adr`). It also reads the **decision queue** (`decision_queue`) as a
+  morning surface.
+- **Not built:** the **decision-deadline nudger** skill (v2 §L8) and a `/canopy propose-adr` slash
+  command — proposing is available as the `propose_adr` MCP tool today.
 
 ### L5. Plan capacity (skill)
 - The **`capacity-planning`** skill reads `get_capacity` + `list_alerts`, cross-references the critical
@@ -293,14 +344,23 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 ## Known UI gaps (currently API/MCP-only)
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
-- **What-if** scheduling (C5) and **decision-impact** visualization (G4).
+- **What-if** scheduling (C5).
+- ADR **doc-import** (G6) — was dropped from the trimmed Architecture tab; re-add to Decisions.
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - **User registration** (A3).
+- *(closed in this revision: decision-impact / blast radius (G5) is now in the UI.)*
 
 ## Not built (documented as future)
-- Slack/email **delivery** of alerts (I).
+- Slack/email **delivery** of alerts (I) and **decision SLA notifications** (G3).
 - Multi-process **real-time** (K) — needs Redis pub/sub.
 - **Resource leveling** (auto-resolving over-allocation).
+- **Role-based access** for decisions (engineer vs architect vs owner) and engineer↔user
+  unification (v2 §A3/§"Roles × flows") — decisions currently model actors as Engineers without
+  enforcement.
+- Hard-enforced decision **rules/approval gates** (G3) — `can_accept` is advisory today.
+- The broader v2 surfaces this slice does **not** touch: architecture **drift detection** (§N),
+  the **risk dashboard** (§Q), the **engineer workspace** (§M), **retros/postmortems** (§P), and
+  new connectors (PagerDuty §J7, CI/observability §J8).
 
 ---
 

@@ -1,7 +1,9 @@
 """Importing this package registers every table on SQLModel.metadata."""
 
 from app.models.architecture import (
+    ADRComment,
     ADRComponentLink,
+    ADRStakeholder,
     ArchitectureComponent,
     ArchitectureDecision,
     ComponentLink,
@@ -23,7 +25,9 @@ from app.models.team import Allocation, Engineer, Role
 from app.models.user import User
 
 __all__ = [
+    "ADRComment",
     "ADRComponentLink",
+    "ADRStakeholder",
     "Allocation",
     "ArchitectureComponent",
     "ArchitectureDecision",

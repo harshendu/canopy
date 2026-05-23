@@ -4,6 +4,7 @@ from app.api.v1 import (
     architecture,
     auth,
     connectors,
+    decisions,
     dependencies,
     events,
     gantt,
@@ -21,6 +22,7 @@ api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(dependencies.router, prefix="/dependencies", tags=["dependencies"])
 api_router.include_router(team.router, prefix="/team", tags=["team"])
 api_router.include_router(architecture.router, prefix="/architecture", tags=["architecture"])
+api_router.include_router(decisions.router, prefix="/decisions", tags=["decisions"])
 api_router.include_router(connectors.router, prefix="/connectors", tags=["connectors"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])

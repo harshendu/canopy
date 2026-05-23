@@ -1,6 +1,16 @@
 export type TaskType = "task" | "milestone" | "summary";
 export type DependencyType = "FS" | "SS" | "FF" | "SF";
-export type ADRStatus = "proposed" | "accepted" | "superseded" | "deprecated";
+export type ADRStatus =
+  | "proposed"
+  | "under_discussion"
+  | "accepted"
+  | "rejected"
+  | "superseded"
+  | "deprecated"
+  | "deferred";
+export type Reversibility = "one_way" | "two_way";
+export type ADRCommentKind = "comment" | "approve" | "request_changes" | "reject";
+export type DecisionRule = "owner_decides" | "consensus" | "lazy_consensus";
 export type Provider = "jira" | "github" | "gdrive";
 
 export interface Project {
@@ -12,6 +22,8 @@ export interface Project {
   target_date: string | null;
   archived: boolean;
   skip_weekends: boolean;
+  decision_rule: DecisionRule;
+  decision_sla_hours: number;
 }
 
 export interface Task {
@@ -101,9 +113,57 @@ export interface ADR {
   context: string | null;
   decision: string | null;
   consequences: string | null;
+  alternatives: string[];
+  reversibility: Reversibility | null;
+  decision_owner_id: number | null;
+  proposed_by_id: number | null;
+  decide_by: string | null;
+  rfc_url: string | null;
   supersedes_id: number | null;
   pr_links: string[];
   component_ids: number[];
+  stakeholder_ids: number[];
+}
+
+export interface ADRComment {
+  id: number;
+  adr_id: number;
+  engineer_id: number | null;
+  author_name: string | null;
+  body: string;
+  kind: ADRCommentKind;
+  created_at: string;
+}
+
+export interface ReviewSummary {
+  required: number;
+  approved: number;
+  changes_requested: number;
+  rejected: number;
+  pending: number;
+  can_accept: boolean;
+}
+
+export interface ADRDetail extends ADR {
+  comments: ADRComment[];
+  review: ReviewSummary;
+}
+
+export interface DecisionQueueItem {
+  id: number;
+  project_id: number;
+  number: number;
+  title: string;
+  status: ADRStatus;
+  bucket: string; // needs_triage | stuck | discussing | deferred_soon
+  reason: string;
+  overdue: boolean;
+  decide_by: string | null;
+  age_hours: number;
+}
+
+export interface DecisionQueueResponse {
+  items: DecisionQueueItem[];
 }
 
 export interface Component {
@@ -113,6 +173,12 @@ export interface Component {
   kind: string;
   description: string | null;
   repo_url: string | null;
+}
+
+export interface ImpactResponse {
+  adr_id: number;
+  direct_component_ids: number[];
+  downstream_component_ids: number[];
 }
 
 export interface ComponentLink {

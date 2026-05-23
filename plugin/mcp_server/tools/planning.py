@@ -77,10 +77,18 @@ def register(mcp, client) -> None:
         context: str | None = None,
         decision: str | None = None,
         consequences: str | None = None,
+        alternatives: list[str] | None = None,
+        reversibility: str | None = None,
+        decision_owner_id: int | None = None,
+        stakeholder_ids: list[int] | None = None,
+        status: str = "proposed",
     ) -> dict:
         """Record an Architecture Decision Record (ADR) on a project.
 
-        The ADR number is assigned automatically. Status defaults to "proposed".
+        The ADR number is assigned automatically. `reversibility` is one_way|two_way
+        (one_way = hard to reverse). `stakeholder_ids` are engineers who must review.
+        Status lifecycle: proposed -> under_discussion -> accepted|rejected ->
+        superseded|deprecated, plus `deferred` (needs a decide_by date via update_adr).
         """
         return await client.post(
             "/architecture/adrs",
@@ -90,5 +98,10 @@ def register(mcp, client) -> None:
                 "context": context,
                 "decision": decision,
                 "consequences": consequences,
+                "alternatives": alternatives or [],
+                "reversibility": reversibility,
+                "decision_owner_id": decision_owner_id,
+                "stakeholder_ids": stakeholder_ids or [],
+                "status": status,
             },
         )

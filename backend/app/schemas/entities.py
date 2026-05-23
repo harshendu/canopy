@@ -2,7 +2,15 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.base import ADRStatus, DependencyType, Provider, TaskType
+from app.models.base import (
+    ADRCommentKind,
+    ADRStatus,
+    DecisionRule,
+    DependencyType,
+    Provider,
+    Reversibility,
+    TaskType,
+)
 
 _read = ConfigDict(from_attributes=True)
 
@@ -23,6 +31,8 @@ class ProjectUpdate(BaseModel):
     target_date: date | None = None
     archived: bool | None = None
     skip_weekends: bool | None = None
+    decision_rule: DecisionRule | None = None
+    decision_sla_hours: int | None = None
 
 
 class ProjectRead(BaseModel):
@@ -35,6 +45,8 @@ class ProjectRead(BaseModel):
     target_date: date | None
     archived: bool
     skip_weekends: bool
+    decision_rule: DecisionRule
+    decision_sla_hours: int
 
 
 class HolidayCreate(BaseModel):
@@ -232,9 +244,16 @@ class ADRCreate(BaseModel):
     context: str | None = None
     decision: str | None = None
     consequences: str | None = None
+    alternatives: list[str] = []
+    reversibility: Reversibility | None = None
+    decision_owner_id: int | None = None
+    proposed_by_id: int | None = None
+    decide_by: date | None = None
+    rfc_url: str | None = None
     supersedes_id: int | None = None
     pr_links: list[str] = []
     component_ids: list[int] = []
+    stakeholder_ids: list[int] = []
 
 
 class ADRUpdate(BaseModel):
@@ -243,9 +262,16 @@ class ADRUpdate(BaseModel):
     context: str | None = None
     decision: str | None = None
     consequences: str | None = None
+    alternatives: list[str] | None = None
+    reversibility: Reversibility | None = None
+    decision_owner_id: int | None = None
+    proposed_by_id: int | None = None
+    decide_by: date | None = None
+    rfc_url: str | None = None
     supersedes_id: int | None = None
     pr_links: list[str] | None = None
     component_ids: list[int] | None = None
+    stakeholder_ids: list[int] | None = None
 
 
 class ADRRead(BaseModel):
@@ -258,9 +284,65 @@ class ADRRead(BaseModel):
     context: str | None
     decision: str | None
     consequences: str | None
+    alternatives: list[str] = []
+    reversibility: Reversibility | None = None
+    decision_owner_id: int | None = None
+    proposed_by_id: int | None = None
+    decide_by: date | None = None
+    rfc_url: str | None = None
     supersedes_id: int | None
     pr_links: list[str]
     component_ids: list[int] = []
+    stakeholder_ids: list[int] = []
+
+
+class ADRCommentCreate(BaseModel):
+    body: str
+    kind: ADRCommentKind = ADRCommentKind.comment
+    engineer_id: int | None = None
+    author_name: str | None = None
+
+
+class ADRCommentRead(BaseModel):
+    model_config = _read
+    id: int
+    adr_id: int
+    engineer_id: int | None
+    author_name: str | None
+    body: str
+    kind: ADRCommentKind
+    created_at: datetime
+
+
+class ReviewSummaryRead(BaseModel):
+    required: int
+    approved: int
+    changes_requested: int
+    rejected: int
+    pending: int
+    can_accept: bool
+
+
+class ADRDetail(ADRRead):
+    comments: list[ADRCommentRead] = []
+    review: ReviewSummaryRead
+
+
+class DecisionQueueItem(BaseModel):
+    id: int
+    project_id: int
+    number: int
+    title: str
+    status: ADRStatus
+    bucket: str  # needs_triage | stuck | discussing | deferred_soon
+    reason: str
+    overdue: bool
+    decide_by: date | None
+    age_hours: float
+
+
+class DecisionQueueResponse(BaseModel):
+    items: list[DecisionQueueItem]
 
 
 class ADRImportRequest(BaseModel):

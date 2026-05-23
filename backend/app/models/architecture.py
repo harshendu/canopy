@@ -1,7 +1,14 @@
+from datetime import date
+
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field
 
-from app.models.base import ADRStatus, TimestampMixin
+from app.models.base import (
+    ADRCommentKind,
+    ADRStatus,
+    Reversibility,
+    TimestampMixin,
+)
 
 
 class ArchitectureComponent(TimestampMixin, table=True):
@@ -25,7 +32,9 @@ class ComponentLink(TimestampMixin, table=True):
 
 
 class ArchitectureDecision(TimestampMixin, table=True):
-    """An ADR — first-class, with a supersession chain and PR links."""
+    """An ADR — a first-class *decision*, with a supersession chain, PR links, a review
+    lifecycle, and a comment thread. The decision (not the task) is the architect's unit
+    of work; tasks can be blocked on an ADR reaching `accepted`."""
 
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
@@ -35,6 +44,12 @@ class ArchitectureDecision(TimestampMixin, table=True):
     context: str | None = None
     decision: str | None = None
     consequences: str | None = None
+    alternatives: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    reversibility: Reversibility | None = None
+    decision_owner_id: int | None = Field(default=None, foreign_key="engineer.id")
+    proposed_by_id: int | None = Field(default=None, foreign_key="engineer.id")
+    decide_by: date | None = None  # required while status is `deferred`
+    rfc_url: str | None = None  # optional link to an external RFC doc (Drive/repo)
     supersedes_id: int | None = Field(default=None, foreign_key="architecturedecision.id")
     pr_links: list[str] = Field(default_factory=list, sa_column=Column(JSON))
 
@@ -44,3 +59,22 @@ class ADRComponentLink(TimestampMixin, table=True):
 
     adr_id: int = Field(foreign_key="architecturedecision.id", primary_key=True)
     component_id: int = Field(foreign_key="architecturecomponent.id", primary_key=True)
+
+
+class ADRStakeholder(TimestampMixin, table=True):
+    """An engineer who must review an ADR (their latest comment carries their decision)."""
+
+    adr_id: int = Field(foreign_key="architecturedecision.id", primary_key=True)
+    engineer_id: int = Field(foreign_key="engineer.id", primary_key=True)
+
+
+class ADRComment(TimestampMixin, table=True):
+    """A message on an ADR's thread. `kind` doubles as a formal review action when an
+    engineer approves / requests changes / rejects (plain `comment` otherwise)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    adr_id: int = Field(foreign_key="architecturedecision.id", index=True)
+    engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    author_name: str | None = None  # fallback label when no engineer is linked
+    body: str
+    kind: ADRCommentKind = Field(default=ADRCommentKind.comment)
