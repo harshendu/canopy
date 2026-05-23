@@ -14,6 +14,11 @@ codebase. It has two front doors over one FastAPI backend:
 Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint and
 **MCP** = the equivalent Claude plugin tool.
 
+> **Looking ahead:** a critique of these flows and a proposed revision/extension live in
+> [`PROPOSED_FLOWS.md`](./PROPOSED_FLOWS.md); the delivery philosophy behind those proposals is in
+> [`EXECUTION_PHILOSOPHY.md`](./EXECUTION_PHILOSOPHY.md). This file remains the source of truth for
+> what is *built*; those are the source of intent for what *should change*.
+
 ## Actors
 - **Architect** (primary) — plans, schedules, manages the team, records decisions.
 - **Admin** — an architect with `admin` role; the only one who can create new users.
