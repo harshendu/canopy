@@ -18,8 +18,11 @@ and a Claude Code plugin (FastMCP server + skills + subagents).
 ```
 backend/   FastAPI + SQLModel + Alembic + arq. API in app/api/v1, models in app/models,
            business logic in app/services, integrations in app/connectors + app/webhooks.
-frontend/  Vite + React + TS + Tailwind v4 + TanStack Query. Pages in src/pages,
-           the SVG Gantt in src/components/GanttChart.tsx, API client in src/api.
+frontend/  Vite + React + TS + Tailwind v4 + TanStack Query. Pages in src/pages
+           (Portfolio dashboard, Projects, ProjectView with Gantt/Dependencies/Capacity
+           tabs, Connectors). Views in src/components: GanttChart (custom SVG),
+           DependencyGraph (React Flow, lazy-loaded), CapacityHeatmap (custom grid);
+           Portfolio uses Recharts (lazy-loaded). API client + types in src/api.
 plugin/    Claude Code plugin. FastMCP server in mcp_server/ (thin client of the REST API),
            skills/, agents/. Manifests: plugin/.claude-plugin/plugin.json, plugin/.mcp.json,
            and .claude-plugin/marketplace.json at repo root.
@@ -56,6 +59,9 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
 - **CPM is computed backend-side** in `app/services/scheduling.py` (pure forward/backward pass over
   a `networkx` DAG). `POST /projects/{id}/replan` persists dates, `is_critical`, and float. Keep the
   scheduler pure and unit-tested; the frontend only renders.
+- Aggregation for the visibility views is also backend-side and pure-where-possible:
+  `GET /projects/portfolio` (per-project rollups) and `GET /team/capacity?project_id=` (engineer×week
+  allocation via `app/services/capacity.py:weekly_capacity`). Keep new aggregations unit-tested.
 - Connectors implement the ABC in `app/connectors/base.py` and self-register via `@register`. Sync is
   idempotent through the `ExternalRef` table (`app/services/mapping.py`). Connector tokens are
   encrypted at rest with Fernet (`app/core/crypto.py`). All outbound HTTP goes through

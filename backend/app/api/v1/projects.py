@@ -2,10 +2,48 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
-from app.models.project import Project
-from app.schemas.entities import ProjectCreate, ProjectRead, ProjectUpdate
+from app.models.base import TaskType
+from app.models.project import Project, Task
+from app.schemas.entities import (
+    PortfolioResponse,
+    ProjectCreate,
+    ProjectRead,
+    ProjectSummary,
+    ProjectUpdate,
+)
 
 router = APIRouter()
+
+
+@router.get("/portfolio", response_model=PortfolioResponse)
+async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
+    projects = (await session.execute(select(Project).order_by(Project.name))).scalars().all()
+    summaries: list[ProjectSummary] = []
+    for project in projects:
+        tasks = list(
+            (
+                await session.execute(select(Task).where(Task.project_id == project.id))
+            ).scalars().all()
+        )
+        leaves = [t for t in tasks if t.type != TaskType.summary]
+        total = len(leaves)
+        completed = sum(1 for t in leaves if t.percent_complete >= 100)
+        avg = sum(t.percent_complete for t in leaves) / total if total else 0.0
+        ends = [t.end for t in tasks if t.end]
+        summaries.append(
+            ProjectSummary(
+                id=project.id,
+                key=project.key,
+                name=project.name,
+                total_tasks=total,
+                completed_tasks=completed,
+                avg_percent_complete=round(avg, 1),
+                critical_tasks=sum(1 for t in leaves if t.is_critical),
+                project_end=max(ends) if ends else None,
+                target_date=project.target_date,
+            )
+        )
+    return PortfolioResponse(projects=summaries)
 
 
 @router.get("", response_model=list[ProjectRead])

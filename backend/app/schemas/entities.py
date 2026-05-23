@@ -290,3 +290,33 @@ class ReplanResult(BaseModel):
     scheduled_tasks: int
     critical_path: list[int]
     project_end: date | None
+
+
+# --- Capacity heatmap ---
+class CapacityRow(BaseModel):
+    engineer_id: int
+    engineer_name: str
+    cells: dict[str, float]  # week-start ISO date -> summed allocation %
+
+
+class CapacityResponse(BaseModel):
+    project_id: int
+    weeks: list[str]  # week-start ISO dates
+    rows: list[CapacityRow]
+
+
+# --- Portfolio ---
+class ProjectSummary(BaseModel):
+    id: int
+    key: str
+    name: str
+    total_tasks: int
+    completed_tasks: int
+    avg_percent_complete: float
+    critical_tasks: int
+    project_end: date | None
+    target_date: date | None
+
+
+class PortfolioResponse(BaseModel):
+    projects: list[ProjectSummary]

@@ -1,10 +1,22 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { GanttResponse, Project, ReplanResult, Task, TaskType } from "../api/types";
+import type {
+  CapacityResponse,
+  GanttResponse,
+  Project,
+  ReplanResult,
+  Task,
+  TaskType,
+} from "../api/types";
 import GanttChart from "../components/GanttChart";
+import CapacityHeatmap from "../components/CapacityHeatmap";
+
+const DependencyGraph = lazy(() => import("../components/DependencyGraph")); // React Flow
+
+type Tab = "gantt" | "deps" | "capacity";
 
 export default function ProjectView() {
   const { projectId } = useParams();
@@ -17,6 +29,7 @@ export default function ProjectView() {
   const [pred, setPred] = useState<number | "">("");
   const [succ, setSucc] = useState<number | "">("");
   const [lastReplan, setLastReplan] = useState<ReplanResult | null>(null);
+  const [tab, setTab] = useState<Tab>("gantt");
 
   const project = useQuery({
     queryKey: ["project", id],
@@ -29,6 +42,11 @@ export default function ProjectView() {
   const tasks = useQuery({
     queryKey: ["tasks", id],
     queryFn: () => api.get<Task[]>(`/tasks?project_id=${id}`),
+  });
+  const capacity = useQuery({
+    queryKey: ["capacity", id],
+    queryFn: () => api.get<CapacityResponse>(`/team/capacity?project_id=${id}`),
+    enabled: tab === "capacity",
   });
 
   const invalidate = () => {
@@ -91,13 +109,50 @@ export default function ProjectView() {
         </div>
       )}
 
-      {gantt.data && gantt.data.tasks.length > 0 ? (
-        <GanttChart data={gantt.data} />
-      ) : (
-        <p className="text-sm text-slate-500">
-          No tasks yet — add tasks below, then run “Schedule (CPM)”.
-        </p>
-      )}
+      <div className="flex gap-1 border-b border-slate-200">
+        {([
+          ["gantt", "Gantt"],
+          ["deps", "Dependencies"],
+          ["capacity", "Capacity"],
+        ] as [Tab, string][]).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+              tab === key
+                ? "border-canopy-500 text-canopy-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "gantt" &&
+        (gantt.data && gantt.data.tasks.length > 0 ? (
+          <GanttChart data={gantt.data} />
+        ) : (
+          <p className="text-sm text-slate-500">
+            No tasks yet — add tasks below, then run “Schedule (CPM)”.
+          </p>
+        ))}
+
+      {tab === "deps" &&
+        (gantt.data && gantt.data.tasks.length > 0 ? (
+          <Suspense fallback={<p className="text-sm text-slate-500">Loading graph…</p>}>
+            <DependencyGraph data={gantt.data} />
+          </Suspense>
+        ) : (
+          <p className="text-sm text-slate-500">No tasks to graph yet.</p>
+        ))}
+
+      {tab === "capacity" &&
+        (capacity.data ? (
+          <CapacityHeatmap data={capacity.data} />
+        ) : (
+          <p className="text-sm text-slate-500">Loading capacity…</p>
+        ))}
 
       <div className="grid grid-cols-2 gap-6">
         <form

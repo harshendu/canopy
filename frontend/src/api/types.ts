@@ -89,3 +89,31 @@ export interface ADR {
   supersedes_id: number | null;
   pr_links: string[];
 }
+
+export interface CapacityRow {
+  engineer_id: number;
+  engineer_name: string;
+  cells: Record<string, number>;
+}
+
+export interface CapacityResponse {
+  project_id: number;
+  weeks: string[];
+  rows: CapacityRow[];
+}
+
+export interface ProjectSummary {
+  id: number;
+  key: string;
+  name: string;
+  total_tasks: number;
+  completed_tasks: number;
+  avg_percent_complete: number;
+  critical_tasks: number;
+  project_end: string | null;
+  target_date: string | null;
+}
+
+export interface PortfolioResponse {
+  projects: ProjectSummary[];
+}
