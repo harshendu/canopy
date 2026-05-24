@@ -38,6 +38,92 @@ docker compose up --build
 - Web: http://localhost:5173
 - Migrations (`alembic upgrade head`) and superuser seeding run automatically on start.
 
+## Production deployment
+
+In production the backend runs against **PostgreSQL** or **MySQL/MariaDB** (SQLite is for
+dev/local only), and the Claude MCP server is served over **SSE** so a hosted/cloud Claude
+session can reach it. The whole data layer is dialect-portable — the schema migrations and
+the ORM queries are validated against Postgres, MySQL/MariaDB **and** SQLite (see
+*Database portability* below).
+
+### 1. Database (Postgres or MySQL/MariaDB)
+
+Pick a dialect and set `DATABASE_URL` to its **async** driver URL:
+
+```bash
+# PostgreSQL (asyncpg ships in the core deps)
+DATABASE_URL="postgresql+asyncpg://USER:PASS@HOST:5432/canopy"
+
+# MySQL / MariaDB (install the optional driver: pip install -e ".[mysql]")
+DATABASE_URL="mysql+aiomysql://USER:PASS@HOST:3306/canopy"
+
+# SQLite — dev/local only, NOT for production
+DATABASE_URL="sqlite+aiosqlite:///./canopy.db"
+```
+
+Then apply the schema and start the API (same flow for either dialect):
+
+```bash
+cd backend
+pip install -e ".[mysql]"     # only needed for MySQL/MariaDB; omit for Postgres
+export DATABASE_URL="…"        # one of the URLs above
+export SECRET_KEY="…" TOKEN_ENCRYPTION_KEY="…"   # generate real secrets (see .env.example)
+alembic upgrade head           # creates/updates the schema on the target database
+uvicorn app.main:app --host 0.0.0.0 --port 8000  # add --workers N behind a process manager
+```
+
+Run the worker alongside it for background jobs (Jira poll, nightly risk snapshots):
+
+```bash
+arq app.workers.worker.WorkerSettings
+```
+
+> **Database portability.** The Alembic migrations are written to run forward on Postgres,
+> MySQL/MariaDB and SQLite (enum changes branch per dialect; foreign-key/column patches use
+> native `ALTER` on the server DBs and table-rebuild only on SQLite). Timestamps are stored as
+> **naive UTC** so they round-trip on every driver (asyncpg rejects tz-aware values for
+> `TIMESTAMP WITHOUT TIME ZONE`). Note that **Postgres and MySQL enforce foreign keys** while
+> SQLite does not by default — deletes that rely on cascade ordering are handled in the app
+> so they behave the same on every dialect.
+
+### 2. MCP server over SSE (for cloud Claude sessions)
+
+Locally the plugin launches the MCP server over stdio. In production, run it as a long-lived
+**SSE** service that a hosted Claude session connects to. Everything is configured by
+environment variables, so a headless cloud session needs no interactive plugin config:
+
+```bash
+cd plugin
+pip install -r mcp_server/requirements.txt
+# Backend the tools call:
+export CANOPY_API_BASE_URL="https://canopy.example.com"
+export CANOPY_API_TOKEN="<JWT from POST /api/v1/auth/login>"
+# Serve over SSE instead of stdio:
+export CANOPY_MCP_TRANSPORT="sse"   # stdio (default) | sse | http | streamable-http
+export CANOPY_MCP_HOST="0.0.0.0"
+export CANOPY_MCP_PORT="8765"
+export CANOPY_MCP_PATH="/sse"
+python mcp_server/server.py          # serves SSE at http://HOST:PORT/sse
+```
+
+Point the cloud Claude session at that endpoint with an MCP server entry:
+
+```json
+{ "mcpServers": { "canopy": { "type": "sse", "url": "https://canopy.example.com:8765/sse" } } }
+```
+
+| Env var | Purpose | Default |
+| --- | --- | --- |
+| `CANOPY_API_BASE_URL` | canopy REST API the MCP tools call | `http://localhost:8000` |
+| `CANOPY_API_TOKEN` | JWT for the API (`POST /api/v1/auth/login`) | — |
+| `CANOPY_MCP_TRANSPORT` | `stdio` \| `sse` \| `http` \| `streamable-http` | `stdio` |
+| `CANOPY_MCP_HOST` / `CANOPY_MCP_PORT` / `CANOPY_MCP_PATH` | SSE/HTTP bind address + path | `127.0.0.1` / `8765` / `/sse` |
+
+For a locally-installed plugin, the same `CANOPY_API_*` values come from the plugin's
+`api_base_url` / `api_token` config; for cloud sessions they (and the transport) are read
+straight from the environment. Empty config values fall back to the environment, so a blank
+plugin config never clobbers an env var the session provides.
+
 ## Developer setup & CI (no GitHub Actions)
 
 ```bash
@@ -89,6 +175,11 @@ Configure the plugin's `api_base_url` (e.g. `http://localhost:8000`) and `api_to
 `POST /api/v1/auth/login`). The MCP server exposes curated tools — `list_projects`, `create_task`,
 `link_dependency`, `replan_schedule`, `trigger_jira_sync`, `read_design_doc`, `create_adr`, … —
 that call the backend REST API.
+
+By default the server talks **stdio** (the plugin launches it). To serve it over **SSE** for a
+hosted/cloud Claude session, set `CANOPY_MCP_TRANSPORT=sse` (+ `CANOPY_MCP_HOST`/`PORT`/`PATH`) and
+provide `CANOPY_API_BASE_URL` / `CANOPY_API_TOKEN` via the environment — see
+*Production deployment → MCP server over SSE* above.
 
 ## Key concepts
 

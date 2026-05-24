@@ -9,15 +9,13 @@ re-push becomes an idempotent update rather than a duplicate.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.connectors import get_connector
 from app.connectors.jira import JiraConnector
 from app.core.events import publish
-from app.models.base import Provider
+from app.models.base import Provider, utcnow
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import Connection
 from app.schemas.entities import DraftPushResult, DraftPushTaskResult
@@ -143,7 +141,7 @@ async def push_plan_to_jira(
 
     if failed == 0 and (created or updated):
         plan.status = "synced"
-        plan.synced_at = datetime.now(UTC)
+        plan.synced_at = utcnow()
     await session.commit()
     await publish({"type": "draft_push", "project_id": plan.project_id, "plan_id": plan_id})
 

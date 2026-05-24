@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import httpx
 import pytest
@@ -8,7 +8,7 @@ from app.connectors.github import GitHubConnector
 from app.connectors.oauth import TokenResponse
 from app.core.config import settings
 from app.core.crypto import decrypt_token, encrypt_token
-from app.models.base import Provider
+from app.models.base import Provider, utcnow
 from app.models.integration import Connection
 
 
@@ -55,7 +55,7 @@ async def test_connector_refreshes_expired_token(db_session, monkeypatch):
         config={"owner": "acme", "repo": "platform"},
         encrypted_token=encrypt_token("old-access"),
         encrypted_refresh_token=encrypt_token("old-refresh"),
-        token_expires_at=datetime.now(UTC) - timedelta(hours=1),
+        token_expires_at=utcnow() - timedelta(hours=1),
     )
     db_session.add(connection)
     await db_session.flush()
@@ -73,7 +73,7 @@ async def test_connector_refreshes_expired_token(db_session, monkeypatch):
 
     assert decrypt_token(connection.encrypted_token) == "new-access"
     assert decrypt_token(connection.encrypted_refresh_token) == "new-refresh"  # rotated
-    assert connection.token_expires_at > datetime.now(UTC)
+    assert connection.token_expires_at > utcnow()  # naive UTC, see models.base.utcnow
 
 
 @pytest.mark.asyncio
@@ -83,7 +83,7 @@ async def test_connector_skips_refresh_when_token_fresh(db_session, monkeypatch)
         name="gh",
         encrypted_token=encrypt_token("still-good"),
         encrypted_refresh_token=encrypt_token("rt"),
-        token_expires_at=datetime.now(UTC) + timedelta(hours=2),
+        token_expires_at=utcnow() + timedelta(hours=2),
     )
     db_session.add(connection)
     await db_session.flush()

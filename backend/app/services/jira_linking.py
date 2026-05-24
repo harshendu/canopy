@@ -14,15 +14,13 @@ back) — the same source-of-truth boundary as the rest of sync.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.connectors import get_connector
 from app.connectors.jira import JiraConnector, LinkMapResult
 from app.core.events import publish
-from app.models.base import Provider
+from app.models.base import Provider, utcnow
 from app.models.integration import Connection, JiraLink
 from app.models.project import Initiative, Project
 from app.schemas.entities import JiraLinkRead, JiraLinkSyncResult
@@ -121,7 +119,7 @@ async def _run_sync(
         mapped = await connector.map_subtree_into_project(issues, link.target_id)
     else:
         mapped = await connector.map_subtree_into_initiative(issues, link.target_id)
-    link.last_synced_at = datetime.now(UTC)
+    link.last_synced_at = utcnow()
     await session.commit()
     await session.refresh(link)
     await publish(

@@ -10,6 +10,7 @@ review the plan here first.
 
 from datetime import datetime
 
+from sqlalchemy import Column, Text
 from sqlmodel import Field
 
 from app.models.base import TaskType, TimestampMixin
@@ -25,9 +26,10 @@ class DraftPlan(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
     title: str
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))
     status: str = "draft"  # draft | synced | archived
-    source: str | None = None  # free-text note on where the plan came from (doc/PRD/url)
+    # free-text note on where the plan came from (doc/PRD/url)
+    source: str | None = Field(default=None, sa_column=Column(Text))
     synced_at: datetime | None = None  # when its tickets were last pushed to Jira
 
 
@@ -39,7 +41,7 @@ class DraftTask(TimestampMixin, table=True):
     plan_id: int = Field(foreign_key="draftplan.id", index=True)
     parent_id: int | None = Field(default=None, foreign_key="drafttask.id", index=True)
     name: str
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))
     type: TaskType = Field(default=TaskType.task)  # task | summary (epic/phase) | milestone
     estimate_days: int = 1  # canopy duration sense (working days)
     story_points: float | None = None  # pushed to the Jira story-point custom field

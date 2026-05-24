@@ -1,5 +1,6 @@
 """Importing this package registers every table on SQLModel.metadata."""
 
+from app.models import _dialects  # noqa: F401  (registers cross-dialect DDL compiler hooks)
 from app.models.activity import ActivityEvent
 from app.models.architecture import (
     ADRComment,

@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, Text
 from sqlmodel import Field
 
 from app.models.base import TimestampMixin
@@ -50,4 +50,4 @@ class EngineerAvailability(TimestampMixin, table=True):
     start_date: date = Field(index=True)
     end_date: date
     capacity_factor: float = 0.0  # 0..1
-    note: str | None = None
+    note: str | None = Field(default=None, sa_column=Column(Text))

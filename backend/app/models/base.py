@@ -5,7 +5,10 @@ from sqlmodel import Field, SQLModel
 
 
 def utcnow() -> datetime:
-    return datetime.now(UTC)
+    # Naive UTC: the DB columns are TIMESTAMP WITHOUT TIME ZONE, and asyncpg (Postgres)
+    # rejects tz-aware datetimes for them. Storing naive UTC keeps writes portable across
+    # Postgres / MySQL / SQLite and matches how rows read back from every dialect.
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class TimestampMixin(SQLModel):

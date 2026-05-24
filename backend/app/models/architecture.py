@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import JSON, Column, UniqueConstraint
+from sqlalchemy import JSON, Column, Text, UniqueConstraint
 from sqlmodel import Field
 
 from app.models.base import (
@@ -16,7 +16,7 @@ class ArchitectureComponent(TimestampMixin, table=True):
     project_id: int = Field(foreign_key="project.id", index=True)
     name: str
     kind: str = "service"  # service | module | datastore | external | ui
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))
     repo_url: str | None = None
     owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
     criticality: str | None = None  # low | med | high
@@ -45,9 +45,9 @@ class ArchitectureDecision(TimestampMixin, table=True):
     number: int  # sequential within a project, e.g. ADR-0007
     title: str
     status: ADRStatus = Field(default=ADRStatus.proposed)
-    context: str | None = None
-    decision: str | None = None
-    consequences: str | None = None
+    context: str | None = Field(default=None, sa_column=Column(Text))
+    decision: str | None = Field(default=None, sa_column=Column(Text))
+    consequences: str | None = Field(default=None, sa_column=Column(Text))
     alternatives: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     reversibility: Reversibility | None = None
     decision_owner_id: int | None = Field(default=None, foreign_key="engineer.id")
@@ -80,7 +80,7 @@ class ADRComment(TimestampMixin, table=True):
     adr_id: int = Field(foreign_key="architecturedecision.id", index=True)
     engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
     author_name: str | None = None  # fallback label when no engineer is linked
-    body: str
+    body: str = Field(sa_column=Column(Text, nullable=False))
     kind: ADRCommentKind = Field(default=ADRCommentKind.comment)
 
 
@@ -104,9 +104,10 @@ class DriftEvent(TimestampMixin, table=True):
     project_id: int = Field(foreign_key="project.id", index=True)
     kind: str  # unexpected_dependency | dead_dependency | unimplemented_adr | implicit_decision
     rule_key: str = Field(index=True)  # stable id for dedupe + suppression
-    summary: str
-    detail: str | None = None
-    suspected_cause: str | None = None  # PR/commit reference, when known
+    summary: str = Field(sa_column=Column(Text, nullable=False))
+    detail: str | None = Field(default=None, sa_column=Column(Text))
+    # PR/commit reference, when known
+    suspected_cause: str | None = Field(default=None, sa_column=Column(Text))
     affected_component_ids: list[int] = Field(default_factory=list, sa_column=Column(JSON))
     status: str = "open"  # open | accepted | rejected | false_positive
 
@@ -138,4 +139,4 @@ class ADRFitnessFunction(TimestampMixin, table=True):
     kind: str = "forbid"  # forbid | require
     source_component_id: int = Field(foreign_key="architecturecomponent.id")
     target_component_id: int = Field(foreign_key="architecturecomponent.id")
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))

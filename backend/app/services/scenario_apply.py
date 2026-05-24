@@ -12,12 +12,11 @@ new live task appeared, after that watermark, apply raises a conflict unless `fo
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.core.events import publish
+from app.models.base import utcnow
 from app.models.project import (
     Blocker,
     Dependency,
@@ -375,7 +374,7 @@ async def apply_scenario(
         replanned.append(pid)
 
     scenario.status = "applied"
-    scenario.applied_at = datetime.now(UTC)
+    scenario.applied_at = utcnow()
     await session.commit()
 
     await publish({"type": "scenario_apply", "initiative_id": scenario.initiative_id,

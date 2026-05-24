@@ -15,6 +15,7 @@ push); `base_captured_at` is the staleness watermark used to detect live edits m
 
 from datetime import date, datetime
 
+from sqlalchemy import Column, Text
 from sqlmodel import Field
 
 from app.models.base import DependencyType, TaskType, TimestampMixin, utcnow
@@ -29,7 +30,7 @@ class Scenario(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     initiative_id: int = Field(foreign_key="initiative.id", index=True)
     title: str
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))
     status: str = "draft"  # draft | ready | applied | archived
     base_captured_at: datetime = Field(default_factory=utcnow)  # staleness watermark
     applied_at: datetime | None = None
@@ -57,7 +58,7 @@ class ScenarioTask(TimestampMixin, table=True):
     live_task_id: int | None = Field(default=None, foreign_key="task.id", index=True)
     parent_id: int | None = Field(default=None, foreign_key="scenariotask.id", index=True)
     name: str
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))
     type: TaskType = Field(default=TaskType.task)
     duration: int = 1
     deadline: date | None = None
@@ -83,7 +84,7 @@ class ScenarioMilestone(TimestampMixin, table=True):
     project_id: int = Field(foreign_key="project.id", index=True)
     live_milestone_id: int | None = Field(default=None, foreign_key="milestone.id", index=True)
     name: str
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))
     target_date: date | None = None
     status: str = "planned"
     removed: bool = False
@@ -115,5 +116,5 @@ class ScenarioAvailability(TimestampMixin, table=True):
     start_date: date
     end_date: date
     capacity_factor: float = 0.0  # 0..1
-    note: str | None = None
+    note: str | None = Field(default=None, sa_column=Column(Text))
     removed: bool = False

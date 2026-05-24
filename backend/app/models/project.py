@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, Text
 from sqlmodel import Field
 
 from app.models.base import (
@@ -22,7 +22,8 @@ class Initiative(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     key: str = Field(index=True, unique=True)  # short slug, e.g. "Q3-PLATFORM"
     name: str
-    outcome_statement: str | None = None  # the outcome + how we'll know it worked
+    # the outcome + how we'll know it worked
+    outcome_statement: str | None = Field(default=None, sa_column=Column(Text))
     start_date: date | None = None
     target_date: date | None = None
     owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
@@ -31,7 +32,8 @@ class Initiative(TimestampMixin, table=True):
     tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     # Architect's manual status; None = use the computed on-track signal.
     health: ProjectHealth | None = None
-    status_note: str | None = None  # the weekly status headline
+    # the weekly status headline
+    status_note: str | None = Field(default=None, sa_column=Column(Text))
     status_updated_at: datetime | None = None
 
 
@@ -39,7 +41,7 @@ class Project(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     key: str = Field(index=True, unique=True)  # short slug, e.g. "PLATFORM"
     name: str
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))
     initiative_id: int | None = Field(default=None, foreign_key="initiative.id", index=True)
     start_date: date | None = None
     target_date: date | None = None
@@ -53,7 +55,8 @@ class Project(TimestampMixin, table=True):
     tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     # Architect's manual status; None = use the computed on-track signal.
     health: ProjectHealth | None = None
-    status_note: str | None = None  # the weekly status headline
+    # the weekly status headline
+    status_note: str | None = Field(default=None, sa_column=Column(Text))
     status_updated_at: datetime | None = None
 
 
@@ -72,7 +75,7 @@ class Milestone(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
     name: str
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))
     target_date: date | None = None
     status: str = "planned"  # planned | at_risk | hit | missed
 
@@ -84,7 +87,7 @@ class Task(TimestampMixin, table=True):
     project_id: int = Field(foreign_key="project.id", index=True)
     parent_id: int | None = Field(default=None, foreign_key="task.id", index=True)
     name: str
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))
     type: TaskType = Field(default=TaskType.task)
 
     start: date | None = None
@@ -144,7 +147,7 @@ class RiskMitigation(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
     indicator_key: str  # which risk indicator this addresses (see services/risk.py)
-    note: str
+    note: str = Field(sa_column=Column(Text, nullable=False))
     owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
     check_in: date | None = None
     resolved: bool = False
@@ -170,7 +173,7 @@ class Baseline(TimestampMixin, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
-    note: str | None = None  # why the baseline was (re)set
+    note: str | None = Field(default=None, sa_column=Column(Text))  # why the baseline was (re)set
     task_count: int = 0  # tasks snapshotted at this baseline
     project_end: date | None = None  # the planned end captured at baseline time
 
@@ -182,7 +185,7 @@ class Blocker(TimestampMixin, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     task_id: int = Field(foreign_key="task.id", index=True)
-    reason: str
+    reason: str = Field(sa_column=Column(Text, nullable=False))
     raised_by_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
     blocking_task_id: int | None = Field(default=None, foreign_key="task.id")
     resolved_at: datetime | None = None

@@ -4,12 +4,11 @@ Any contributor (engineer or planner) can raise one; the engineer who raises it 
 (defaulting to the caller's linked engineer). Open blockers surface in the engineer workspace
 (§M), the project's alerts digest (§I/Q), and a project Blockers panel."""
 
-from datetime import datetime
-
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
 from app.api.deps import ContributorWriter, CurrentUser, PlannerWriter, SessionDep, current_engineer
+from app.models.base import utcnow
 from app.models.project import Blocker, Task
 from app.schemas.entities import BlockerCreate, BlockerRead, BlockerUpdate
 
@@ -84,7 +83,7 @@ async def update_blocker(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Blocker not found")
     data = payload.model_dump(exclude_unset=True)
     if payload.resolved is not None:
-        blocker.resolved_at = datetime.utcnow() if payload.resolved else None
+        blocker.resolved_at = utcnow() if payload.resolved else None
     # `resolved` is a derived flag (not a column), so apply the rest field-by-field.
     for field in ("reason", "category", "severity", "owner_engineer_id", "needed_by"):
         if field in data:
