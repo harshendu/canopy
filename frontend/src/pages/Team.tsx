@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { CapacityResponse, Engineer, Role, User } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
+import AvailabilityEditor from "../components/AvailabilityEditor";
 import CapacityHeatmap from "../components/CapacityHeatmap";
 
 export default function Team() {
@@ -231,6 +232,19 @@ export default function Team() {
           <li className="px-4 py-6 text-center text-sm text-slate-400">No engineers yet.</li>
         )}
       </ul>
+
+      {mayWrite && (
+        <section className="space-y-2">
+          <div>
+            <h2 className="font-semibold">Availability</h2>
+            <p className="text-xs text-slate-500">
+              PTO / leave / ramp-up windows. A reduced capacity factor lowers the
+              over-allocation ceiling on the heatmap (factor 0 = fully out).
+            </p>
+          </div>
+          <AvailabilityEditor />
+        </section>
+      )}
 
       <section className="space-y-2">
         <div>

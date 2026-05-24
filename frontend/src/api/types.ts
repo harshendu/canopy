@@ -294,6 +294,7 @@ export interface CapacityRow {
   engineer_name: string;
   cells: Record<string, number>;
   projects?: string[]; // contributing project keys (org-wide view)
+  availability?: Record<string, number>; // week ISO -> capacity factor (<1 = reduced)
 }
 
 export interface CapacityResponse {
@@ -595,4 +596,114 @@ export interface ExportToDriveResult {
   file_id: string;
   name: string;
   link: string | null;
+}
+
+// --- Scenario simulation ---
+export interface Scenario {
+  id: number;
+  initiative_id: number;
+  title: string;
+  description: string | null;
+  status: "draft" | "ready" | "applied" | "archived";
+  base_captured_at: string;
+  applied_at: string | null;
+}
+
+export interface ScenarioCounts {
+  tasks: number;
+  dependencies: number;
+  milestones: number;
+  allocations: number;
+  availability: number;
+  projects: number;
+}
+
+export interface ScenarioDetail extends Scenario {
+  counts: ScenarioCounts;
+}
+
+export interface ScenarioTaskRead {
+  id: number;
+  scenario_id: number;
+  project_id: number;
+  live_task_id: number | null;
+  parent_id: number | null;
+  name: string;
+  description: string | null;
+  type: TaskType;
+  duration: number;
+  deadline: string | null;
+  percent_complete: number;
+  assignee_engineer_id: number | null;
+  removed: boolean;
+}
+
+export interface ScenarioAvailabilityRead {
+  id: number;
+  scenario_id: number;
+  live_availability_id: number | null;
+  engineer_id: number;
+  start_date: string;
+  end_date: string;
+  capacity_factor: number;
+  note: string | null;
+  removed: boolean;
+}
+
+export interface ScenarioProjectDelta {
+  project_id: number;
+  project_key: string;
+  live_end: string | null;
+  scenario_end: string | null;
+  end_delta_days: number | null;
+}
+
+export interface ScenarioDiff {
+  tasks_added: number;
+  tasks_removed: number;
+  tasks_changed: number;
+  deps_added: number;
+  deps_removed: number;
+  milestones_changed: number;
+  allocations_changed: number;
+  availability_changed: number;
+  live_project_end: string | null;
+  scenario_project_end: string | null;
+  end_delta_days: number | null;
+  live_cp_working_days: number;
+  scenario_cp_working_days: number;
+  cp_delta_days: number;
+  per_project: ScenarioProjectDelta[];
+}
+
+export interface ScenarioConflict {
+  entity_type: string;
+  entity_id: number | null;
+  reason: string;
+}
+
+export interface ScenarioCompareResponse {
+  scenario_id: number;
+  diff: ScenarioDiff;
+  conflicts: ScenarioConflict[];
+}
+
+export interface ScenarioApplyResult {
+  scenario_id: number;
+  status: string;
+  created: number;
+  updated: number;
+  deleted: number;
+  replanned_projects: number[];
+  conflicts: ScenarioConflict[];
+}
+
+// Live engineer availability (PTO / leave / ramp-up).
+export interface Availability {
+  id: number;
+  engineer_id: number;
+  start_date: string;
+  end_date: string;
+  capacity_factor: number;
+  note: string | null;
 }

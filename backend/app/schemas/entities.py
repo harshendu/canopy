@@ -239,6 +239,31 @@ class AllocationRead(BaseModel):
     end_date: date | None
 
 
+class AvailabilityCreate(BaseModel):
+    engineer_id: int
+    start_date: date
+    end_date: date
+    capacity_factor: float = 0.0  # 0..1
+    note: str | None = None
+
+
+class AvailabilityUpdate(BaseModel):
+    start_date: date | None = None
+    end_date: date | None = None
+    capacity_factor: float | None = None
+    note: str | None = None
+
+
+class AvailabilityRead(BaseModel):
+    model_config = _read
+    id: int
+    engineer_id: int
+    start_date: date
+    end_date: date
+    capacity_factor: float
+    note: str | None = None
+
+
 # --- Architecture ---
 class ComponentCreate(BaseModel):
     project_id: int
@@ -578,6 +603,8 @@ class CapacityRow(BaseModel):
     engineer_name: str
     cells: dict[str, float]  # week-start ISO date -> summed allocation %
     projects: list[str] = []  # contributing project keys (org-wide view)
+    # week-start ISO date -> availability factor (0..1); only weeks below full capacity.
+    availability: dict[str, float] = {}
 
 
 class CapacityResponse(BaseModel):

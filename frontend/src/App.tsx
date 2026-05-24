@@ -9,6 +9,8 @@ import Projects from "./pages/Projects";
 import ProjectView from "./pages/ProjectView";
 import Initiatives from "./pages/Initiatives";
 import InitiativeView from "./pages/InitiativeView";
+import ScenarioList from "./pages/ScenarioList";
+import ScenarioWorkspace from "./pages/ScenarioWorkspace";
 import Connectors from "./pages/Connectors";
 import Decisions from "./pages/Decisions";
 import MyWorkspace from "./pages/MyWorkspace";
@@ -113,6 +115,22 @@ export default function App() {
         element={
           <ProtectedLayout>
             <InitiativeView />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/initiatives/:initiativeId/scenarios"
+        element={
+          <ProtectedLayout>
+            <ScenarioList />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/initiatives/:initiativeId/scenarios/:scenarioId"
+        element={
+          <ProtectedLayout>
+            <ScenarioWorkspace />
           </ProtectedLayout>
         }
       />

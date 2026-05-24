@@ -360,7 +360,8 @@ surfaces where decisions get made — the engineer workspace and the project ale
   `add_engineer` (extended).
 - **Not built (v2 §F1):** on-call schedule (needs the PagerDuty connector §J7).
 - **Not built (v2 §F2–F5):** committed-hours/interrupt-budget *allocation*, planned-vs-realized
-  capacity, engineer PTO feeding CPM, and skill-task fit scores — allocation is still percent-based.
+  capacity, and skill-task fit scores — allocation is still percent-based. **Engineer availability
+  now exists (§F4)** but informs the capacity/over-allocation views only, **not** CPM dates.
 
 ### F2. Allocate engineers (capacity)
 - **UI:** project → Capacity tab → "Allocate" form (engineer, percent, date range) → "Add".
@@ -374,8 +375,22 @@ surfaces where decisions get made — the engineer workspace and the project ale
   three projects = 150%) is visible where per-project views hide it; rows split across >1 project
   are flagged with their contributing project keys.
 - **API:** `GET /api/v1/team/capacity?project_id=` (omit `project_id` for the org-wide grid;
-  `project_id` is `null` in the response and each row carries `projects` = contributing keys) ·
+  `project_id` is `null` in the response and each row carries `projects` = contributing keys, and
+  `availability` = week→factor for any week below full capacity) ·
   **MCP:** `get_capacity` (`project_id` now optional). Closes the v2 §F cross-project blind spot.
+
+### F4. Engineer availability (PTO / leave / ramp-up) **[new]**
+- **UI:** `/team` → an engineer's **availability** editor — add date ranges with a **capacity
+  factor** (0 = fully out, 0.5 = half). Reduced-capacity weeks are shaded on the capacity heatmap.
+- **API:** `GET /api/v1/team/availability?engineer_id=`, `POST /api/v1/team/availability`,
+  `PATCH/DELETE /api/v1/team/availability/{id}` (`EngineerAvailability`: engineer, date range,
+  `capacity_factor`, note). Reads are open; writes are planner-gated.
+- **Effect:** the capacity heatmap, the **risk** over-allocation indicator, and the **alerts**
+  digest now flag a week as over-allocated when summed allocation exceeds **100% × the worst
+  availability factor that week** (so 60% allocation during half-time PTO is already "over").
+- **Deliberately not built:** availability does **not** push CPM/schedule dates (that is
+  resource-constrained scheduling/leveling — a separate, harder problem); it adjusts the
+  capacity/over-allocation *views* only. Per-person time-off does not yet sync from any calendar.
 
 ---
 
@@ -733,12 +748,78 @@ initiative / portfolio rollups), so the numbers match what's on screen.
 
 ---
 
+## T. Scenario simulation (initiative what-if) **[new]**
+
+A durable, named **what-if branch of an initiative**: change team composition, per-engineer
+availability, milestones, deadlines, and scope (add/remove/resize tasks + dependencies), then
+regenerate **every** analysis view and compare to the live plan before committing. Conceptually
+the draft-plan pattern (§C10) raised to the whole initiative, and the only multi-dimensional
+what-if (the Gantt's §C5 covers task durations only).
+
+### T1. Create a scenario (snapshot)
+- **UI:** initiative cockpit (`/initiatives/:id`) → **Scenarios** → "New scenario". Opens the
+  scenario workspace at `/initiatives/:id/scenarios/:scenarioId`.
+- **API:** `GET/POST /api/v1/initiatives/{id}/scenarios`, `GET/PATCH/DELETE /api/v1/scenarios/{id}`.
+  Creating one **snapshots** the initiative's tasks, dependencies, milestones, allocations,
+  availability, and per-project scheduling knobs into editable scenario tables (live data is
+  untouched). `base_captured_at` records the snapshot moment. Status: draft | ready | applied |
+  archived. · **MCP:** `list_scenarios`, `create_scenario`, `get_scenario`.
+
+### T2. Edit the scenario (team / availability / milestones / deadlines / scope)
+- **UI:** the workspace **Edit** tab — sub-panels for team & availability, milestones & deadlines,
+  scope (tasks + dependencies), and per-project knobs (start/target/skip-weekends).
+- **API (all planner-gated, scenario must be draft/ready):**
+  `POST /api/v1/scenarios/{id}/tasks` + `PATCH/DELETE /api/v1/scenario-tasks/{tid}`, and the same
+  shape for `dependencies`, `milestones`, `allocations`, `availability`; plus
+  `PATCH /api/v1/scenarios/{id}/projects/{project_id}` for project knobs. Deleting a cloned row
+  tombstones it (apply then deletes the live row); deleting an added row hard-deletes it.
+  · **MCP:** `add_scenario_task`, `update_scenario_task`, `remove_scenario_task`,
+  `add_scenario_dependency`, `set_scenario_availability`, `set_scenario_allocation`.
+
+### T3. Regenerate all views over the scenario
+- **UI:** the workspace mirrors the project cockpit's tabs (Gantt · Dependencies · Capacity ·
+  Board · Burndown · Forecast · Critical path · Alerts), reusing the same view components against
+  scenario data. Cross-project critical path + capacity are initiative-wide; the rest take a
+  project picker.
+- **API:** `GET /api/v1/scenarios/{id}/{gantt|capacity|board|burndown|forecast|alerts}`
+  (`?project_id=` where relevant) and `GET /api/v1/scenarios/{id}/critical-path`. Each returns the
+  **same schema as the live endpoint**, recomputed over the snapshot — never persisted. Cloned
+  tasks pin at their live start (so an unedited scenario reproduces live); added tasks have no
+  history (they count as remaining for forecast/burndown). · **MCP:** `scenario_critical_path`,
+  `scenario_capacity`.
+
+### T4. Compare to live
+- **UI:** a persistent "Compare to live" panel — counts added/removed/changed, project-end delta,
+  and critical-path working-day delta.
+- **API:** `GET /api/v1/scenarios/{id}/compare` → the diff (by `live_*_id`/`removed` provenance) +
+  any **staleness conflicts**. · **MCP:** `compare_scenario` (the key read before applying).
+
+### T5. Apply (commit to canopy's planning layer)
+- **UI:** "Apply scenario" (planner only). On a staleness conflict, offer force-apply.
+- **API:** `POST /api/v1/scenarios/{id}/apply` (`{force}`). In one transaction: create/update/
+  delete the live tasks/dependencies/milestones/allocations/availability (remapping new scenario
+  task ids), then replan each affected project, then flip status to `applied`. Returns
+  created/updated/deleted + replanned projects. **409** with the conflict list when live drifted
+  since the snapshot and `force` is false. · **MCP:** `apply_scenario`.
+- **Source-of-truth boundary:** apply writes **canopy planning rows only — never Jira** (Jira
+  stays the owner of tickets/status; use the draft-plan flow §C10 for plan→Jira). Replans publish
+  live-refresh events (§K).
+
+### T6. Not built (deliberate limits)
+- **No resource-leveling / capacity-constrained scheduling:** availability informs the
+  capacity/over-allocation views, **not** CPM dates.
+- **No scenario → Jira**, **no scenario-vs-scenario diff/branch/merge**, and **no concurrent-edit
+  locks** beyond the snapshot watermark conflict check. **Resync** (re-snapshotting after live
+  drift) is API-pending.
+
+---
+
 ## L. Claude plugin (agentic flows)
 
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~68 curated tools that call the REST API.
+  MCP server then exposes ~81 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -794,6 +875,15 @@ initiative / portfolio rollups), so the numbers match what's on screen.
   architect (`get_draft_plan` / `update_draft_task` / `delete_draft_task`), then **creates the Jira
   tickets** from it (`push_draft_to_jira`) and syncs them back (`trigger_jira_sync`). Content only —
   status is never written (§C10).
+
+### L12. Explore a what-if scenario (subagent) **[new]**
+- The **`scenario-architect`** subagent answers what-if questions on an initiative without touching
+  the live plan: it `create_scenario`s a branch, makes the edits (`set_scenario_allocation`,
+  `set_scenario_availability`, `add_scenario_task` / `add_scenario_dependency`,
+  `update_scenario_task`), then reads `compare_scenario` (+ `scenario_critical_path` /
+  `scenario_capacity`) and reports the project-end and critical-path trade-off. It **does not
+  `apply_scenario`** unless explicitly told to (apply writes canopy's plan + replans, never Jira).
+  This is the agentic surface behind §T.
 
 ---
 

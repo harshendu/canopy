@@ -82,3 +82,23 @@ def test_lag_pushes_successor():
         [SchedDep(1, 2, type="FS", lag=3)],
     )
     assert results[2].es == 5  # finish of 1 (2) + lag (3)
+
+
+def test_compute_schedule_milestone_and_pinned_start():
+    from app.models.base import TaskType
+    from app.services.planner import SchedInput, compute_schedule, effective_duration
+
+    assert effective_duration(TaskType.milestone, 5) == 0  # milestones are zero-duration
+    assert effective_duration(TaskType.task, 5) == 5
+    assert effective_duration(TaskType.task, 5, override=2) == 2  # override wins
+
+    cal = WorkingCalendar(weekend=frozenset({5, 6}))
+    inputs = [
+        SchedInput(task_id=1, duration=2, type=TaskType.task),
+        SchedInput(task_id=2, duration=0, type=TaskType.milestone, deadline=date(2026, 1, 2)),
+    ]
+    deps = [SchedDep(1, 2, type="FS")]
+    results = compute_schedule(inputs, deps, project_start=date(2026, 1, 1), calendar=cal)
+    # 2026-01-01 (Thu) + 2 working days finishes 2026-01-05 (Mon), skipping the weekend.
+    assert results[1].end == date(2026, 1, 5)
+    assert results[2].start == date(2026, 1, 5)

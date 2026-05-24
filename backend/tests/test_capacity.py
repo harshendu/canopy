@@ -1,6 +1,13 @@
 from datetime import date
 
-from app.services.capacity import AllocationSpan, mondays, weekly_capacity
+from app.services.capacity import (
+    AllocationSpan,
+    AvailabilitySpan,
+    mondays,
+    over_allocated_weeks,
+    weekly_availability,
+    weekly_capacity,
+)
 
 
 def test_mondays_span():
@@ -24,3 +31,34 @@ def test_weekly_capacity_sums_overlaps():
 def test_weekly_capacity_ignores_undated_spans():
     spans = [AllocationSpan(engineer_id=1, percent=100.0, start=None, end=None)]
     assert weekly_capacity(spans, date(2026, 1, 5), date(2026, 1, 11)) == {}
+
+
+def test_weekly_availability_takes_worst_factor_per_week():
+    spans = [
+        AvailabilitySpan(1, 0.5, date(2026, 1, 5), date(2026, 1, 18)),  # weeks 1-2 half
+        AvailabilitySpan(1, 0.0, date(2026, 1, 5), date(2026, 1, 11)),  # week 1 fully out
+    ]
+    grid = weekly_availability(spans, date(2026, 1, 5), date(2026, 1, 18))
+    assert grid[1][date(2026, 1, 5)] == 0.0  # min(0.5, 0.0) -> the worst wins
+    assert grid[1][date(2026, 1, 12)] == 0.5
+    assert date(2026, 1, 5) not in grid.get(2, {})
+
+
+def test_over_allocated_weeks_without_availability_uses_100_threshold():
+    allocs = [
+        AllocationSpan(1, 120.0, date(2026, 1, 5), date(2026, 1, 11)),
+        AllocationSpan(2, 100.0, date(2026, 1, 5), date(2026, 1, 11)),  # exactly 100 = ok
+    ]
+    over = over_allocated_weeks(allocs, [], date(2026, 1, 5), date(2026, 1, 11))
+    assert [(o.engineer_id, o.percent, o.ceiling) for o in over] == [(1, 120.0, 100.0)]
+
+
+def test_over_allocated_weeks_scales_ceiling_by_availability():
+    allocs = [AllocationSpan(1, 60.0, date(2026, 1, 5), date(2026, 1, 11))]
+    avail = [AvailabilitySpan(1, 0.5, date(2026, 1, 5), date(2026, 1, 11))]  # ceiling 50%
+    over = over_allocated_weeks(allocs, avail, date(2026, 1, 5), date(2026, 1, 11))
+    # 60% demand against a 50% availability-scaled ceiling is an over-allocation.
+    assert len(over) == 1
+    assert over[0].engineer_id == 1
+    assert over[0].percent == 60.0
+    assert over[0].ceiling == 50.0
