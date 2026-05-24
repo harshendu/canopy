@@ -16,6 +16,7 @@ import type {
 import GanttChart from "../components/GanttChart";
 import CapacityView from "../components/CapacityView";
 import RoadmapView from "../components/RoadmapView";
+import ExportMenu from "../components/ExportMenu";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canWriteProjects, isPlanner } from "../lib/permissions";
 
@@ -179,6 +180,7 @@ export default function ProjectView() {
           {project.data ? project.data.name : "Project"}
         </h1>
         <div className="flex items-center gap-3">
+          <ExportMenu scope="project" id={id} />
           {mayWriteProject && (
             <label className="flex items-center gap-1 text-sm text-slate-600">
               <input

@@ -23,7 +23,8 @@ and a Claude Code plugin (FastMCP server + skills + subagents).
   `JiraConnector.create_issue`/`update_issue` — but **status is still never written**, and canopy
   does not create local tasks on push (the normal Jira sync pulls the new issues back).
 - **GitHub** owns code + some architecture docs. **Google Drive** holds design docs. canopy reads
-  these; it does not own them.
+  these; it does not own them. **Scoped write:** canopy can upload an *export snapshot* (a generated
+  PDF/CSV, see Exports below) into a connected Drive via `GoogleDriveConnector.upload_file`.
 
 ## Layout
 ```
@@ -125,6 +126,14 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   (remaining/completed per week from `TaskStatusHistory` via `app/services/burndown.py`). Architecture
   topology is `ArchitectureComponent` + `ComponentLink` (system-map edges) + ADRs. Keep new
   aggregations pure and unit-tested.
+- **Export snapshots (view outside canopy):** `app/api/v1/exports.py` assembles a point-in-time
+  snapshot of a project / initiative / portfolio by **reusing** `summarize_project` + the rollups
+  (so numbers match the live views), then renders it to **PDF** (`app/services/export_pdf.py` —
+  reportlab, pure Python, no headless browser; includes a vector Gantt `Flowable`) or **CSV**
+  (`app/services/export_csv.py`). Snapshot shapes are in `app/services/snapshot.py` (pure holders).
+  Delivered as a download (`GET …/export?fmt=pdf|csv`) or saved to Drive
+  (`POST …/export/to-drive` → `GoogleDriveConnector.upload_file`). UI: a reusable `ExportMenu`
+  in the project / initiative / portfolio headers. USER_FLOWS §S.
 - Connectors implement the ABC in `app/connectors/base.py` and self-register via `@register`. Sync is
   idempotent through the `ExternalRef` table (`app/services/mapping.py`). Connector tokens are
   encrypted at rest with Fernet (`app/core/crypto.py`). All outbound HTTP goes through

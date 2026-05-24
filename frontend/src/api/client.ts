@@ -44,6 +44,31 @@ export const api = {
   del: (path: string) => request<void>(path, { method: "DELETE" }),
 };
 
+/** Fetch a binary/file endpoint and trigger a browser download. Honors the server's
+ *  Content-Disposition filename when present, else uses `fallbackName`. */
+export async function downloadExport(path: string, fallbackName: string): Promise<void> {
+  const token = getToken();
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const resp = await fetch(`/api/v1${path}`, { headers });
+  if (!resp.ok) {
+    const detail = await resp.text();
+    throw new ApiError(resp.status, detail || resp.statusText);
+  }
+  const blob = await resp.blob();
+  const disposition = resp.headers.get("content-disposition") ?? "";
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  const filename = match ? match[1] : fallbackName;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function login(email: string, password: string): Promise<string> {
   const form = new URLSearchParams({ username: email, password });
   const resp = await fetch("/api/v1/auth/login", {

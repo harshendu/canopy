@@ -590,3 +590,9 @@ export interface DraftPushResult {
   failed: number;
   results: DraftPushTaskResult[];
 }
+
+export interface ExportToDriveResult {
+  file_id: string;
+  name: string;
+  link: string | null;
+}

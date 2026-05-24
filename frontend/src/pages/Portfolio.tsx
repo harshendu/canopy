@@ -13,6 +13,7 @@ import {
 import { api } from "../api/client";
 import type { PortfolioResponse } from "../api/types";
 import { riskTone } from "../lib/risk";
+import ExportMenu from "../components/ExportMenu";
 
 export default function Portfolio() {
   const { data, isLoading } = useQuery({
@@ -24,7 +25,10 @@ export default function Portfolio() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Portfolio</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Portfolio</h1>
+        <ExportMenu scope="portfolio" />
+      </div>
 
       {isLoading ? (
         <p className="text-sm text-slate-500">Loading…</p>

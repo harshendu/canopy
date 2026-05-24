@@ -31,7 +31,9 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
   content** (summary / description / story points + the epic→story parent link) — but **status is
   still never written**; the new issues flow back in via the normal Jira sync.
 - **GitHub** owns code + some architecture docs. **Google Drive** holds design docs. Canopy reads
-  these on demand and caches lightly.
+  these on demand and caches lightly. **Scoped write (§S):** canopy can *upload an export snapshot*
+  (a generated PDF/CSV) into a connected Drive — it stores its own artifacts there but still does
+  not own the design docs it reads.
 
 ---
 
@@ -120,7 +122,8 @@ projects and rolls up their health.
 - **UI:** `/initiatives/:id` — outcome statement, an **on track / behind target** badge, aggregate
   cards (progress, **worst** sub-project risk, **worst** drift, open-decision backlog, latest end
   vs target, **P85 forecast** §C8), the **cross-project critical path** (§R4), and the sub-project
-  cards (each with its own risk/drift, linking into the project).
+  cards (each with its own risk/drift, linking into the project). An **Export ▾** control exports
+  the initiative as a PDF/CSV snapshot (§S).
 - **API:** `GET /api/v1/initiatives/{id}/rollup` (per-project summaries + aggregates: total/completed
   tasks, avg %, latest `project_end`, max `risk_score`/`drift_score` with the owning level,
   `open_decisions` = ADRs proposed/under-discussion, `on_track`) · **MCP:** `get_initiative_rollup`.
@@ -147,7 +150,8 @@ projects and rolls up their health.
 ### B1. View the portfolio dashboard
 - **UI:** `/portfolio` (landing page). Shows a completion bar chart and a card per project
   (avg % complete, completed/total tasks, critical-task count, end date, and **risk + drift score
-  badges** — see §Q / §N). Clicking a card opens it.
+  badges** — see §Q / §N). Clicking a card opens it. An **Export ▾** control exports the whole
+  portfolio as a PDF/CSV snapshot (§S).
 - **API:** `GET /api/v1/projects/portfolio` (each `ProjectSummary` includes `risk_score`/`risk_level`
   and `drift_score`/`drift_level`, computed by the same scorers as the Risk/Drift tabs) · **MCP:**
   `list_projects`.
@@ -163,7 +167,7 @@ projects and rolls up their health.
 ### B3. Open a project (the cockpit)
 - **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Dependencies · Capacity ·
   Decisions · Architecture · Drift · Roadmap · Plan → Jira · Burndown · Risk · Retros · Activity**.
-  The header has a **5-day week** toggle, **Set
+  The header has an **Export ▾** menu (PDF/CSV snapshot, §S), a **5-day week** toggle, **Set
   baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
   `/projects/:id?tab=drift`).
@@ -659,6 +663,8 @@ component map + ADRs and maintains the queue.
 - **API:** `GET /api/v1/connectors/github/{id}/file?path=`, `.../github/{id}/pulls`,
   `.../github/cached-prs`; `GET /api/v1/connectors/gdrive/{id}/docs`, `.../gdrive/{id}/docs/{file_id}`
   · **MCP:** `read_repo_file`, `list_open_prs`, `read_design_doc`.
+- **Drive uploads (write):** the Drive connector also has `upload_file` (multipart) used by export
+  snapshots (§S) to store a generated PDF/CSV in Drive — the one place canopy writes to Drive.
 - **Not built (v2 §J6):** PR **review metrics** (time-to-review, churn, test status) and commit
   attribution to components — these would feed a PR-latency quality-risk indicator (the quality
   family is currently fed by §J8 build failures / incidents instead).
@@ -686,6 +692,44 @@ component map + ADRs and maintains the queue.
   the client invalidates its caches so views refresh without a manual reload.
 - **Limitation:** single backend process only — events from the arq worker (e.g. webhook-driven
   syncs) don't propagate here yet (Redis pub/sub is the multi-process upgrade).
+
+---
+
+## S. Export snapshots (PDF / CSV, viewable outside canopy) **[new]**
+
+A point-in-time **snapshot** of a project, initiative, or portfolio as a portable file — so the
+architect can store or share it where canopy isn't running. Two formats: **PDF** (the full visual
+snapshot: headline stats, a vector **Gantt**, and data tables) and **CSV** (the headline tabular
+dataset for that scope). Delivered two ways: **download** in the UI, or **save to a connected
+Google Drive**. Snapshots reuse the same aggregation as the live views (`summarize_project`, the
+initiative / portfolio rollups), so the numbers match what's on screen.
+
+### S1. Download a snapshot
+- **UI:** an **Export ▾** menu in the project header (§B3), the initiative cockpit (§R3), and the
+  portfolio page (§B1) → **PDF** / **CSV** download. Open to any authenticated user (it's a read).
+- **API:** `GET /api/v1/projects/{id}/export?fmt=pdf|csv`,
+  `GET /api/v1/initiatives/{id}/export?fmt=`, `GET /api/v1/portfolio/export?fmt=` — returns the file
+  with a `Content-Disposition` attachment. Rendering is `app/services/export_pdf.py` (reportlab —
+  pure Python, no headless browser, CI-safe) + `app/services/export_csv.py`; the snapshot data is
+  assembled in `app/api/v1/exports.py`.
+
+### S2. Save a snapshot to Google Drive
+- **UI:** the same Export menu → **Save to Google Drive** (pick a connection when more than one is
+  authorized; shows the resulting Drive link).
+- **API:** `POST /api/v1/projects/{id}/export/to-drive` (plus the `initiatives/{id}` and
+  `/portfolio` variants) with `{connection_id, fmt}` → uploads the rendered file via the Drive
+  connector's new `upload_file` (multipart) and returns `{file_id, name, link}`. An optional
+  `folder_id` in the Drive connection config targets a folder.
+
+### S3. What a snapshot contains / limits
+- **PDF (project):** summary stats (tasks / completed / critical / end / risk / drift), a vector
+  **Gantt** (critical bars red, % progress shaded, milestones marked; the chart is capped to ~26
+  scheduled tasks — the full set is in the table), and tables for tasks, milestones, and decisions.
+- **PDF (initiative / portfolio):** rollup stats + the sub-project / project table.
+- **CSV:** the headline table per scope — a project's **tasks**, or the initiative / portfolio
+  **rollup** (one row per project).
+- **Not built:** capacity / burndown charts in the PDF, JSON / HTML formats, multi-table CSV
+  bundles, and scheduled/automatic exports (snapshots are on-demand). No MCP tool — UI + API only.
 
 ---
 

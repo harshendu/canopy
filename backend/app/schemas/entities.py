@@ -1002,6 +1002,18 @@ class DraftPushResult(BaseModel):
     results: list[DraftPushTaskResult]
 
 
+# --- Exports (snapshots viewable outside canopy) ---
+class ExportToDriveRequest(BaseModel):
+    connection_id: int  # a Google Drive connection to upload into
+    fmt: str = "pdf"  # pdf | csv
+
+
+class ExportToDriveResult(BaseModel):
+    file_id: str
+    name: str
+    link: str | None = None  # Drive webViewLink, when returned
+
+
 # --- Engineer workspace (/me) ---
 class MyTodayResponse(BaseModel):
     user: UserRead

@@ -11,6 +11,7 @@ from app.api.v1 import (
     drafts,
     drift,
     events,
+    exports,
     gantt,
     initiatives,
     me,
@@ -37,6 +38,7 @@ api_router.include_router(connectors.router, prefix="/connectors", tags=["connec
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])
 api_router.include_router(drafts.router, tags=["drafts"])
+api_router.include_router(exports.router, tags=["exports"])
 api_router.include_router(risk.router, tags=["risk"])
 api_router.include_router(drift.router, tags=["drift"])
 api_router.include_router(retros.router, tags=["retros"])

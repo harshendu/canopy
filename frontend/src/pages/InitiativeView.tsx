@@ -8,6 +8,7 @@ import type {
   InitiativeRollup,
 } from "../api/types";
 import { riskTone } from "../lib/risk";
+import ExportMenu from "../components/ExportMenu";
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -47,7 +48,8 @@ export default function InitiativeView() {
 
   return (
     <div className="space-y-5">
-      <div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-mono text-xs text-slate-400">{r.initiative.key}</span>
           <h1 className="text-2xl font-bold">{r.initiative.name}</h1>
@@ -66,6 +68,8 @@ export default function InitiativeView() {
         {r.initiative.outcome_statement && (
           <p className="mt-1 text-sm text-slate-500">{r.initiative.outcome_statement}</p>
         )}
+        </div>
+        <ExportMenu scope="initiative" id={id} />
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
