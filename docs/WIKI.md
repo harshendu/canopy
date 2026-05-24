@@ -19,6 +19,8 @@ It has **two front doors over one backend**:
 - a **Claude Code plugin** — an MCP server + skills + subagents that let you drive Canopy
   conversationally and let Claude do multi-step work on your behalf.
 
+![Architecture: a React Dashboard and a Claude Code Plugin both call one FastAPI backend (REST /api/v1), which sits over pure scheduling/risk/forecast/capacity/connector services, PostgreSQL, and an arq worker; Jira, GitHub, and Google Drive are external systems of record that Canopy mirrors or reads](images/architecture.png)
+
 If you only remember one sentence: *Canopy connects the **intent** (initiatives → decisions → work)
 to its **verification** (schedule, fitness functions, drift, risk) so a small team can execute a large
 initiative concurrently and find out what's wrong while it's still cheap to fix.*
@@ -37,15 +39,7 @@ Canopy's thesis is that **velocity and quality are the same lever — the length
 loops** — and that the architect's leverage is in *the system that makes good decisions happen
 without them*, not in personally making every call. So Canopy keeps one traceable spine:
 
-```
-Initiative (outcome)
-  └─ Project (a team's slice)
-       └─ Decision / ADR (with explicit one-way/two-way doors)
-            ├─ Fitness function  (the decision, made continuously verifiable)
-            └─ Work (tasks / PRs)
-                 └─ Verification (schedule + drift + risk + retros)
-                      └─ Outcome / metrics feed back to forecast & learning
-```
+![The intent spine: Initiative → Project → Decision/ADR → Fitness function + Work → Verification → Outcome, with a verification-and-learning feedback loop back to the top](images/intent-spine.png)
 
 Intent flows *down*; verification and learning flow *up*. (The full operating model is in
 [`EXECUTION_PHILOSOPHY.md`](./EXECUTION_PHILOSOPHY.md).)
@@ -56,6 +50,8 @@ Intent flows *down*; verification and learning flow *up*. (The full operating mo
 
 Canopy supports five roles. **Reads are open to every authenticated user** (viewers included); writes
 are gated by role (see the [permissions matrix](#roles--permissions)).
+
+![The six personas: Architect, Engineering Manager, Engineer, Viewer, Admin, and Claude (AI), each with a one-line description of what they do](images/personas.png)
 
 ### The Architect (primary persona)
 You own coherence and the expensive, hard-to-reverse decisions. Canopy is your daily cockpit:
@@ -112,6 +108,8 @@ The visual cockpit. Sign in at `/login` and you land on the **Portfolio**. Top-l
 The **project cockpit** has these tabs: **Gantt · Board · Dependencies · Capacity · Decisions ·
 Architecture · Drift · Roadmap · Burndown · Risk · Retros · Activity**. Any tab is deep-linkable with
 `?tab=` (e.g. `/projects/12?tab=drift`).
+
+![The project cockpit tabs grouped into four families: Plan & schedule (Gantt, Board, Dependencies, Roadmap, Burndown), Architecture & decisions (Architecture, Decisions, Drift), Team (Capacity), and Health & history (Risk, Retros, Activity)](images/cockpit.png)
 
 ### 2) The Claude Code plugin
 Install the `canopy` plugin, point it at your Canopy URL, and paste a token. You then get **~61
@@ -175,6 +173,8 @@ ask Claude to do — and vice-versa.
   which *requires* a decide-by date), an owner, stakeholders who review, **alternatives**, explicit
   **reversibility** (one-way / two-way door), and a discussion thread with formal review actions
   (approve / request changes / reject).
+
+  ![The ADR lifecycle state machine: Proposed → Under discussion → Accepted or Rejected; Accepted → Superseded or Deprecated; plus a Deferred state that requires a decide_by date; illegal jumps are rejected with 409](images/adr-lifecycle.png)
 - **Decision queue:** team-wide and per-project, bucketed into *needs triage / stuck / deferred-soon /
   discussing* so nothing rots silently.
 - **Blast radius:** for any ADR, the components it directly affects plus everything that transitively
@@ -278,6 +278,8 @@ or *"what's my riskiest project and why?"*
 
 Canopy is deliberately **not** the system of record for everything. It mirrors and schedules around
 your real sources:
+
+![Source-of-truth boundaries: Jira (owns epics, stories, status) syncs INTO Canopy but Canopy never writes status back; GitHub (owns code, PRs, docs) and Google Drive (owns design docs) are read on demand by Canopy](images/source-of-truth.png)
 
 - **Jira** owns epics/stories and ticket **status**. Canopy syncs *from* Jira and **never writes
   status back** — mirrored status on Canopy tasks is read-only.
