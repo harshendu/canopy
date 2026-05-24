@@ -353,6 +353,31 @@ function AdrDetailPanel({
     mutationFn: () => api.get<ImpactResponse>(`/architecture/adrs/${adrId}/impact`),
   });
 
+  const components = useQuery({
+    queryKey: ["components", projectId],
+    queryFn: () => api.get<Component[]>(`/architecture/components?project_id=${projectId}`),
+  });
+  const [ffKind, setFfKind] = useState<"forbid" | "require">("forbid");
+  const [ffSource, setFfSource] = useState<number | "">("");
+  const [ffTarget, setFfTarget] = useState<number | "">("");
+  const addFitness = useMutation({
+    mutationFn: () =>
+      api.post(`/architecture/adrs/${adrId}/fitness`, {
+        kind: ffKind,
+        source_component_id: ffSource,
+        target_component_id: ffTarget,
+      }),
+    onSuccess: () => {
+      setFfSource("");
+      setFfTarget("");
+      qc.invalidateQueries({ queryKey: ["adr", adrId] });
+    },
+  });
+  const deleteFitness = useMutation({
+    mutationFn: (id: number) => api.del(`/architecture/fitness/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["adr", adrId] }),
+  });
+
   if (!detail.data) {
     return <div className="mt-1 px-3 py-2 text-xs text-slate-400">Loading decision…</div>;
   }
@@ -470,6 +495,83 @@ function AdrDetailPanel({
               {impact.data.downstream_component_ids.map(componentName).join(", ") || "none"}
             </div>
           </div>
+        )}
+      </div>
+
+      {/* Fitness functions — machine-checkable rules the drift scan enforces */}
+      <div className="space-y-1 border-t border-slate-100 pt-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Fitness functions
+        </div>
+        {adr.fitness_functions.length === 0 ? (
+          <p className="text-xs text-slate-400">
+            None. Add a dependency rule the Drift scan will enforce against the code.
+          </p>
+        ) : (
+          <ul className="space-y-1 text-xs">
+            {adr.fitness_functions.map((f) => (
+              <li key={f.id} className="flex items-center gap-2">
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-slate-600">
+                  {componentName(f.source_component_id)}{" "}
+                  {f.kind === "forbid" ? "-x->" : "-->"} {componentName(f.target_component_id)}
+                </span>
+                <span className="text-slate-400">
+                  {f.kind === "forbid" ? "must not depend on" : "must depend on"}
+                </span>
+                {mayContribute && (
+                  <button
+                    onClick={() => deleteFitness.mutate(f.id)}
+                    className="ml-auto text-slate-400 hover:text-red-600"
+                  >
+                    remove
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {mayContribute && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (ffSource && ffTarget && ffSource !== ffTarget) addFitness.mutate();
+            }}
+            className="flex flex-wrap items-center gap-1 pt-1 text-xs"
+          >
+            <select
+              value={ffKind}
+              onChange={(e) => setFfKind(e.target.value as "forbid" | "require")}
+              className="rounded border border-slate-300 px-1 py-1"
+            >
+              <option value="forbid">forbid</option>
+              <option value="require">require</option>
+            </select>
+            <select
+              value={ffSource}
+              onChange={(e) => setFfSource(e.target.value ? Number(e.target.value) : "")}
+              className="rounded border border-slate-300 px-1 py-1"
+            >
+              <option value="">source…</option>
+              {(components.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={ffTarget}
+              onChange={(e) => setFfTarget(e.target.value ? Number(e.target.value) : "")}
+              className="rounded border border-slate-300 px-1 py-1"
+            >
+              <option value="">target…</option>
+              {(components.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <button className="rounded bg-canopy-500 px-2 py-1 font-medium text-white">Add</button>
+          </form>
         )}
       </div>
 

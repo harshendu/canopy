@@ -41,6 +41,17 @@ def register(mcp, client) -> None:
         )
 
     @mcp.tool
+    async def list_adrs(project_id: int | None = None) -> list[dict]:
+        """List ADRs (architecture decisions), newest number first.
+
+        Omit `project_id` for every project's decisions, or pass one to scope it. Each item
+        carries its status, reversibility, owner, stakeholders, and affected component ids —
+        use `get_adr` for the full body + discussion thread.
+        """
+        params = {"project_id": project_id} if project_id is not None else None
+        return await client.get("/architecture/adrs", params=params)
+
+    @mcp.tool
     async def adr_impact(adr_id: int) -> dict:
         """Blast radius of an ADR: directly-affected components + everything depending on them."""
         return await client.get(f"/architecture/adrs/{adr_id}/impact")
@@ -78,6 +89,31 @@ def register(mcp, client) -> None:
                 "reversibility": reversibility,
                 "stakeholder_ids": stakeholder_ids or [],
                 "status": "proposed",
+            },
+        )
+
+    @mcp.tool
+    async def add_adr_fitness(
+        adr_id: int,
+        source_component_id: int,
+        target_component_id: int,
+        kind: str = "forbid",
+        description: str | None = None,
+    ) -> dict:
+        """Attach a machine-checkable fitness function to an ADR — a dependency rule the drift
+        scan evaluates.
+
+        kind=`forbid` (source must NOT depend on target) | `require` (it MUST). When the ADR is
+        accepted, a violation surfaces in the drift queue as a `fitness_violation` — the strongest
+        signal that a decision isn't being honored. Components must be in the ADR's project.
+        """
+        return await client.post(
+            f"/architecture/adrs/{adr_id}/fitness",
+            {
+                "kind": kind,
+                "source_component_id": source_component_id,
+                "target_component_id": target_component_id,
+                "description": description,
             },
         )
 

@@ -3,6 +3,7 @@ export const DRIFT_KIND_LABELS: Record<string, string> = {
   dead_dependency: "Dead (declared, unbuilt) dependency",
   unimplemented_adr: "Unimplemented decision",
   implicit_decision: "Implicit decision (no ADR)",
+  fitness_violation: "Fitness violation (decision broken)",
 };
 
 export function driftKindLabel(kind: string): string {

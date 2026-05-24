@@ -10,6 +10,82 @@ def register(mcp, client) -> None:
         return await client.get("/tasks", params={"project_id": project_id})
 
     @mcp.tool
+    async def update_task(
+        task_id: int,
+        name: str | None = None,
+        duration: int | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        deadline: str | None = None,
+        percent_complete: float | None = None,
+        parent_id: int | None = None,
+    ) -> dict:
+        """Update a task's planning fields (only the arguments you pass are changed).
+
+        `duration` is working days; `start`/`end`/`deadline` are YYYY-MM-DD; `percent_complete`
+        is 0-100 (the progress an engineer reports); `parent_id` moves it under a summary task.
+        Run `replan_schedule` afterward if you changed duration / structure. Task **status** is
+        not settable here — it is mirrored read-only from Jira.
+        """
+        body: dict = {}
+        for field, value in (
+            ("name", name),
+            ("duration", duration),
+            ("start", start),
+            ("end", end),
+            ("deadline", deadline),
+            ("percent_complete", percent_complete),
+            ("parent_id", parent_id),
+        ):
+            if value is not None:
+                body[field] = value
+        return await client.patch(f"/tasks/{task_id}", body)
+
+    @mcp.tool
+    async def assign_task(task_id: int, engineer_id: int | None = None) -> dict:
+        """Assign a task to an engineer (pass engineer_id=null to unassign).
+
+        `engineer_id` is a team Engineer id (see `list_engineers`). Assignment powers the
+        engineer's /me workspace and the per-engineer capacity view.
+        """
+        return await client.patch(f"/tasks/{task_id}", {"assignee_engineer_id": engineer_id})
+
+    @mcp.tool
+    async def raise_blocker(
+        task_id: int,
+        reason: str,
+        blocking_task_id: int | None = None,
+        raised_by_engineer_id: int | None = None,
+    ) -> dict:
+        """Flag a blocker (impediment) on a task — the leading signal that work has stalled.
+
+        `blocking_task_id` optionally names the task that must finish first. `raised_by_engineer_id`
+        defaults to the calling user's engineer. Open blockers show in the engineer workspace and
+        the project alerts digest.
+        """
+        return await client.post(
+            f"/tasks/{task_id}/blockers",
+            {
+                "reason": reason,
+                "blocking_task_id": blocking_task_id,
+                "raised_by_engineer_id": raised_by_engineer_id,
+            },
+        )
+
+    @mcp.tool
+    async def list_blockers(project_id: int | None = None, open_only: bool = True) -> list[dict]:
+        """List blockers, newest first. Scope to a project and/or to open (unresolved) ones."""
+        params: dict = {"open_only": open_only}
+        if project_id is not None:
+            params["project_id"] = project_id
+        return await client.get("/blockers", params=params)
+
+    @mcp.tool
+    async def resolve_blocker(blocker_id: int, resolved: bool = True) -> dict:
+        """Resolve a blocker (or reopen it with resolved=false)."""
+        return await client.patch(f"/blockers/{blocker_id}", {"resolved": resolved})
+
+    @mcp.tool
     async def link_dependency(
         predecessor_id: int,
         successor_id: int,
@@ -56,14 +132,39 @@ def register(mcp, client) -> None:
         )
 
     @mcp.tool
-    async def set_baseline(project_id: int) -> dict:
-        """Snapshot the current schedule as the baseline (for plan-vs-actual drift)."""
-        return await client.post(f"/projects/{project_id}/baseline")
+    async def set_baseline(project_id: int, note: str | None = None) -> dict:
+        """Snapshot the current schedule as the baseline (the plan-of-record for schedule
+        variance). Re-baselining is a deliberate, logged act — pass a `note` saying why the
+        plan was reset. Returns the logged baseline event."""
+        return await client.post(f"/projects/{project_id}/baseline", {"note": note})
 
     @mcp.tool
     async def get_burndown(project_id: int) -> dict:
         """Get the weekly burndown (remaining vs completed) for a project."""
         return await client.get(f"/projects/{project_id}/burndown")
+
+    @mcp.tool
+    async def get_board(project_id: int) -> dict:
+        """Get the flow board: leaf tasks in status lanes with WIP per lane, plus the team's
+        cycle-time P85 and which in-progress tasks are **aging** (sat in their status longer than
+        P85 — the leading 'this is stuck' signal). Manage flow by finishing aging/high-WIP work."""
+        return await client.get(f"/projects/{project_id}/board")
+
+    @mcp.tool
+    async def get_forecast(
+        project_id: int | None = None, initiative_id: int | None = None
+    ) -> dict:
+        """Probabilistic (Monte-Carlo) completion forecast — pass exactly one of project_id /
+        initiative_id.
+
+        Simulates finishing the remaining items by sampling the team's historical weekly
+        throughput, returning P50 / P85 completion dates (the honest answer for knowledge work,
+        next to the deterministic CPM date). If `sufficient` is false there isn't enough
+        completed-work history yet — see `reason`.
+        """
+        if initiative_id is not None:
+            return await client.get(f"/initiatives/{initiative_id}/forecast")
+        return await client.get(f"/projects/{project_id}/forecast")
 
     @mcp.tool
     async def list_alerts(project_id: int) -> dict:
@@ -74,10 +175,13 @@ def register(mcp, client) -> None:
     async def get_risk(project_id: int) -> dict:
         """Get the project's leading-indicator risk score + drillable breakdown.
 
-        Returns a 0-100 score and families (schedule / capacity / architecture / quality),
-        each with indicators (summary, score, drill-down details) and the open mitigations.
-        Architecture risk includes deferred decisions past decide-by and ADRs stuck in
-        discussion (see the decisions tools). Quality risk is not yet wired.
+        Returns a 0-100 score, a `confidence` flag (high|low), and families (schedule /
+        capacity / architecture / quality), each with indicators (summary, score, drill-down
+        details) and the open mitigations. Architecture risk includes deferred decisions past
+        decide-by and ADRs stuck in discussion. Quality risk is fed by observability events
+        (build failures / open incidents); when none are wired, the quality family scores the
+        missing **observability coverage** and `confidence` is "low" — a blind project is not
+        treated as safer, just less certain.
         """
         return await client.get(f"/projects/{project_id}/risk")
 

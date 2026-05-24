@@ -11,11 +11,12 @@ from app.api.deps import CurrentUser, SessionDep
 from app.api.v1.architecture import _adr_read, _component_ids, _stakeholder_ids
 from app.models.architecture import ADRStakeholder, ArchitectureDecision
 from app.models.base import ADRStatus, TaskType
-from app.models.project import Task
+from app.models.project import Blocker, Task
 from app.models.team import Engineer
 from app.schemas.auth import UserRead
 from app.schemas.entities import (
     ADRRead,
+    BlockerRead,
     EngineerRead,
     MyTodayResponse,
     MyWorkspaceResponse,
@@ -34,6 +35,7 @@ async def my_workspace(session: SessionDep, user: CurrentUser) -> MyWorkspaceRes
     assigned: list[TaskRead] = []
     owned: list[ADRRead] = []
     stakeholder: list[ADRRead] = []
+    blockers: list[BlockerRead] = []
 
     if engineer is not None and engineer.id is not None:
         tasks = (
@@ -47,6 +49,19 @@ async def my_workspace(session: SessionDep, user: CurrentUser) -> MyWorkspaceRes
         ]
         open_tasks.sort(key=lambda t: (not t.is_critical, t.end or date.max))
         assigned = [TaskRead.model_validate(t) for t in open_tasks]
+
+        # Open blockers on my tasks or raised by me — the impediments to clear.
+        assigned_ids = {t.id for t in tasks if t.id is not None}
+        open_blockers = (
+            await session.execute(
+                select(Blocker).where(col(Blocker.resolved_at).is_(None))
+            )
+        ).scalars().all()
+        blockers = [
+            BlockerRead.model_validate(b)
+            for b in open_blockers
+            if b.task_id in assigned_ids or b.raised_by_engineer_id == engineer.id
+        ]
 
         async def to_read(adr: ArchitectureDecision) -> ADRRead:
             assert adr.id is not None
@@ -88,6 +103,7 @@ async def my_workspace(session: SessionDep, user: CurrentUser) -> MyWorkspaceRes
         assigned_tasks=assigned,
         owned_decisions=owned,
         stakeholder_decisions=stakeholder,
+        blockers=blockers,
     )
 
 

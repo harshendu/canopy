@@ -6,6 +6,7 @@ from app.models.user import User
 from app.services.code_analysis import actual_edges, python_imports
 from app.services.drift import (
     DriftInputs,
+    FitnessRule,
     ImplicitSignal,
     detect,
     level,
@@ -82,6 +83,44 @@ def test_suppression_and_score_and_level():
     suppressed = run_detection(inputs, suppressed={"dep_unexpected:1->2"})
     assert len(suppressed.findings) == 1
     assert suppressed.score < full.score
+
+
+def test_fitness_forbid_violated_when_edge_present():
+    inputs = DriftInputs(
+        component_names={1: "api", 2: "connectors"},
+        actual_edges={(1, 2)},
+        fitness_rules=[FitnessRule(id=9, adr_number=7, kind="forbid", source_component_id=1,
+                                   target_component_id=2)],
+    )
+    findings = detect(inputs)
+    fitness = [f for f in findings if f.kind == "fitness_violation"]
+    assert len(fitness) == 1
+    assert fitness[0].rule_key == "fitness:9"
+    assert fitness[0].affected_component_ids == [1, 2]
+    assert "ADR-0007" in fitness[0].summary
+
+
+def test_fitness_forbid_satisfied_when_edge_absent():
+    inputs = DriftInputs(
+        component_names={1: "api", 2: "connectors"},
+        actual_edges=set(),
+        fitness_rules=[FitnessRule(id=9, adr_number=7, kind="forbid", source_component_id=1,
+                                   target_component_id=2)],
+    )
+    assert [f for f in detect(inputs) if f.kind == "fitness_violation"] == []
+
+
+def test_fitness_require_violated_when_edge_absent():
+    inputs = DriftInputs(
+        component_names={1: "web", 2: "auth"},
+        actual_edges=set(),
+        fitness_rules=[FitnessRule(id=3, adr_number=2, kind="require", source_component_id=1,
+                                   target_component_id=2)],
+    )
+    fitness = [f for f in detect(inputs) if f.kind == "fitness_violation"]
+    assert len(fitness) == 1
+    # A violated fitness rule is the heaviest single drift signal.
+    assert score_kinds(["fitness_violation"]) >= score_kinds(["implicit_decision"])
 
 
 # --- API ---------------------------------------------------------------------
@@ -205,3 +244,133 @@ async def test_false_positive_suppresses_on_next_scan(client, db_session):
     ).json()
     assert second["score"] == 0
     assert all(e["status"] != "open" for e in second["events"])
+
+
+@pytest.mark.asyncio
+async def test_fitness_violation_surfaces_in_drift_scan(client, db_session):
+    await _seed_admin(db_session)
+    headers = {"Authorization": f"Bearer {await _token(client)}"}
+    project_id = (
+        await client.post(
+            "/api/v1/projects", json={"key": "PLAT", "name": "Platform"}, headers=headers
+        )
+    ).json()["id"]
+
+    async def comp(name: str) -> int:
+        return (
+            await client.post(
+                "/api/v1/architecture/components",
+                json={"project_id": project_id, "name": name},
+                headers=headers,
+            )
+        ).json()["id"]
+
+    api, conn = await comp("api"), await comp("connectors")
+    # An accepted ADR forbidding api -> connectors.
+    adr_id = (
+        await client.post(
+            "/api/v1/architecture/adrs",
+            json={"project_id": project_id, "title": "Layering", "status": "accepted"},
+            headers=headers,
+        )
+    ).json()["id"]
+    ff = await client.post(
+        f"/api/v1/architecture/adrs/{adr_id}/fitness",
+        json={"kind": "forbid", "source_component_id": api, "target_component_id": conn},
+        headers=headers,
+    )
+    assert ff.status_code == 201, ff.text
+
+    # It shows on the ADR detail.
+    detail = (await client.get(f"/api/v1/architecture/adrs/{adr_id}", headers=headers)).json()
+    assert len(detail["fitness_functions"]) == 1
+
+    # Code that violates the rule -> a fitness_violation drift event tied to the ADR.
+    scan = (
+        await client.post(
+            f"/api/v1/projects/{project_id}/drift/scan",
+            json={"actual_edges": [[api, conn]]},
+            headers=headers,
+        )
+    ).json()
+    violations = [e for e in scan["events"] if e["kind"] == "fitness_violation"]
+    assert len(violations) == 1
+    assert sorted(violations[0]["affected_component_ids"]) == sorted([api, conn])
+    assert scan["score"] > 0
+
+    # Remove the offending edge -> the violation auto-resolves on the next scan.
+    clean = (
+        await client.post(
+            f"/api/v1/projects/{project_id}/drift/scan",
+            json={"actual_edges": []},
+            headers=headers,
+        )
+    ).json()
+    assert [e for e in clean["events"] if e["kind"] == "fitness_violation"] == []
+
+
+@pytest.mark.asyncio
+async def test_drift_scan_due_staleness(client, db_session):
+    from datetime import datetime, timedelta
+
+    from app.models.architecture import DriftScan
+
+    await _seed_admin(db_session)
+    headers = {"Authorization": f"Bearer {await _token(client)}"}
+
+    async def make_project(key: str) -> int:
+        return (
+            await client.post(
+                "/api/v1/projects", json={"key": key, "name": key}, headers=headers
+            )
+        ).json()["id"]
+
+    async def bind(project_id: int) -> None:
+        comp_id = (
+            await client.post(
+                "/api/v1/architecture/components",
+                json={"project_id": project_id, "name": "Svc"},
+                headers=headers,
+            )
+        ).json()["id"]
+        await client.post(
+            "/api/v1/architecture/code-bindings",
+            json={"component_id": comp_id, "path_glob": "app/**", "module_prefix": "app"},
+            headers=headers,
+        )
+
+    # (1) Bindings but never scanned -> scan is due, no last_scanned_at.
+    p1 = await make_project("BIND")
+    await bind(p1)
+    d1 = (await client.get(f"/api/v1/projects/{p1}/drift", headers=headers)).json()
+    assert d1["scan_due"] is True
+    assert d1["last_scanned_at"] is None
+
+    # After a scan -> not due, timestamp recorded.
+    scan = (
+        await client.post(
+            f"/api/v1/projects/{p1}/drift/scan", json={"actual_edges": []}, headers=headers
+        )
+    ).json()
+    assert scan["scan_due"] is False
+    assert scan["last_scanned_at"] is not None
+
+    # (2) No code bindings -> nothing to scan, never due.
+    p2 = await make_project("NOBIND")
+    d2 = (await client.get(f"/api/v1/projects/{p2}/drift", headers=headers)).json()
+    assert d2["scan_due"] is False
+
+    # (3) Bindings + only an old scan (10 days ago) -> stale, due again.
+    p3 = await make_project("STALE")
+    await bind(p3)
+    db_session.add(
+        DriftScan(
+            project_id=p3,
+            finding_count=0,
+            created_at=datetime.utcnow() - timedelta(days=10),
+        )
+    )
+    await db_session.commit()
+    d3 = (await client.get(f"/api/v1/projects/{p3}/drift", headers=headers)).json()
+    assert d3["scan_due"] is True
+    assert d3["last_scanned_at"] is not None

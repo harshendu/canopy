@@ -26,9 +26,10 @@ and a Claude Code plugin (FastMCP server + skills + subagents).
 backend/   FastAPI + SQLModel + Alembic + arq. API in app/api/v1, models in app/models,
            business logic in app/services, integrations in app/connectors + app/webhooks.
 frontend/  Vite + React + TS + Tailwind v4 + TanStack Query. Pages in src/pages
-           (Portfolio dashboard, Projects, ProjectView with Gantt/Dependencies/Capacity/
-           Architecture/Roadmap/Burndown tabs, Connectors). Views in src/components:
-           GanttChart (custom SVG, with zoom + baseline/drift overlay), DependencyGraph +
+           (Portfolio dashboard, Initiatives + InitiativeView cockpit, Projects, ProjectView with
+           Gantt/Board/Dependencies/Capacity/Architecture/Roadmap/Burndown tabs, Connectors). Views in
+           src/components:
+           GanttChart (custom SVG, with zoom + baseline/variance overlay), DependencyGraph +
            ArchitectureView (React Flow), CapacityHeatmap + RoadmapView (custom),
            BurndownChart + Portfolio (Recharts). Heavy libs (React Flow / Recharts) are
            React.lazy code-split. API client + types in src/api.
@@ -72,15 +73,40 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   `reschedule_project` loads the graph, runs CPM with the calendar, optionally applies duration
   overrides (what-if) and/or persists, and reports `deadline` violations. Endpoints:
   `POST /projects/{id}/replan` (persist), `POST /projects/{id}/whatif` (no persist, duration overrides),
-  `POST /projects/{id}/baseline` (snapshot start/end → `baseline_*`; Gantt overlays drift). A Jira
-  sync that creates tasks auto-replans the project. Keep the scheduler/planner pure-ish and unit-tested.
+  `POST /projects/{id}/baseline` (snapshot start/end → `baseline_*`; logs a reasoned `Baseline`
+  event — `GET .../baselines`; the Gantt overlays current-vs-baseline as **schedule variance**, and
+  "drift" is reserved for architecture drift §N). A Jira sync that creates tasks auto-replans the
+  project. Keep the scheduler/planner pure-ish and unit-tested.
+- **Flow board:** `GET /projects/{id}/board` groups leaf tasks into status lanes with WIP per lane,
+  and flags **aging** tasks (in-status age > the team's cycle-time P85) — pure logic in
+  `app/services/flow.py`; age/cycle dates derived from `TaskStatusHistory`. WIP limits are a
+  client-side knob (not persisted). MCP: `get_board`.
+- **Probabilistic forecast:** `GET /projects/{id}/forecast` and `GET /initiatives/{id}/forecast`
+  run a Monte-Carlo simulation (`app/services/forecast.py`, pure) — burn down the remaining items by
+  sampling historical weekly throughput (from `TaskStatusHistory`, incl. zero weeks) to report
+  P50/P85 completion dates next to the deterministic CPM date. Needs ~3 weeks of throughput;
+  reports `sufficient=false` with a reason otherwise. MCP: `get_forecast`.
 - **Alerts/digest:** `GET /projects/{id}/alerts` turns project state into actionable alerts
-  (deadline misses, overdue milestones, over-allocations, unscheduled work) via
+  (deadline misses, overdue milestones, over-allocations, open blockers, unscheduled work) via
   `app/services/alerts.py` (pure). Slack/email *delivery* is a future hook over this output.
+- **Blockers** (`app/api/v1/blockers.py`, `Blocker` model) are flagged impediments on a task — the
+  leading "work has stalled" signal. Any contributor raises one (`POST /tasks/{id}/blockers`);
+  open blockers surface in the `/me` workspace and the alerts digest. Folding blocked-time into the
+  composite risk score is a follow-up.
 - **Live refresh (SSE):** web-process mutations (replan/baseline) `publish()` to an in-process
   broker (`app/core/events.py`); `GET /api/v1/events/stream?token=` streams them; the frontend
   `useEventStream` invalidates query caches. Single-process only (worker syncs don't propagate) —
   Redis pub/sub is the multi-process upgrade.
+- **Initiatives** (`app/api/v1/initiatives.py`) are the program layer above projects: a `Project`
+  carries `initiative_id`, and `GET /initiatives/{id}/rollup` aggregates health across sub-projects
+  (worst risk/drift, progress, open-decision backlog, on-track vs target). The per-project summary
+  is `app/api/v1/projects.py:summarize_project`, shared with `GET /projects/portfolio` so a
+  project's headline numbers are computed in exactly one place. **Cross-project dependencies** (a
+  hand-off between teams) are allowed only within one initiative (enforced in
+  `app/api/v1/dependencies.py`); `GET /initiatives/{id}/critical-path` runs the same `compute_cpm`
+  over the union of the initiative's tasks + deps (`app/services/cross_project.py`, pure) to find
+  the cross-project critical path + hand-offs. Per-project replan stays project-local (ignores
+  cross-project edges).
 - Aggregation for the visibility views is also backend-side and pure-where-possible:
   `GET /projects/portfolio` (per-project rollups), `GET /team/capacity?project_id=` (engineer×week
   allocation via `app/services/capacity.py:weekly_capacity`), and `GET /projects/{id}/burndown`
@@ -94,6 +120,11 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
 - Jira (`app/connectors/jira.py`): enhanced JQL search + Agile API (`sync_active_sprints` tags tasks
   with their sprint when `board_id` is configured) + changelog → `TaskStatusHistory`
   (`sync_status_history`). Jira status stays read-only.
+- **Decision fitness functions:** an ADR can carry machine-checkable dependency rules
+  (`ADRFitnessFunction`: forbid|require between two components). The drift scan evaluates accepted
+  ADRs' rules against the observed edges (`FitnessRule` in `app/services/drift.py`); a violation is a
+  `fitness_violation` drift event (heaviest weight) that auto-resolves when fixed. MCP:
+  `add_adr_fitness`. (`Task.implements_adr_id` + a full traceability ledger are a planned follow-up.)
 - **Architecture depth:** `POST /architecture/adrs/import` reads a markdown doc from a GitHub/Drive
   connection and parses it into an ADR (`app/services/markdown_adr.py`, pure). `GET /architecture/adrs/{id}/impact`
   returns directly-affected components plus everything that transitively depends on them
@@ -113,10 +144,16 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   schema: edit models, then `alembic revision --autogenerate -m "..."`, review the file, commit.
   Generated files under `alembic/versions/` are excluded from ruff.
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
-  REST routes (~26 across projects/planning/connectors/team/architecture). Skills are runbooks
-  (`planning-roadmaps`, `writing-adrs`, `syncing-jira`, `capacity-planning`); subagents do isolated
-  multi-step work (`jira-sync`, `gantt-planner`, `risk-analyst`). Add a tool when Claude needs a new
-  verb; register it in `mcp_server/server.py`.
+  REST routes (~50 across projects/planning/connectors/team/architecture). Skills are runbooks
+  (`planning-roadmaps`, `writing-adrs`, `syncing-jira`, `capacity-planning`, `decision-deadline-nudger`,
+  `pr-to-adr-linker`); subagents do isolated multi-step work (`jira-sync`, `gantt-planner`,
+  `risk-analyst`, `drift-sentinel`). Add a tool when Claude needs a new verb; register it in
+  `mcp_server/server.py`.
+- **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the Jira
+  reconciliation poll and a **nightly risk-snapshot sweep** (`capture_risk_snapshots` → `run_risk_snapshots`)
+  so the risk timeline is a real trend. Drift carries a **scan log** (`DriftScan`): `GET .../drift`
+  returns `last_scanned_at` + `scan_due` (true when code bindings exist but the scan is missing or
+  >7 days old), surfacing staleness so the Drift Sentinel re-scans (the server can't crawl code).
 - **Observability:** `GET /api/v1/health` (liveness) and `/api/v1/health/ready` (DB check) for
   orchestration; structured logging via `app/core/logging.py`.
 - **Frontend tests:** Vitest (`npm run test`) covers pure helpers (e.g. `src/lib/horizon.ts`); CI

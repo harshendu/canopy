@@ -14,6 +14,11 @@ codebase. It has two front doors over one FastAPI backend:
 Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint and
 **MCP** = the equivalent Claude plugin tool.
 
+> **Looking ahead:** a critique of these flows and a proposed revision/extension live in
+> [`PROPOSED_FLOWS.md`](./PROPOSED_FLOWS.md); the delivery philosophy behind those proposals is in
+> [`EXECUTION_PHILOSOPHY.md`](./EXECUTION_PHILOSOPHY.md). This file remains the source of truth for
+> what is *built*; those are the source of intent for what *should change*.
+
 ## Actors
 - **Architect** (primary) — plans, schedules, manages the team, records decisions.
 - **Admin** — an architect with `admin` role; the only one who can create new users.
@@ -89,6 +94,51 @@ allowed; legacy `member` ≈ architect):
 
 ---
 
+## R. Initiatives (the program layer above projects) **[new — v2 §R / C1]**
+
+The architect's unit of work is usually an **initiative** (a.k.a. program) spanning several
+projects executed concurrently and decentrally — not a single project. An `Initiative` groups
+projects and rolls up their health.
+
+### R1. List / create initiatives
+- **UI:** `/initiatives` (sidebar) — list initiatives and (architect) create one (KEY + name +
+  optional outcome statement + target date). Each row opens its cockpit.
+- **API:** `GET /api/v1/initiatives`, `POST /api/v1/initiatives` (architect),
+  `GET/PATCH/DELETE /api/v1/initiatives/{id}` (delete **unlinks** sub-projects, never deletes them)
+  · **MCP:** `list_initiatives`, `create_initiative`.
+
+### R2. Link a project to an initiative
+- **UI:** `/projects` → per-project **initiative** select (architect). A project carries
+  `initiative_id`.
+- **API:** `PATCH /api/v1/projects/{id}` (`initiative_id`; `null` unlinks); `POST /api/v1/projects`
+  also accepts `initiative_id` · **MCP:** `set_project_initiative`, `create_project(initiative_id=)`.
+
+### R3. Initiative cockpit (rolled-up health)
+- **UI:** `/initiatives/:id` — outcome statement, an **on track / behind target** badge, aggregate
+  cards (progress, **worst** sub-project risk, **worst** drift, open-decision backlog, latest end
+  vs target, **P85 forecast** §C8), the **cross-project critical path** (§R4), and the sub-project
+  cards (each with its own risk/drift, linking into the project).
+- **API:** `GET /api/v1/initiatives/{id}/rollup` (per-project summaries + aggregates: total/completed
+  tasks, avg %, latest `project_end`, max `risk_score`/`drift_score` with the owning level,
+  `open_decisions` = ADRs proposed/under-discussion, `on_track`) · **MCP:** `get_initiative_rollup`.
+  The per-project summary is the same `summarize_project` the portfolio (§B1) uses.
+
+### R4. Cross-project dependencies & critical path **[new]**
+- **Cross-project hand-offs:** a dependency may link tasks in **different projects of the same
+  initiative** (a between-team hand-off). `POST /api/v1/dependencies` now validates this: a
+  cross-project edge is rejected (400) unless both projects share one initiative. Per-project Gantt
+  / replan stay project-local (they ignore cross-project edges); the hand-offs surface at the
+  initiative level.
+- **Cross-project critical path:** the **initiative cockpit** shows the longest chain of dependent
+  work across sub-projects, in working days, with cross-project hand-offs highlighted (amber). Built
+  over the union of the initiative's tasks + dependencies with the same CPM as per-project
+  scheduling (structural, calendar-independent).
+- **API:** `GET /api/v1/initiatives/{id}/critical-path` (ordered critical chain with each task's
+  project, total working days, `spans_projects`, and the `handoffs`; cyclic cross-project deps →
+  409) · **MCP:** `get_initiative_critical_path`.
+
+---
+
 ## B. Projects & portfolio
 
 ### B1. View the portfolio dashboard
@@ -102,12 +152,14 @@ allowed; legacy `member` ≈ architect):
 
 ### B2. Create a project
 - **UI:** `/projects` → enter KEY + name → "Add".
-- **API:** `POST /api/v1/projects` (`key`, `name`, optional `start_date`/`target_date`).
-- **Notes:** `key` is a unique slug (e.g. `PLATFORM`).
+- **API:** `POST /api/v1/projects` (`key`, `name`, optional `initiative_id`, `start_date`,
+  `target_date`) · **MCP:** `create_project`.
+- **Notes:** `key` is a unique slug (e.g. `PLATFORM`). A project can belong to an **initiative**
+  (§R) via `initiative_id`.
 
 ### B3. Open a project (the cockpit)
-- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Dependencies · Capacity · Decisions ·
-  Architecture · Drift · Roadmap · Burndown · Risk · Retros · Activity**. The header has a **5-day week** toggle, **Set
+- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Dependencies · Capacity ·
+  Decisions · Architecture · Drift · Roadmap · Burndown · Risk · Retros · Activity**. The header has a **5-day week** toggle, **Set
   baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
   `/projects/:id?tab=drift`).
@@ -128,12 +180,18 @@ allowed; legacy `member` ≈ architect):
 - **API:** `POST /api/v1/tasks` · **MCP:** `create_task`.
 - **Notes:** a **summary** task is a phase/workstream; build the WBS by setting `parent_id`
   (API/MCP — the UI form creates top-level tasks).
+- **Edit / assign:** `PATCH /api/v1/tasks/{id}` (a planner edits any task; an engineer only one
+  assigned to them — §A3a) · **MCP:** `update_task` (planning fields: name/duration/start/end/
+  deadline/percent_complete/parent — **status stays Jira-mirrored, read-only**) and `assign_task`
+  (set/clear `assignee_engineer_id`). Re-run `replan_schedule` after duration/structure changes.
 
 ### C2. Add a dependency
 - **UI:** Gantt tab → "Add dependency (finish → start)" form: pick predecessor + successor → "Link".
 - **API:** `POST /api/v1/dependencies` (supports `type` FS/SS/FF/SF and `lag`) · **MCP:**
   `link_dependency`.
-- **Notes:** the UI creates finish-to-start links; other types + lag are via API/MCP.
+- **Notes:** the UI creates finish-to-start links; other types + lag are via API/MCP. A
+  **cross-project** dependency (a hand-off between teams) is allowed only when both tasks' projects
+  share an **initiative** (§R4); it appears on the initiative critical path, not the per-project Gantt.
 
 ### C3. Schedule (Critical Path Method)
 - **UI:** project header → **Schedule (CPM)**. A banner reports scheduled task count, the critical
@@ -143,10 +201,16 @@ allowed; legacy `member` ≈ architect):
   project's working calendar (weekends + holidays) and any task's set start date (treated as
   start-no-earlier-than). Cycles return a 409 error.
 
-### C4. Set / view a baseline (drift)
-- **UI:** project header → **Set baseline** snapshots current start/end. The Gantt then draws a faint
-  gray "planned" strip under each bar so plan-vs-actual drift is visible.
-- **API:** `POST /api/v1/projects/{id}/baseline` · **MCP:** `set_baseline`.
+### C4. Set / view a baseline (schedule variance)
+- **UI:** project header → **Set baseline** opens a note field ("Why re-baseline?") and snapshots
+  current start/end as the plan-of-record. The Gantt draws a faint gray "planned" strip under each
+  bar so **schedule variance** (current-vs-baseline) is visible. Re-baselining is a deliberate,
+  *reasoned* reset — re-planning is a feature, not a failure — so each one is logged and shown in a
+  **Baseline history** panel under the Gantt (date · reason · task count · planned end). The word
+  **"drift" is reserved for architecture drift** (§N); the schedule's plan-vs-actual is *variance*.
+- **API:** `POST /api/v1/projects/{id}/baseline` (optional `{note}`, returns the logged
+  `Baseline`), `GET /api/v1/projects/{id}/baselines` (the history, newest first) · **MCP:**
+  `set_baseline` (accepts a `note`).
 
 ### C5. What-if scheduling
 - **Actor:** architect via Claude (or API) · **MCP:** `whatif_schedule` · **API:**
@@ -161,6 +225,55 @@ allowed; legacy `member` ≈ architect):
 ### C7. Working calendar (weekends + holidays)
 - **UI:** "5-day week" toggle (weekends). **Holidays** are API-only:
   `GET/POST/DELETE /api/v1/projects/{id}/holidays`. Both feed the CPM scheduler.
+
+### C8. Probabilistic forecast (Monte-Carlo) **[new — v2 §C-R1]**
+- **UI:** Gantt tab → a **Probabilistic forecast** card shows **P50 (likely)** and **P85 (safe)**
+  completion dates next to the deterministic CPM date — the honest "when will it ship?" for
+  knowledge work. If there isn't enough completed-work history yet, it says so (no fake precision).
+  The initiative cockpit (§R) shows the same P50/P85 for the whole program.
+- **API:** `GET /api/v1/projects/{id}/forecast`, `GET /api/v1/initiatives/{id}/forecast` · **MCP:**
+  `get_forecast` (pass `project_id` *or* `initiative_id`).
+- **How:** `app/services/forecast.py` (pure) runs a Monte-Carlo simulation — repeatedly burning down
+  the remaining items by sampling the team's **historical weekly throughput** (completed items/week,
+  including stall weeks, from `TaskStatusHistory` — the same source as burndown §H). Needs no
+  per-task estimates; reports a distribution, not a single date. Insufficient until ~3 weeks of
+  throughput exist.
+
+---
+
+## C9. Flow board (Kanban + WIP + aging) **[new — v2 §C-R2]**
+- **UI:** project → **Board** tab → leaf tasks grouped into **status lanes** (from the Jira-mirrored
+  `status`; done lanes sort last). Each lane shows **WIP** (count of not-done tasks); set a **WIP
+  limit** (client-side) and lanes over it turn red. Cards show **age in status**; a card **aging**
+  beyond the team's **cycle-time P85** is highlighted amber (the leading "this is stuck" signal).
+- **API:** `GET /api/v1/projects/{id}/board` (lanes with per-task `age_days`/`aging`, `wip`, plus
+  `cycle_time_p85_days` and `aging_count`) · **MCP:** `get_board`. Logic is pure in
+  `app/services/flow.py` (grouping + P85 + aging); age/cycle dates come from `TaskStatusHistory`.
+- **Not built:** **persisted** per-lane / per-engineer WIP limits (the limit is a client-side knob
+  for now); drag-to-change status (status is Jira-owned, read-only).
+
+---
+
+## D0. Blockers (flagged impediments) **[new — v2 §D-R2]**
+
+The leading signal that work has stalled: an engineer flags an impediment on a task, and it
+surfaces where decisions get made — the engineer workspace and the project alerts digest.
+
+### D0.1 Raise / resolve a blocker
+- **UI:** `/me` → **Blockers** section → "Flag a blocker on…" (pick one of your tasks + a reason);
+  open blockers list with a **resolve** action. (Raising is also possible per task via the API/MCP.)
+- **API:** `POST /api/v1/tasks/{task_id}/blockers` (`reason`, optional `blocking_task_id`;
+  `raised_by_engineer_id` defaults to the caller's engineer), `GET /api/v1/tasks/{task_id}/blockers`,
+  `GET /api/v1/blockers?project_id=&open_only=`, `PATCH /api/v1/blockers/{id}` (`resolved`),
+  `DELETE /api/v1/blockers/{id}` (planner) · **MCP:** `raise_blocker`, `list_blockers`,
+  `resolve_blocker`. Raise/resolve = any contributor; delete = planner.
+
+### D0.2 Where blockers surface
+- **`/me` workspace (§M):** open blockers on your tasks or raised by you (`MyWorkspaceResponse.blockers`).
+- **Alerts digest (§I/Q):** each open blocker is a `blocked` warning in the project's alerts list
+  (shown in the Risk tab).
+- **Not yet:** blocked-time folded into the composite **risk score** (Q-R2) and a red marker on the
+  Gantt/dependency-graph nodes — follow-ups.
 
 ---
 
@@ -201,12 +314,17 @@ allowed; legacy `member` ≈ architect):
 ### F2. Allocate engineers (capacity)
 - **UI:** project → Capacity tab → "Allocate" form (engineer, percent, date range) → "Add".
 - **API:** `GET/POST /api/v1/team/allocations`, `DELETE /api/v1/team/allocations/{id}`
-  (engineer, project, percent allocation, capacity hours, date range).
+  (engineer, project, percent allocation, capacity hours, date range) · **MCP:** `allocate_engineer`.
 
-### F3. Capacity heatmap
+### F3. Capacity heatmap (per-project **and** org-wide)
 - **UI:** project → Capacity tab → an engineer × ISO-week grid shaded by total allocation %;
-  over-allocation (>100%) is red.
-- **API:** `GET /api/v1/team/capacity?project_id=` · **MCP:** `get_capacity`.
+  over-allocation (>100%) is red. The **Team** page (`/team`) shows the same grid **summed across
+  every project** ("Capacity across all projects") — so cross-project overload (someone at 50% on
+  three projects = 150%) is visible where per-project views hide it; rows split across >1 project
+  are flagged with their contributing project keys.
+- **API:** `GET /api/v1/team/capacity?project_id=` (omit `project_id` for the org-wide grid;
+  `project_id` is `null` in the response and each row carries `projects` = contributing keys) ·
+  **MCP:** `get_capacity` (`project_id` now optional). Closes the v2 §F cross-project blind spot.
 
 ---
 
@@ -249,6 +367,8 @@ review it, alternatives, reversibility, and a discussion thread.
   `decision_owner_id`, `proposed_by_id`, `decide_by`, `rfc_url`, `stakeholder_ids`) · **MCP:**
   `create_adr` (architect records) / `propose_adr` (engineer proposes — sets `proposed_by_id`,
   status `proposed`).
+- **List:** `GET /api/v1/architecture/adrs?project_id=` backs the Decisions-tab list (omit
+  `project_id` for org-wide) · **MCP:** `list_adrs`.
 - **Lifecycle:** `proposed → under_discussion → accepted | rejected → superseded | deprecated`,
   plus **`deferred`** (a conscious postponement — **requires a `decide_by` date**, enforced 400).
   Illegal jumps (e.g. `deprecated → proposed`) are rejected 409. The legal map is in
@@ -291,6 +411,20 @@ review it, alternatives, reversibility, and a discussion thread.
   path/file id → the markdown is parsed (title + context/decision/consequences) into an ADR.
 - **API:** `POST /api/v1/architecture/adrs/import` · **MCP:** `import_adr`.
 
+### G7. Fitness functions (machine-checkable decisions) **[new — v2 §G-R1]**
+- **What:** a decision can carry **fitness functions** — dependency rules over the component graph
+  the drift scan enforces. `forbid`: source must NOT depend on target; `require`: it MUST. When the
+  ADR is **accepted**, a violation appears in the drift queue as a `fitness_violation` (the heaviest
+  drift signal — an accepted decision isn't being honored), and **auto-resolves** when the code is
+  fixed. This is the decision→verification spine: a decision that defends itself.
+- **UI:** Decisions tab → expand an ADR → **Fitness functions** (list + add `forbid`/`require` rule
+  picking source/target components). Violations show on the **Drift** tab (§N).
+- **API:** `GET/POST /api/v1/architecture/adrs/{id}/fitness`, `DELETE /api/v1/architecture/fitness/{id}`
+  (components must be in the ADR's project) · **MCP:** `add_adr_fitness`. The ADR detail
+  (`GET .../adrs/{id}`) includes `fitness_functions`.
+- **Not built:** `Task.implements_adr_id` (decision→task traceability) and a full **traceability
+  ledger** joining decision → tasks → PRs → fitness status (v2 §T) — the next slice.
+
 ---
 
 ## H. Progress: burndown
@@ -306,7 +440,7 @@ review it, alternatives, reversibility, and a discussion thread.
 ## I. Alerts / digest
 - **UI:** the old standalone **Alerts** tab is **gone** — alerts now live as the *lagging-indicator*
   section inside the **Risk** tab (§Q). Same content: deadline misses (error), overdue milestones /
-  over-allocations (warning), unscheduled work (info).
+  over-allocations / **open blockers** (warning), unscheduled work (info).
 - **API:** `GET /api/v1/projects/{id}/alerts` (unchanged) · **MCP:** `list_alerts`.
 - **Notes:** delivery to Slack/email is **not built** — alerts are computed and shown/queried; a
   delivery integration is a future hook over this output.
@@ -327,20 +461,24 @@ digest (§I) sits underneath.
   - **Capacity** — engineer-week over-allocation (from the capacity grid).
   - **Architecture** — deferred decisions past `decide_by` + decisions stuck in `under_discussion`
     > 14 days (both from §G) **+ the drift score (§N)** as a third indicator.
-  - **Quality** — **build failures + open incidents** from §J8 activity events. The family becomes
-    *available* (and counts toward the score) once a project has any observability events; until
-    then it's excluded and the overall renormalises over the available families. (PR-latency /
-    churn metrics, v2 §J6, would enrich it further — still future.)
+  - **Quality** — **build failures + open incidents** from §J8 activity events. When a project has
+    **no** observability events the family doesn't drop out; it scores an explicit **observability
+    coverage** gap and the response carries `confidence: "low"` with a note — so a blind project is
+    flagged ("flying blind"), never silently scored as *safer* (the old behaviour excluded the
+    family and renormalised). (PR-latency / churn metrics, v2 §J6, would enrich it further.)
 - Each indicator carries a 0–100 sub-score and drill-down **details** (the offending tasks /
   decisions / engineer-weeks). Scoring weights/thresholds live in `app/services/risk.py` (pure).
 - **API:** `GET /api/v1/projects/{id}/risk` · **MCP:** `get_risk`. The same scorer feeds the
   portfolio card's `risk_score` (§B1).
 
 ### Q2. Risk timeline
-- **UI:** Risk tab → a sparkline of recent risk **snapshots** next to the score; planners can
-  **Capture snapshot** on demand (run nightly via the plugin for a real trend).
+- **UI:** Risk tab → a sparkline of recent risk **snapshots** next to the score; planners can also
+  **Capture snapshot** on demand.
 - **API:** `GET /api/v1/projects/{id}/risk/timeline`, `POST /api/v1/projects/{id}/risk/snapshot`.
   Snapshots persist score + level; the trend matters more than any single value.
+- **Auto-capture (v2 §Q-R3):** the arq **worker** runs a nightly cron (`capture_risk_snapshots`,
+  03:00) that snapshots **every** project, so the trend is real without anyone clicking. The job is
+  `run_risk_snapshots` in `app/api/v1/risk.py`.
 
 ### Q3. Mitigation log
 - **UI:** Risk tab → **Acknowledge** any indicator with a note, an owner, and a check-in date; open
@@ -351,8 +489,8 @@ digest (§I) sits underneath.
 
 ### Q4. Not built (v2 §Q)
 - Automated **check-in follow-ups** / notifications on mitigations past their date.
-- PR-latency / churn **quality** metrics (need GitHub PR-metrics, §J6); the timeline is captured on
-  demand rather than on an automatic nightly schedule (wire the plugin/cron for that).
+- PR-latency / churn **quality** metrics (need GitHub PR-metrics, §J6). *(The nightly risk-snapshot
+  schedule is now built — the arq worker captures it; see Q2.)*
 
 ---
 
@@ -378,10 +516,16 @@ component map + ADRs and maintains the queue.
 ### N2. Drift queue & scan
 - **UI:** Drift tab → the score + the **drift queue** (open events first, then triaged): each event
   shows its kind, summary, affected components, and suspected cause.
-- **API:** `GET /api/v1/projects/{id}/drift` (score + events) · `POST /api/v1/projects/{id}/drift/scan`
+- **API:** `GET /api/v1/projects/{id}/drift` (score + events + **`last_scanned_at`** and
+  **`scan_due`**) · `POST /api/v1/projects/{id}/drift/scan`
   (architect-gated) accepts the Sentinel's observations (`actual_edges`, `inactive_component_ids`,
   `implicit_signals`), runs detection (applying learned suppressions), and upserts events — new
   findings open, resolved ones disappear, triaged ones persist. **MCP:** `get_drift`, `scan_drift`.
+- **Scan staleness (v2 §N-R1):** every scan is logged (`DriftScan`), so the Drift tab shows
+  **last scanned** and a **scan due** badge when code bindings exist but the scan is missing or
+  older than ~7 days — prompting a Sentinel re-scan. (The server can't crawl code itself, so the
+  loop is: staleness surfaced here → the Drift Sentinel re-scans. A push-webhook that *enqueues* the
+  Sentinel is the remaining piece — N4.)
 
 ### N3. Reconciliation
 - **UI:** Drift tab → per open event (architect): **Accept → ADR** (auto-proposes an ADR for the
@@ -501,7 +645,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~46 curated tools that call the REST API.
+  MCP server then exposes ~61 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -562,7 +706,8 @@ team member via `Engineer.user_id` (§A5).
   engineer's GitHub / timezone / committed hours / skill tags), their **assigned open tasks**
   (most-critical first, then soonest due), and the **decisions they own** and **decisions to
   review** — each linking into the owning project's Gantt / Decisions tab.
-- **API:** `GET /api/v1/me/workspace` · **MCP:** `my_workspace`.
+- **API:** `GET /api/v1/me/workspace` · **MCP:** `my_workspace`. The response also includes
+  **`blockers`** — open impediments on your tasks or raised by you (§D0), with flag/resolve in the UI.
 - **Note:** if no engineer is linked to the account, the page prompts to have an admin link one on
   the Team page; tasks/decisions are empty until then.
 
@@ -600,8 +745,9 @@ backlog:
   quality-risk family is fed by §J8 events instead.
 - Smaller follow-ups: Slack/email **alert delivery** (I) + **decision SLA notifications** (G3);
   hard-enforced decision **approval gates** (G3, `can_accept` is advisory); connector **RBAC**;
-  resource **leveling**; drift **suppression-management UI** + non-Python analysis; nightly
-  **schedulers** for drift scans / risk snapshots (run via the plugin today).
+  resource **leveling**; drift **suppression-management UI** + non-Python analysis. *(Nightly
+  **risk-snapshot** scheduling is built — arq worker, §Q2. Nightly **drift scans** still need the
+  Drift Sentinel agent; a push-webhook that enqueues it is the remaining piece — §N.)*
 
 ---
 

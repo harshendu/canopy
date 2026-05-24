@@ -18,12 +18,64 @@ export interface Project {
   key: string;
   name: string;
   description: string | null;
+  initiative_id: number | null;
   start_date: string | null;
   target_date: string | null;
   archived: boolean;
   skip_weekends: boolean;
   decision_rule: DecisionRule;
   decision_sla_hours: number;
+}
+
+export interface Initiative {
+  id: number;
+  key: string;
+  name: string;
+  outcome_statement: string | null;
+  start_date: string | null;
+  target_date: string | null;
+  owner_engineer_id: number | null;
+  archived: boolean;
+}
+
+export interface CriticalPathNode {
+  task_id: number;
+  name: string;
+  project_id: number;
+  project_key: string;
+  es: number;
+  ef: number;
+  duration: number;
+}
+
+export interface CriticalPathHandoff {
+  predecessor_id: number;
+  successor_id: number;
+  from_project_key: string;
+  to_project_key: string;
+}
+
+export interface InitiativeCriticalPath {
+  initiative_id: number;
+  total_working_days: number;
+  spans_projects: boolean;
+  tasks: CriticalPathNode[];
+  handoffs: CriticalPathHandoff[];
+}
+
+export interface InitiativeRollup {
+  initiative: Initiative;
+  projects: ProjectSummary[];
+  total_tasks: number;
+  completed_tasks: number;
+  avg_percent_complete: number;
+  project_end: string | null;
+  risk_score: number;
+  risk_level: string;
+  drift_score: number;
+  drift_level: string;
+  open_decisions: number;
+  on_track: boolean | null;
 }
 
 export interface Task {
@@ -94,6 +146,29 @@ export interface ReplanResult {
   deadline_violations: number[];
 }
 
+export interface Baseline {
+  id: number;
+  project_id: number;
+  note: string | null;
+  task_count: number;
+  project_end: string | null;
+  created_at: string;
+}
+
+export interface ForecastResponse {
+  scope: "project" | "initiative";
+  id: number;
+  sufficient: boolean;
+  reason: string | null;
+  remaining_items: number;
+  history_weeks: number;
+  trials: number;
+  p50_weeks: number | null;
+  p85_weeks: number | null;
+  p50_date: string | null;
+  p85_date: string | null;
+}
+
 export interface Connection {
   id: number;
   provider: Provider;
@@ -144,9 +219,19 @@ export interface ReviewSummary {
   can_accept: boolean;
 }
 
+export interface FitnessFunction {
+  id: number;
+  adr_id: number;
+  kind: string; // forbid | require
+  source_component_id: number;
+  target_component_id: number;
+  description: string | null;
+}
+
 export interface ADRDetail extends ADR {
   comments: ADRComment[];
   review: ReviewSummary;
+  fitness_functions: FitnessFunction[];
 }
 
 export interface DecisionQueueItem {
@@ -208,10 +293,11 @@ export interface CapacityRow {
   engineer_id: number;
   engineer_name: string;
   cells: Record<string, number>;
+  projects?: string[]; // contributing project keys (org-wide view)
 }
 
 export interface CapacityResponse {
-  project_id: number;
+  project_id: number | null; // null = org-wide
   weeks: string[];
   rows: CapacityRow[];
 }
@@ -258,6 +344,8 @@ export interface DriftResponse {
   score: number;
   level: RiskLevel;
   events: DriftEvent[];
+  last_scanned_at: string | null;
+  scan_due: boolean;
 }
 
 export type RiskLevel = "low" | "moderate" | "high" | "critical";
@@ -293,6 +381,8 @@ export interface RiskResponse {
   project_id: number;
   score: number;
   level: RiskLevel;
+  confidence: "high" | "low";
+  confidence_note: string;
   families: RiskFamily[];
   mitigations: RiskMitigation[];
 }
@@ -382,12 +472,47 @@ export interface RetrospectiveDetail extends Retrospective {
   comments: RetrospectiveComment[];
 }
 
+export interface BoardTaskItem {
+  id: number;
+  name: string;
+  status: string;
+  assignee_engineer_id: number | null;
+  is_done: boolean;
+  age_days: number;
+  aging: boolean;
+}
+
+export interface BoardLane {
+  status: string;
+  is_done: boolean;
+  wip: number;
+  tasks: BoardTaskItem[];
+}
+
+export interface BoardResponse {
+  project_id: number;
+  lanes: BoardLane[];
+  cycle_time_p85_days: number | null;
+  aging_count: number;
+}
+
+export interface Blocker {
+  id: number;
+  task_id: number;
+  reason: string;
+  raised_by_engineer_id: number | null;
+  blocking_task_id: number | null;
+  resolved_at: string | null;
+  created_at: string;
+}
+
 export interface MyWorkspace {
   user: User;
   engineer: Engineer | null;
   assigned_tasks: Task[];
   owned_decisions: ADR[];
   stakeholder_decisions: ADR[];
+  blockers: Blocker[];
 }
 
 export interface MyToday {

@@ -23,6 +23,7 @@ class ProjectCreate(BaseModel):
     key: str
     name: str
     description: str | None = None
+    initiative_id: int | None = None
     start_date: date | None = None
     target_date: date | None = None
 
@@ -30,6 +31,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    initiative_id: int | None = None
     start_date: date | None = None
     target_date: date | None = None
     archived: bool | None = None
@@ -44,6 +46,7 @@ class ProjectRead(BaseModel):
     key: str
     name: str
     description: str | None
+    initiative_id: int | None
     start_date: date | None
     target_date: date | None
     archived: bool
@@ -349,9 +352,27 @@ class ReviewSummaryRead(BaseModel):
     can_accept: bool
 
 
+class FitnessFunctionCreate(BaseModel):
+    kind: str = "forbid"  # forbid | require
+    source_component_id: int
+    target_component_id: int
+    description: str | None = None
+
+
+class FitnessFunctionRead(BaseModel):
+    model_config = _read
+    id: int
+    adr_id: int
+    kind: str
+    source_component_id: int
+    target_component_id: int
+    description: str | None
+
+
 class ADRDetail(ADRRead):
     comments: list[ADRCommentRead] = []
     review: ReviewSummaryRead
+    fitness_functions: list[FitnessFunctionRead] = []
 
 
 class DecisionQueueItem(BaseModel):
@@ -473,15 +494,94 @@ class WhatIfRequest(BaseModel):
     duration_overrides: dict[int, int] = {}
 
 
+# --- Flow board (Kanban + WIP + aging) ---
+class BoardTaskRead(BaseModel):
+    id: int
+    name: str
+    status: str
+    assignee_engineer_id: int | None
+    is_done: bool
+    age_days: int
+    aging: bool
+
+
+class BoardLaneRead(BaseModel):
+    status: str
+    is_done: bool
+    wip: int
+    tasks: list[BoardTaskRead]
+
+
+class BoardResponse(BaseModel):
+    project_id: int
+    lanes: list[BoardLaneRead]
+    cycle_time_p85_days: int | None
+    aging_count: int
+
+
+# --- Blockers (flagged impediments) ---
+class BlockerCreate(BaseModel):
+    reason: str
+    raised_by_engineer_id: int | None = None  # defaults to the caller's engineer
+    blocking_task_id: int | None = None
+
+
+class BlockerUpdate(BaseModel):
+    reason: str | None = None
+    resolved: bool | None = None  # True -> set resolved_at=now; False -> reopen
+
+
+class BlockerRead(BaseModel):
+    model_config = _read
+    id: int
+    task_id: int
+    reason: str
+    raised_by_engineer_id: int | None
+    blocking_task_id: int | None
+    resolved_at: datetime | None
+    created_at: datetime
+
+
+# --- Probabilistic forecast (Monte-Carlo throughput) ---
+class ForecastResponse(BaseModel):
+    scope: str  # "project" | "initiative"
+    id: int
+    sufficient: bool
+    reason: str | None = None
+    remaining_items: int
+    history_weeks: int
+    trials: int
+    p50_weeks: int | None = None
+    p85_weeks: int | None = None
+    p50_date: date | None = None
+    p85_date: date | None = None
+
+
+# --- Baseline (logged re-baseline events) ---
+class BaselineRequest(BaseModel):
+    note: str | None = None  # why the baseline is being (re)set
+
+
+class BaselineRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    note: str | None
+    task_count: int
+    project_end: date | None
+    created_at: datetime
+
+
 # --- Capacity heatmap ---
 class CapacityRow(BaseModel):
     engineer_id: int
     engineer_name: str
     cells: dict[str, float]  # week-start ISO date -> summed allocation %
+    projects: list[str] = []  # contributing project keys (org-wide view)
 
 
 class CapacityResponse(BaseModel):
-    project_id: int
+    project_id: int | None  # None = org-wide (summed across all projects)
     weeks: list[str]  # week-start ISO dates
     rows: list[CapacityRow]
 
@@ -505,6 +605,81 @@ class ProjectSummary(BaseModel):
 
 class PortfolioResponse(BaseModel):
     projects: list[ProjectSummary]
+
+
+# --- Initiatives (program layer above projects) ---
+class InitiativeCreate(BaseModel):
+    key: str
+    name: str
+    outcome_statement: str | None = None
+    start_date: date | None = None
+    target_date: date | None = None
+    owner_engineer_id: int | None = None
+
+
+class InitiativeUpdate(BaseModel):
+    name: str | None = None
+    outcome_statement: str | None = None
+    start_date: date | None = None
+    target_date: date | None = None
+    owner_engineer_id: int | None = None
+    archived: bool | None = None
+
+
+class InitiativeRead(BaseModel):
+    model_config = _read
+    id: int
+    key: str
+    name: str
+    outcome_statement: str | None
+    start_date: date | None
+    target_date: date | None
+    owner_engineer_id: int | None
+    archived: bool
+
+
+class CriticalPathNode(BaseModel):
+    task_id: int
+    name: str
+    project_id: int
+    project_key: str
+    es: int  # earliest-start offset (working days from the chain's origin)
+    ef: int  # earliest-finish offset
+    duration: int
+
+
+class CriticalPathHandoff(BaseModel):
+    predecessor_id: int
+    successor_id: int
+    from_project_key: str
+    to_project_key: str
+
+
+class InitiativeCriticalPath(BaseModel):
+    """The critical path across an initiative's sub-projects (structural, in working days)."""
+
+    initiative_id: int
+    total_working_days: int
+    spans_projects: bool
+    tasks: list[CriticalPathNode]  # the critical chain, earliest-first
+    handoffs: list[CriticalPathHandoff]  # cross-project edges on the critical path
+
+
+class InitiativeRollup(BaseModel):
+    """Health rolled up across an initiative's sub-projects."""
+
+    initiative: InitiativeRead
+    projects: list[ProjectSummary]
+    total_tasks: int
+    completed_tasks: int
+    avg_percent_complete: float
+    project_end: date | None  # latest end across sub-projects
+    risk_score: int  # the riskiest sub-project drives initiative risk
+    risk_level: str
+    drift_score: int  # worst drift across sub-projects
+    drift_level: str
+    open_decisions: int  # ADRs proposed / under discussion across the initiative
+    on_track: bool | None  # latest end <= target_date (None if no target)
 
 
 # --- Alerts / digest ---
@@ -590,6 +765,8 @@ class RiskResponse(BaseModel):
     project_id: int
     score: int
     level: str
+    confidence: str  # high | low — how much of the picture has data
+    confidence_note: str
     families: list[RiskFamilyRead]
     mitigations: list[RiskMitigationRead]
 
@@ -647,6 +824,8 @@ class DriftResponse(BaseModel):
     score: int
     level: str
     events: list[DriftEventRead]
+    last_scanned_at: datetime | None = None  # when drift was last assessed (any scan)
+    scan_due: bool = False  # code bindings exist and the last scan is missing or stale
 
 
 class DriftReconcileRequest(BaseModel):
@@ -749,3 +928,4 @@ class MyWorkspaceResponse(BaseModel):
     assigned_tasks: list[TaskRead]
     owned_decisions: list[ADRRead]
     stakeholder_decisions: list[ADRRead]
+    blockers: list[BlockerRead] = []  # open blockers on my tasks or raised by me

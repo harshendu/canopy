@@ -7,17 +7,22 @@ events. Reconciling an event closes the loop: accept -> auto-propose an ADR, rej
 open a revert task, false-positive -> learn a per-project suppression.
 """
 
+from datetime import date, datetime
+
 from fastapi import APIRouter, HTTPException, status
-from sqlmodel import col, select
+from sqlmodel import col, func, select
 
 from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
 from app.api.v1.architecture import _next_number, _set_component_links
 from app.models.architecture import (
     ADRComponentLink,
+    ADRFitnessFunction,
     ArchitectureComponent,
     ArchitectureDecision,
+    ComponentCodeBinding,
     ComponentLink,
     DriftEvent,
+    DriftScan,
     DriftSuppression,
 )
 from app.models.base import ADRStatus, TaskType
@@ -31,6 +36,7 @@ from app.schemas.entities import (
 )
 from app.services.drift import (
     DriftInputs,
+    FitnessRule,
     ImplicitSignal,
     level,
     run_detection,
@@ -95,8 +101,34 @@ async def _declared_inputs(session: SessionDep, project_id: int) -> DriftInputs:
     accepted_adrs = [
         (a.number, a.title, adr_components.get(a.id, [])) for a in accepted if a.id is not None
     ]
+    # Machine-checkable fitness rules from accepted ADRs (evaluated vs the actual edges).
+    fitness_rules: list[FitnessRule] = []
+    if accepted:
+        number_by_id = {a.id: a.number for a in accepted if a.id is not None}
+        ffs = (
+            await session.execute(
+                select(ADRFitnessFunction).where(
+                    col(ADRFitnessFunction.adr_id).in_(list(number_by_id))
+                )
+            )
+        ).scalars().all()
+        fitness_rules = [
+            FitnessRule(
+                id=ff.id,
+                adr_number=number_by_id[ff.adr_id],
+                kind=ff.kind,
+                source_component_id=ff.source_component_id,
+                target_component_id=ff.target_component_id,
+                description=ff.description,
+            )
+            for ff in ffs
+            if ff.id is not None and ff.adr_id in number_by_id
+        ]
     return DriftInputs(
-        component_names=names, declared_edges=declared, accepted_adrs=accepted_adrs
+        component_names=names,
+        declared_edges=declared,
+        accepted_adrs=accepted_adrs,
+        fitness_rules=fitness_rules,
     )
 
 
@@ -107,7 +139,47 @@ async def _events(session: SessionDep, project_id: int) -> list[DriftEvent]:
     return list(rows.scalars().all())
 
 
-def _response(project_id: int, events: list[DriftEvent]) -> DriftResponse:
+DRIFT_STALE_DAYS = 7
+
+
+async def _scan_state(session: SessionDep, project_id: int) -> tuple[datetime | None, bool]:
+    """(last_scanned_at, scan_due). A scan is due when code bindings exist (so drift *can* be
+    assessed) and it's either never been scanned or the last scan is older than DRIFT_STALE_DAYS."""
+    last = (
+        await session.execute(
+            select(func.max(DriftScan.created_at)).where(DriftScan.project_id == project_id)
+        )
+    ).scalar()
+    comp_ids = (
+        await session.execute(
+            select(ArchitectureComponent.id).where(
+                ArchitectureComponent.project_id == project_id
+            )
+        )
+    ).scalars().all()
+    has_bindings = False
+    if comp_ids:
+        count = (
+            await session.execute(
+                select(func.count())
+                .select_from(ComponentCodeBinding)
+                .where(col(ComponentCodeBinding.component_id).in_(set(comp_ids)))
+            )
+        ).scalar() or 0
+        has_bindings = count > 0
+    if not has_bindings:
+        return last, False
+    if last is None:
+        return None, True
+    return last, (date.today() - last.date()).days >= DRIFT_STALE_DAYS
+
+
+def _response(
+    project_id: int,
+    events: list[DriftEvent],
+    last_scanned_at: datetime | None = None,
+    scan_due: bool = False,
+) -> DriftResponse:
     score = drift_score_from_events(events)
     # Open events first, then most recent.
     ordered = sorted(events, key=lambda e: (e.status != "open", -(e.id or 0)))
@@ -116,13 +188,17 @@ def _response(project_id: int, events: list[DriftEvent]) -> DriftResponse:
         score=score,
         level=level(score),
         events=[DriftEventRead.model_validate(e) for e in ordered],
+        last_scanned_at=last_scanned_at,
+        scan_due=scan_due,
     )
 
 
 @router.get("/projects/{project_id}/drift", response_model=DriftResponse)
 async def get_drift(session: SessionDep, _: CurrentUser, project_id: int) -> DriftResponse:
     await _project_or_404(session, project_id)
-    return _response(project_id, await _events(session, project_id))
+    events = await _events(session, project_id)
+    last, due = await _scan_state(session, project_id)
+    return _response(project_id, events, last, due)
 
 
 @router.post("/projects/{project_id}/drift/scan", response_model=DriftResponse)
@@ -180,8 +256,11 @@ async def scan_drift(
     for key, event in existing.items():
         if key not in found_keys and event.status == "open":
             await session.delete(event)
+    session.add(DriftScan(project_id=project_id, finding_count=len(report.findings)))
     await session.commit()
-    return _response(project_id, await _events(session, project_id))
+    events = await _events(session, project_id)
+    last, due = await _scan_state(session, project_id)
+    return _response(project_id, events, last, due)
 
 
 @router.post(

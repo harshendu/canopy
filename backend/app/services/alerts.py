@@ -36,6 +36,13 @@ class OverAllocation:
 
 
 @dataclass
+class AlertBlocker:
+    task_id: int
+    task_name: str
+    reason: str
+
+
+@dataclass
 class Alert:
     kind: str
     severity: str  # info | warning | error
@@ -49,8 +56,20 @@ def compute_alerts(
     tasks: list[AlertTask],
     milestones: list[AlertMilestone],
     over_allocations: list[OverAllocation],
+    blockers: list[AlertBlocker] | None = None,
 ) -> list[Alert]:
     alerts: list[Alert] = []
+
+    for blocker in blockers or []:
+        alerts.append(
+            Alert(
+                kind="blocked",
+                severity="warning",
+                message=f"'{blocker.task_name}' is blocked: {blocker.reason}",
+                entity_type="task",
+                entity_id=blocker.task_id,
+            )
+        )
 
     for task in tasks:
         if task.deadline and task.end and task.end > task.deadline:

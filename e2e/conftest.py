@@ -28,7 +28,10 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
+from helpers import api_get, api_token
 from helpers import login as ui_login
+from mock_jira import MockJira
+from seed import seed_dataset
 
 DEFAULT_BASE_URL = "http://127.0.0.1:5173"
 DEFAULT_EMAIL = "architect@example.com"
@@ -117,3 +120,53 @@ def auth_driver(
     """A browser already logged in and sitting on /projects."""
     ui_login(driver, base_url, *credentials)
     return driver
+
+
+@pytest.fixture(scope="session")
+def token(base_url: str, credentials: tuple[str, str]) -> str:
+    return api_token(base_url, *credentials)
+
+
+@pytest.fixture(scope="session")
+def seed(base_url: str, token: str) -> Iterator[dict]:
+    """Seed a representative dataset once, then clear everything it created at the end."""
+    data = seed_dataset(base_url, token)
+    yield data
+    _teardown(base_url, token)
+
+
+def _teardown(base_url: str, token: str) -> None:
+    """Best-effort: delete every project, initiative, engineer, and connection so the
+    instance is left clean (the throwaway sqlite file is also removed by run_e2e.sh)."""
+    from helpers import _request
+
+    for path, key in (
+        ("/projects", "id"),
+        ("/initiatives", "id"),
+        ("/team/engineers", "id"),
+        ("/connectors/connections", "id"),
+    ):
+        try:
+            for row in api_get(base_url, token, path) or []:
+                with _suppress():
+                    _request(base_url, token, "DELETE", f"{path}/{row[key]}", None)
+        except Exception:
+            pass
+
+
+class _suppress:
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, *exc: object) -> bool:
+        return True
+
+
+@pytest.fixture()
+def mock_jira() -> Iterator[MockJira]:
+    """A local mock Jira server (no real external calls); stops on teardown."""
+    server = MockJira().start()
+    try:
+        yield server
+    finally:
+        server.stop()

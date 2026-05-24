@@ -25,6 +25,56 @@ from app.services.drift import level as drift_level
 router = APIRouter()
 
 
+def summarize_project(
+    project: Project,
+    *,
+    tasks: list[Task],
+    allocations: list[Allocation],
+    engineer_names: dict[int, str],
+    adrs: list[ArchitectureDecision],
+    drift_events: list[DriftEvent],
+    activity_events: list[ActivityEvent],
+    today: date,
+) -> ProjectSummary:
+    """Build a project's portfolio summary (risk + drift + progress) from loaded rows.
+
+    Shared by the portfolio rollup and the initiative rollup so a project's headline numbers
+    are computed in exactly one place."""
+    assert project.id is not None
+    leaves = [t for t in tasks if t.type != TaskType.summary]
+    total = len(leaves)
+    completed = sum(1 for t in leaves if t.percent_complete >= 100)
+    avg = sum(t.percent_complete for t in leaves) / total if total else 0.0
+    ends = [t.end for t in tasks if t.end]
+    drift = drift_score_from_events(drift_events)
+    report = report_for(
+        tasks=tasks,
+        allocations=allocations,
+        engineer_names=engineer_names,
+        adrs=adrs,
+        project_start=project.start_date,
+        project_target=project.target_date,
+        today=today,
+        drift_score=drift,
+        activity_events=activity_events,
+    )
+    return ProjectSummary(
+        id=project.id,
+        key=project.key,
+        name=project.name,
+        total_tasks=total,
+        completed_tasks=completed,
+        avg_percent_complete=round(avg, 1),
+        critical_tasks=sum(1 for t in leaves if t.is_critical),
+        project_end=max(ends) if ends else None,
+        target_date=project.target_date,
+        risk_score=report.score,
+        risk_level=report.level,
+        drift_score=drift,
+        drift_level=drift_level(drift),
+    )
+
+
 @router.get("/portfolio", response_model=PortfolioResponse)
 async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
     projects = (await session.execute(select(Project).order_by(Project.name))).scalars().all()
@@ -62,38 +112,16 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
                 await session.execute(select(Task).where(Task.project_id == project.id))
             ).scalars().all()
         )
-        leaves = [t for t in tasks if t.type != TaskType.summary]
-        total = len(leaves)
-        completed = sum(1 for t in leaves if t.percent_complete >= 100)
-        avg = sum(t.percent_complete for t in leaves) / total if total else 0.0
-        ends = [t.end for t in tasks if t.end]
-        drift = drift_score_from_events(drift_by_project.get(project.id, []))
-        report = report_for(
-            tasks=tasks,
-            allocations=allocs_by_project.get(project.id, []),
-            engineer_names=engineer_names,
-            adrs=adrs_by_project.get(project.id, []),
-            project_start=project.start_date,
-            project_target=project.target_date,
-            today=today,
-            drift_score=drift,
-            activity_events=activity_by_project.get(project.id, []),
-        )
         summaries.append(
-            ProjectSummary(
-                id=project.id,
-                key=project.key,
-                name=project.name,
-                total_tasks=total,
-                completed_tasks=completed,
-                avg_percent_complete=round(avg, 1),
-                critical_tasks=sum(1 for t in leaves if t.is_critical),
-                project_end=max(ends) if ends else None,
-                target_date=project.target_date,
-                risk_score=report.score,
-                risk_level=report.level,
-                drift_score=drift,
-                drift_level=drift_level(drift),
+            summarize_project(
+                project,
+                tasks=tasks,
+                allocations=allocs_by_project.get(project.id, []),
+                engineer_names=engineer_names,
+                adrs=adrs_by_project.get(project.id, []),
+                drift_events=drift_by_project.get(project.id, []),
+                activity_events=activity_by_project.get(project.id, []),
+                today=today,
             )
         )
     return PortfolioResponse(projects=summaries)

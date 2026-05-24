@@ -3,13 +3,16 @@
 A leading-indicator companion to the lagging Alerts digest. Turns raw project signals
 into a 0-100 risk score with a drillable breakdown across four families:
 
-  * **schedule**     — deadline misses, baseline drift, critical-path float consumption
+  * **schedule**     — deadline misses, schedule variance vs baseline, critical-path float
   * **capacity**     — engineer-week over-allocation
   * **architecture** — deferred decisions past their decide-by, decisions stuck in
                        discussion (both from the decisions slice)
-  * **quality**      — PR latency / churn / test failure (NOT YET WIRED — needs the
-                       GitHub PR-metrics work; reported as unavailable, excluded from
-                       the overall score)
+  * **quality**      — build failures + open incidents (from §J8 observability events).
+                       When a project has NO observability wired, we can't measure quality,
+                       so the family scores that **missing coverage** as an explicit risk and
+                       the report's `confidence` drops to "low" — a blind project is never
+                       silently treated as safer (the old behaviour excluded the family and
+                       renormalised, which made unobserved projects look lower-risk).
 
 The score is deliberately opinionated and arguable — its job is to start a conversation,
 not to be precise. All weights/thresholds live here so they're easy to tune and test.
@@ -19,12 +22,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# Family weights for the overall score. Quality is excluded until it has data; the
-# overall is renormalised over whichever families are available.
+# Family weights for the overall score. Every family is always scored (total weight 1.0);
+# the quality family scores the absence of observability as its own risk rather than
+# dropping out, so the overall is never silently renormalised in a blind project's favour.
 SCHEDULE_WEIGHT = 0.35
 CAPACITY_WEIGHT = 0.20
 ARCHITECTURE_WEIGHT = 0.25
 QUALITY_WEIGHT = 0.20
+
+# With no CI/observability events we are blind to quality. That blindness is itself a
+# moderate, named risk (and forces confidence to "low") — not an excluded family.
+UNMEASURED_QUALITY_SCORE = 40
 
 
 def _cap(value: float) -> int:
@@ -76,6 +84,8 @@ class RiskReport:
     score: int
     level: str  # low | moderate | high | critical
     families: list[RiskFamily]
+    confidence: str = "high"  # high | low — how much of the picture we can actually measure
+    confidence_note: str = ""
 
 
 def _family_score(indicators: list[RiskIndicator]) -> int:
@@ -107,7 +117,7 @@ def _schedule_family(s: RiskSignals) -> RiskFamily:
             key="schedule_variance",
             label="Schedule variance vs baseline",
             score=_cap(len(s.drifted_tasks) * 15),
-            summary=f"{len(s.drifted_tasks)} task(s) drifted from baseline",
+            summary=f"{len(s.drifted_tasks)} task(s) off baseline (schedule variance)",
             details=[f"#{tid} {name}" for tid, name in s.drifted_tasks],
         ),
         RiskIndicator(
@@ -193,32 +203,47 @@ def _architecture_family(s: RiskSignals) -> RiskFamily:
 
 
 def _quality_family(s: RiskSignals) -> RiskFamily:
-    # Fed by §J8 CI/observability events. Until a project has any such events the family
-    # is "unavailable" and excluded from the overall score (PR-latency metrics, v2 §J6,
-    # would enrich it further).
-    indicators = [
-        RiskIndicator(
-            key="build_failures",
-            label="Build failures",
-            score=_cap(s.build_failures * 15),
-            summary=f"{s.build_failures} build failure event(s)",
-            details=[],
-        ),
-        RiskIndicator(
-            key="open_incidents",
-            label="Open incidents",
-            score=_cap(s.open_incidents * 30),
-            summary=f"{s.open_incidents} open incident(s)",
-            details=[],
-        ),
-    ]
+    # Fed by §J8 CI/observability events. With no such events we can't measure quality, so
+    # the family carries an explicit "observability coverage" risk (and the report drops to
+    # low confidence) instead of dropping out and making the project look safer.
+    if s.quality_available:
+        indicators = [
+            RiskIndicator(
+                key="build_failures",
+                label="Build failures",
+                score=_cap(s.build_failures * 15),
+                summary=f"{s.build_failures} build failure event(s)",
+                details=[],
+            ),
+            RiskIndicator(
+                key="open_incidents",
+                label="Open incidents",
+                score=_cap(s.open_incidents * 30),
+                summary=f"{s.open_incidents} open incident(s)",
+                details=[],
+            ),
+        ]
+    else:
+        indicators = [
+            RiskIndicator(
+                key="observability_coverage",
+                label="Observability coverage",
+                score=UNMEASURED_QUALITY_SCORE,
+                summary="No observability wired — quality risk is unmeasured",
+                details=[
+                    "No deploy / build-failure / incident events recorded for this project.",
+                    "Wire CI/observability (POST /webhooks/events, or the Activity tab) so "
+                    "build failures and incidents feed this score.",
+                ],
+            ),
+        ]
     return RiskFamily(
         key="quality",
         label="Quality risk",
-        available=s.quality_available,
-        score=_family_score(indicators) if s.quality_available else 0,
+        available=True,  # always scored — missing coverage is itself a signal
+        score=_family_score(indicators),
         weight=QUALITY_WEIGHT,
-        indicators=indicators if s.quality_available else [],
+        indicators=indicators,
     )
 
 
@@ -236,4 +261,18 @@ def compute_risk(signals: RiskSignals) -> RiskReport:
         if total_weight
         else 0
     )
-    return RiskReport(score=overall, level=_level(overall), families=families)
+    if signals.quality_available:
+        confidence, note = "high", "All risk families have data."
+    else:
+        confidence, note = "low", (
+            "Quality is unmeasured — no observability events for this project. The score "
+            "reflects missing coverage, not a clean bill of health; wire CI/observability "
+            "to raise confidence."
+        )
+    return RiskReport(
+        score=overall,
+        level=_level(overall),
+        families=families,
+        confidence=confidence,
+        confidence_note=note,
+    )

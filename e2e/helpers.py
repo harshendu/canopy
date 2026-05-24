@@ -129,23 +129,57 @@ def api_token(base_url: str, email: str, password: str) -> str:
         return str(json.load(resp)["access_token"])
 
 
+def _request(base_url: str, token: str, method: str, path: str, payload: dict[str, Any] | None) -> Any:
+    data = json.dumps(payload).encode() if payload is not None else None
+    headers = {"Authorization": f"Bearer {token}"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"{_api(base_url)}{path}", data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = resp.read()
+        return json.loads(body) if body else None
+
+
 def api_post(base_url: str, token: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    req = urllib.request.Request(
-        f"{_api(base_url)}{path}",
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return dict(json.load(resp))
+    return dict(_request(base_url, token, "POST", path, payload))
 
 
-def api_create_project(base_url: str, token: str, key: str, name: str) -> dict[str, Any]:
-    return api_post(base_url, token, "/projects", {"key": key, "name": name})
+def api_get(base_url: str, token: str, path: str) -> Any:
+    return _request(base_url, token, "GET", path, None)
 
 
-def api_create_task(base_url: str, token: str, project_id: int, name: str, duration: int = 3) -> dict[str, Any]:
+def api_patch(base_url: str, token: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return dict(_request(base_url, token, "PATCH", path, payload))
+
+
+def api_create_project(base_url: str, token: str, key: str, name: str, **extra: Any) -> dict[str, Any]:
+    return api_post(base_url, token, "/projects", {"key": key, "name": name, **extra})
+
+
+def api_create_task(base_url: str, token: str, project_id: int, name: str, duration: int = 3, **extra: Any) -> dict[str, Any]:
     return api_post(
         base_url, token, "/tasks",
-        {"project_id": project_id, "name": name, "duration": duration, "type": "task"},
+        {"project_id": project_id, "name": name, "duration": duration, "type": "task", **extra},
     )
+
+
+def api_create_initiative(base_url: str, token: str, key: str, name: str, **extra: Any) -> dict[str, Any]:
+    return api_post(base_url, token, "/initiatives", {"key": key, "name": name, **extra})
+
+
+def api_create_engineer(base_url: str, token: str, name: str, **extra: Any) -> dict[str, Any]:
+    return api_post(base_url, token, "/team/engineers", {"name": name, **extra})
+
+
+def api_create_component(base_url: str, token: str, project_id: int, name: str, **extra: Any) -> dict[str, Any]:
+    return api_post(base_url, token, "/architecture/components", {"project_id": project_id, "name": name, **extra})
+
+
+def api_create_adr(base_url: str, token: str, project_id: int, title: str, **extra: Any) -> dict[str, Any]:
+    return api_post(base_url, token, "/architecture/adrs", {"project_id": project_id, "title": title, **extra})
+
+
+def open_project_tab(driver: WebDriver, base_url: str, project_id: int, tab_label: str) -> None:
+    """Open a project's cockpit and click a tab."""
+    driver.get(f"{base_url}/projects/{project_id}")
+    tab(driver, tab_label).click()

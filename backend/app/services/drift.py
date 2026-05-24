@@ -18,6 +18,7 @@ KIND_WEIGHTS = {
     "dead_dependency": 8,
     "unimplemented_adr": 15,
     "implicit_decision": 20,  # an architectural change with no ADR is the loudest signal
+    "fitness_violation": 25,  # an accepted decision's machine-checkable rule is broken — loudest
 }
 
 
@@ -30,6 +31,19 @@ class ImplicitSignal:
 
 
 @dataclass
+class FitnessRule:
+    """An ADR's machine-checkable dependency assertion, evaluated against the actual edges.
+    `forbid`: source must NOT depend on target; `require`: it MUST."""
+
+    id: int
+    adr_number: int
+    kind: str  # forbid | require
+    source_component_id: int
+    target_component_id: int
+    description: str | None = None
+
+
+@dataclass
 class DriftInputs:
     component_names: dict[int, str]
     declared_edges: set[tuple[int, int]] = field(default_factory=set)
@@ -39,6 +53,8 @@ class DriftInputs:
     # Components with no recent commit activity (for unimplemented-ADR detection).
     inactive_component_ids: set[int] = field(default_factory=set)
     implicit_signals: list[ImplicitSignal] = field(default_factory=list)
+    # Machine-checkable dependency rules from accepted ADRs (evaluated vs actual_edges).
+    fitness_rules: list[FitnessRule] = field(default_factory=list)
 
 
 @dataclass
@@ -110,7 +126,34 @@ def detect(inputs: DriftInputs) -> list[Finding]:
                 )
             )
 
-    # 3. Implicit decisions: architectural changes in code with no ADR.
+    # 3. Fitness functions: accepted ADRs' machine-checkable dependency rules, evaluated
+    #    against the actual edges. A violated rule is the loudest signal — the decision is
+    #    not being honored.
+    for rule in inputs.fitness_rules:
+        pair = (rule.source_component_id, rule.target_component_id)
+        present = pair in inputs.actual_edges
+        violated = present if rule.kind == "forbid" else (not present)
+        if violated:
+            arrow = f"{_name(names, rule.source_component_id)} → " + _name(
+                names, rule.target_component_id
+            )
+            verb = "must not depend on" if rule.kind == "forbid" else "must depend on"
+            findings.append(
+                Finding(
+                    kind="fitness_violation",
+                    rule_key=f"fitness:{rule.id}",
+                    summary=f"ADR-{rule.adr_number:04d} fitness violated: {arrow}",
+                    detail=rule.description
+                    or (
+                        f"{_name(names, rule.source_component_id)} {verb} "
+                        f"{_name(names, rule.target_component_id)} (ADR-{rule.adr_number:04d})."
+                    ),
+                    suspected_cause=f"ADR-{rule.adr_number:04d}",
+                    affected_component_ids=[rule.source_component_id, rule.target_component_id],
+                )
+            )
+
+    # 4. Implicit decisions: architectural changes in code with no ADR.
     for signal in inputs.implicit_signals:
         findings.append(
             Finding(

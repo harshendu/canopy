@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { ADR, MyWorkspace as Workspace } from "../api/types";
@@ -37,15 +38,35 @@ function DecisionList({ title, decisions }: { title: string; decisions: ADR[] })
 }
 
 export default function MyWorkspace() {
+  const qc = useQueryClient();
+  const [blockTask, setBlockTask] = useState<number | "">("");
+  const [blockReason, setBlockReason] = useState("");
   const { data, isLoading } = useQuery({
     queryKey: ["my-workspace"],
     queryFn: () => api.get<Workspace>("/me/workspace"),
   });
 
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["my-workspace"] });
+  const raiseBlocker = useMutation({
+    mutationFn: (vars: { taskId: number; reason: string }) =>
+      api.post(`/tasks/${vars.taskId}/blockers`, { reason: vars.reason }),
+    onSuccess: () => {
+      setBlockTask("");
+      setBlockReason("");
+      invalidate();
+    },
+  });
+  const resolveBlocker = useMutation({
+    mutationFn: (id: number) => api.patch(`/blockers/${id}`, { resolved: true }),
+    onSuccess: invalidate,
+  });
+
   if (isLoading || !data) {
     return <p className="text-sm text-slate-500">Loading your workspace…</p>;
   }
-  const { user, engineer, assigned_tasks } = data;
+  const { user, engineer, assigned_tasks, blockers } = data;
+  const taskName = (id: number) =>
+    assigned_tasks.find((t) => t.id === id)?.name ?? `task #${id}`;
 
   return (
     <div className="space-y-6">
@@ -109,6 +130,69 @@ export default function MyWorkspace() {
               </li>
             ))}
           </ul>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="mb-2 font-semibold">
+          Blockers <span className="text-xs font-normal text-slate-400">(impediments to clear)</span>
+        </h2>
+        {blockers.length === 0 ? (
+          <p className="text-sm text-slate-400">Nothing blocked. Flag an impediment below.</p>
+        ) : (
+          <ul className="space-y-1 text-sm">
+            {blockers.map((b) => (
+              <li
+                key={b.id}
+                className="flex items-center gap-2 rounded border border-amber-200 bg-amber-50 px-2 py-1"
+              >
+                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">
+                  blocked
+                </span>
+                <span className="truncate">
+                  <span className="text-slate-500">{taskName(b.task_id)}:</span> {b.reason}
+                </span>
+                <button
+                  onClick={() => resolveBlocker.mutate(b.id)}
+                  className="ml-auto shrink-0 text-xs text-canopy-700 hover:underline"
+                >
+                  resolve
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {assigned_tasks.length > 0 && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (blockTask && blockReason.trim())
+                raiseBlocker.mutate({ taskId: Number(blockTask), reason: blockReason });
+            }}
+            className="mt-3 flex flex-wrap items-center gap-2"
+          >
+            <select
+              value={blockTask}
+              onChange={(e) => setBlockTask(e.target.value ? Number(e.target.value) : "")}
+              className="rounded border border-slate-300 px-2 py-1 text-sm"
+            >
+              <option value="">Flag a blocker on…</option>
+              {assigned_tasks.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <input
+              value={blockReason}
+              onChange={(e) => setBlockReason(e.target.value)}
+              placeholder="What's blocking it?"
+              className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
+            />
+            <button className="rounded bg-amber-500 px-3 py-1 text-sm font-medium text-white">
+              Flag
+            </button>
+          </form>
         )}
       </div>
 

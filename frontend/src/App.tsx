@@ -7,6 +7,8 @@ import { useEventStream } from "./lib/useEventStream";
 import Login from "./pages/Login";
 import Projects from "./pages/Projects";
 import ProjectView from "./pages/ProjectView";
+import Initiatives from "./pages/Initiatives";
+import InitiativeView from "./pages/InitiativeView";
 import Connectors from "./pages/Connectors";
 import Decisions from "./pages/Decisions";
 import MyWorkspace from "./pages/MyWorkspace";
@@ -42,6 +44,9 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
           </NavLink>
           <NavLink to="/portfolio" className={navClass}>
             Portfolio
+          </NavLink>
+          <NavLink to="/initiatives" className={navClass}>
+            Initiatives
           </NavLink>
           <NavLink to="/projects" className={navClass}>
             Projects
@@ -92,6 +97,22 @@ export default function App() {
             <Suspense fallback={<Loading />}>
               <Portfolio />
             </Suspense>
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/initiatives"
+        element={
+          <ProtectedLayout>
+            <Initiatives />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/initiatives/:initiativeId"
+        element={
+          <ProtectedLayout>
+            <InitiativeView />
           </ProtectedLayout>
         }
       />

@@ -5,11 +5,27 @@ from sqlmodel import Field
 from app.models.base import DecisionRule, DependencyType, TaskType, TimestampMixin
 
 
+class Initiative(TimestampMixin, table=True):
+    """A program/initiative spanning multiple projects — the architect's unit of work above
+    a single Project. Sub-projects are how teams execute it concurrently and decentrally;
+    the initiative carries the outcome and rolls up health across them."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    key: str = Field(index=True, unique=True)  # short slug, e.g. "Q3-PLATFORM"
+    name: str
+    outcome_statement: str | None = None  # the outcome + how we'll know it worked
+    start_date: date | None = None
+    target_date: date | None = None
+    owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    archived: bool = False
+
+
 class Project(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     key: str = Field(index=True, unique=True)  # short slug, e.g. "PLATFORM"
     name: str
     description: str | None = None
+    initiative_id: int | None = Field(default=None, foreign_key="initiative.id", index=True)
     start_date: date | None = None
     target_date: date | None = None
     archived: bool = False
@@ -112,3 +128,31 @@ class RiskSnapshot(TimestampMixin, table=True):
     project_id: int = Field(foreign_key="project.id", index=True)
     score: int
     level: str
+
+
+class Baseline(TimestampMixin, table=True):
+    """A logged re-baseline event: the moment the current schedule was snapshotted into
+    each task's baseline_* as the new plan-of-record, plus the reason it was reset.
+
+    The Gantt overlays current-vs-baseline as **schedule variance** — re-planning is a
+    feature, not a failure, so resetting the baseline is a deliberate, reasoned act we keep
+    a history of. (The word "drift" is reserved for *architecture* drift, §N.)"""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    note: str | None = None  # why the baseline was (re)set
+    task_count: int = 0  # tasks snapshotted at this baseline
+    project_end: date | None = None  # the planned end captured at baseline time
+
+
+class Blocker(TimestampMixin, table=True):
+    """A flagged impediment on a task — the leading signal that work has stalled. `created_at`
+    is when it was opened; `resolved_at` is set when cleared (None = still open). Optionally
+    points at the `blocking_task_id` that must finish first."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="task.id", index=True)
+    reason: str
+    raised_by_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    blocking_task_id: int | None = Field(default=None, foreign_key="task.id")
+    resolved_at: datetime | None = None
