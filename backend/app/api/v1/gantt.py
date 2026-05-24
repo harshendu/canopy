@@ -6,7 +6,7 @@ from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.core.events import publish
-from app.models.base import TaskType
+from app.models.base import RiskScope, RiskStatus, TaskType
 from app.models.project import (
     Baseline,
     Blocker,
@@ -16,6 +16,7 @@ from app.models.project import (
     Task,
     TaskStatusHistory,
 )
+from app.models.risk_register import RiskItem
 from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.schemas.entities import (
     AlertRead,
@@ -37,6 +38,7 @@ from app.schemas.entities import (
 from app.services.alerts import (
     AlertBlocker,
     AlertMilestone,
+    AlertRiskItem,
     AlertTask,
     OverAllocation,
     compute_alerts,
@@ -50,6 +52,7 @@ from app.services.capacity import (
 )
 from app.services.flow import BoardTaskInput, build_board
 from app.services.forecast import monte_carlo_forecast, weekly_throughput
+from app.services.metadata import risk_exposure
 from app.services.planner import PlanOutcome, reschedule_project
 from app.services.scheduling import CycleError
 
@@ -416,10 +419,42 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
         )
     ).scalars().all()
     alert_blockers = [
-        AlertBlocker(b.task_id, task_names.get(b.task_id, f"#{b.task_id}"), b.reason)
+        AlertBlocker(
+            b.task_id,
+            task_names.get(b.task_id, f"#{b.task_id}"),
+            b.reason,
+            severity=b.severity.value if b.severity is not None else None,
+            needed_by=b.needed_by,
+        )
         for b in open_blockers
     ]
-    computed = compute_alerts(date.today(), alert_tasks, alert_milestones, over, alert_blockers)
+    # Open register risks scoped to this project or one of its tasks (RAID digest only —
+    # these do not feed the computed risk score).
+    open_risks = (
+        await session.execute(
+            select(RiskItem).where(
+                col(RiskItem.status).in_({RiskStatus.open, RiskStatus.mitigating}),
+            )
+        )
+    ).scalars().all()
+    task_id_set = set(task_names)
+    alert_risks = [
+        AlertRiskItem(
+            id=r.id,
+            title=r.title,
+            exposure=risk_exposure(r.probability, r.impact),
+            target_resolution_date=r.target_resolution_date,
+        )
+        for r in open_risks
+        if r.id is not None
+        and (
+            (r.scope_level == RiskScope.project and r.scope_id == project_id)
+            or (r.scope_level == RiskScope.task and r.scope_id in task_id_set)
+        )
+    ]
+    computed = compute_alerts(
+        date.today(), alert_tasks, alert_milestones, over, alert_blockers, alert_risks
+    )
     return AlertsResponse(
         project_id=project_id,
         alerts=[

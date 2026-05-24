@@ -79,3 +79,61 @@ class UserRole(StrEnum):
     engineer = "engineer"
     viewer = "viewer"
     member = "member"  # legacy default (pre-roles); treated as ~architect
+
+
+# --- Delivery metadata (tags / estimates / risk register / health) ---
+class RiskScope(StrEnum):
+    """What a risk-register entry hangs off of."""
+
+    task = "task"
+    project = "project"
+    initiative = "initiative"
+
+
+class RiskCategory(StrEnum):
+    schedule = "schedule"
+    scope = "scope"
+    technical = "technical"
+    resource = "resource"
+    external = "external"
+    quality = "quality"
+    security = "security"
+
+
+class RiskStatus(StrEnum):
+    open = "open"
+    mitigating = "mitigating"
+    accepted = "accepted"  # consciously tolerated
+    resolved = "resolved"  # no longer a threat
+    occurred = "occurred"  # the risk materialised (became an issue)
+
+
+class RiskGrade(StrEnum):
+    """An ordinal grade for probability/impact (maps to 1..3)."""
+
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
+class BlockerCategory(StrEnum):
+    dependency = "dependency"
+    resource = "resource"
+    decision = "decision"
+    external = "external"
+    technical = "technical"
+
+
+class BlockerSeverity(StrEnum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+    critical = "critical"
+
+
+class ProjectHealth(StrEnum):
+    """A human-set status colour that overrides the computed on-track signal."""
+
+    on_track = "on_track"
+    at_risk = "at_risk"
+    off_track = "off_track"

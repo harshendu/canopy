@@ -34,6 +34,10 @@ async def raise_blocker(
         reason=payload.reason,
         raised_by_engineer_id=raised_by,
         blocking_task_id=payload.blocking_task_id,
+        category=payload.category,
+        severity=payload.severity,
+        owner_engineer_id=payload.owner_engineer_id,
+        needed_by=payload.needed_by,
     )
     session.add(blocker)
     await session.commit()
@@ -78,10 +82,13 @@ async def update_blocker(
     blocker = await session.get(Blocker, blocker_id)
     if blocker is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Blocker not found")
-    if payload.reason is not None:
-        blocker.reason = payload.reason
+    data = payload.model_dump(exclude_unset=True)
     if payload.resolved is not None:
         blocker.resolved_at = datetime.utcnow() if payload.resolved else None
+    # `resolved` is a derived flag (not a column), so apply the rest field-by-field.
+    for field in ("reason", "category", "severity", "owner_engineer_id", "needed_by"):
+        if field in data:
+            setattr(blocker, field, data[field])
     await session.commit()
     await session.refresh(blocker)
     return blocker

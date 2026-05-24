@@ -24,6 +24,7 @@ from app.schemas.entities import (
     RiskSnapshotRead,
 )
 from app.services.capacity import AllocationSpan, AvailabilitySpan, over_allocated_weeks
+from app.services.metadata import is_high_uncertainty
 from app.services.risk import RiskReport, RiskSignals, compute_risk
 
 router = APIRouter()
@@ -64,6 +65,17 @@ def report_for(
         (t.id, t.name)
         for t in leaves
         if t.id is not None and t.baseline_end is not None and t.end != t.baseline_end
+    ]
+    high_uncertainty = [
+        (t.id, t.name)
+        for t in leaves
+        if t.id is not None
+        and t.estimate_optimistic is not None
+        and t.estimate_likely is not None
+        and t.estimate_pessimistic is not None
+        and is_high_uncertainty(
+            t.estimate_optimistic, t.estimate_likely, t.estimate_pessimistic
+        )
     ]
     critical = [t for t in leaves if t.is_critical]
 
@@ -106,6 +118,7 @@ def report_for(
             drifted_tasks=drifted,
             critical_task_count=len(critical),
             critical_zero_float_count=sum(1 for t in critical if t.total_float == 0),
+            high_uncertainty_tasks=high_uncertainty,
             over_allocations=over_allocations,
             deferred_overdue=deferred_overdue,
             stuck_decisions=stuck,

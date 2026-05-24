@@ -16,6 +16,7 @@ from app.schemas.entities import (
     TaskStatusHistoryRead,
     TaskUpdate,
 )
+from app.services.metadata import normalize_tags
 
 router = APIRouter()
 
@@ -33,7 +34,9 @@ async def list_tasks(
 
 @router.post("", response_model=TaskRead, status_code=status.HTTP_201_CREATED)
 async def create_task(session: SessionDep, _: PlannerWriter, payload: TaskCreate) -> Task:
-    task = Task(**payload.model_dump())
+    data = payload.model_dump()
+    data["tags"] = normalize_tags(data.get("tags") or [])
+    task = Task(**data)
     session.add(task)
     await session.commit()
     await session.refresh(task)
@@ -75,7 +78,10 @@ async def update_task(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Engineers may only edit tasks assigned to them",
             )
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "tags" in data and data["tags"] is not None:
+        data["tags"] = normalize_tags(data["tags"])
+    for field, value in data.items():
         setattr(task, field, value)
     await session.commit()
     await session.refresh(task)

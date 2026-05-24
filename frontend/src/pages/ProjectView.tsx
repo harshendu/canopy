@@ -17,8 +17,11 @@ import GanttChart from "../components/GanttChart";
 import CapacityView from "../components/CapacityView";
 import RoadmapView from "../components/RoadmapView";
 import ExportMenu from "../components/ExportMenu";
+import DeliveryMetaBar from "../components/DeliveryMetaBar";
+import RiskRegister from "../components/RiskRegister";
+import TaskDetailPanel from "../components/TaskDetailPanel";
 import { useCurrentUser } from "../lib/useCurrentUser";
-import { canWriteProjects, isPlanner } from "../lib/permissions";
+import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
 
 // Heavy (React Flow / Recharts) — code-split.
 const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
@@ -81,9 +84,11 @@ export default function ProjectView() {
   const [baselining, setBaselining] = useState(false);
   const [baselineNote, setBaselineNote] = useState("");
   const [tab, setTab] = useState<Tab>(initialTab);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const { data: me } = useCurrentUser();
   const mayPlan = isPlanner(me?.role);
   const mayWriteProject = canWriteProjects(me?.role);
+  const mayContribute = canContribute(me?.role);
 
   const project = useQuery({
     queryKey: ["project", id],
@@ -243,6 +248,21 @@ export default function ProjectView() {
         </div>
       </div>
 
+      {project.data && (
+        <DeliveryMetaBar
+          scope="project"
+          id={id}
+          health={project.data.health}
+          statusNote={project.data.status_note}
+          tags={project.data.tags}
+          mayWrite={mayWriteProject}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ["project", id] });
+            qc.invalidateQueries({ queryKey: ["portfolio"] });
+          }}
+        />
+      )}
+
       {lastReplan && (
         <div className="space-y-1">
           <div className="rounded border border-canopy-500/30 bg-canopy-50 px-4 py-2 text-sm text-canopy-700">
@@ -292,7 +312,7 @@ export default function ProjectView() {
       {tab === "gantt" && (
         <>
           {gantt.data && gantt.data.tasks.length > 0 ? (
-            <GanttChart data={gantt.data} />
+            <GanttChart data={gantt.data} onTaskClick={setSelectedTaskId} />
           ) : (
             <p className="text-sm text-slate-500">
               No tasks yet — add tasks below, then run “Schedule (CPM)”.
@@ -363,7 +383,7 @@ export default function ProjectView() {
 
       {tab === "board" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading board…</p>}>
-          <FlowBoard projectId={id} />
+          <FlowBoard projectId={id} onTaskClick={setSelectedTaskId} />
         </Suspense>
       )}
 
@@ -415,7 +435,10 @@ export default function ProjectView() {
 
       {tab === "risk" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading risk…</p>}>
-          <RiskView projectId={id} />
+          <div className="space-y-6">
+            <RiskView projectId={id} />
+            <RiskRegister scope="project" scopeId={id} mayWrite={mayPlan} />
+          </div>
         </Suspense>
       )}
 
@@ -518,6 +541,16 @@ export default function ProjectView() {
           </div>
         </form>
       </div>
+      )}
+
+      {selectedTaskId !== null && (
+        <TaskDetailPanel
+          taskId={selectedTaskId}
+          projectId={id}
+          mayPlan={mayPlan}
+          mayContribute={mayContribute}
+          onClose={() => setSelectedTaskId(null)}
+        />
       )}
     </div>
   );

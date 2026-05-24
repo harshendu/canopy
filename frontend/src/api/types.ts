@@ -13,6 +13,22 @@ export type ADRCommentKind = "comment" | "approve" | "request_changes" | "reject
 export type DecisionRule = "owner_decides" | "consensus" | "lazy_consensus";
 export type Provider = "jira" | "github" | "gdrive";
 
+// --- Delivery metadata ---
+export type ProjectHealth = "on_track" | "at_risk" | "off_track";
+export type RiskScope = "task" | "project" | "initiative";
+export type RiskCategory =
+  | "schedule"
+  | "scope"
+  | "technical"
+  | "resource"
+  | "external"
+  | "quality"
+  | "security";
+export type RiskStatus = "open" | "mitigating" | "accepted" | "resolved" | "occurred";
+export type RiskGrade = "low" | "medium" | "high";
+export type BlockerCategory = "dependency" | "resource" | "decision" | "external" | "technical";
+export type BlockerSeverity = "low" | "medium" | "high" | "critical";
+
 export interface Project {
   id: number;
   key: string;
@@ -25,6 +41,10 @@ export interface Project {
   skip_weekends: boolean;
   decision_rule: DecisionRule;
   decision_sla_hours: number;
+  tags: string[];
+  health: ProjectHealth | null;
+  status_note: string | null;
+  status_updated_at: string | null;
 }
 
 export interface Initiative {
@@ -36,6 +56,10 @@ export interface Initiative {
   target_date: string | null;
   owner_engineer_id: number | null;
   archived: boolean;
+  tags: string[];
+  health: ProjectHealth | null;
+  status_note: string | null;
+  status_updated_at: string | null;
 }
 
 export interface CriticalPathNode {
@@ -78,6 +102,43 @@ export interface InitiativeRollup {
   on_track: boolean | null;
 }
 
+export interface RiskItem {
+  id: number;
+  scope_level: RiskScope;
+  scope_id: number;
+  title: string;
+  description: string | null;
+  category: RiskCategory;
+  probability: RiskGrade;
+  impact: RiskGrade;
+  status: RiskStatus;
+  owner_engineer_id: number | null;
+  mitigation: string | null;
+  contingency: string | null;
+  target_resolution_date: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  probability_value: number;
+  impact_value: number;
+  exposure: number;
+  exposure_level: RiskLevel;
+}
+
+export interface RiskItemCreate {
+  scope_level: RiskScope;
+  scope_id: number;
+  title: string;
+  description?: string | null;
+  category?: RiskCategory;
+  probability?: RiskGrade;
+  impact?: RiskGrade;
+  status?: RiskStatus;
+  owner_engineer_id?: number | null;
+  mitigation?: string | null;
+  contingency?: string | null;
+  target_resolution_date?: string | null;
+}
+
 export interface Task {
   id: number;
   project_id: number;
@@ -97,6 +158,12 @@ export interface Task {
   sprint: string | null;
   deadline: string | null;
   assignee_engineer_id: number | null;
+  tags: string[];
+  estimate_optimistic: number | null;
+  estimate_likely: number | null;
+  estimate_pessimistic: number | null;
+  pert_mean: number | null;
+  estimate_spread: number | null;
 }
 
 export interface GanttTask {
@@ -317,6 +384,10 @@ export interface ProjectSummary {
   risk_level: RiskLevel;
   drift_score: number;
   drift_level: RiskLevel;
+  tags: string[];
+  health: ProjectHealth | null;
+  status_note: string | null;
+  open_risks: number;
 }
 
 export interface CodeBinding {
@@ -505,6 +576,10 @@ export interface Blocker {
   blocking_task_id: number | null;
   resolved_at: string | null;
   created_at: string;
+  category: BlockerCategory | null;
+  severity: BlockerSeverity | null;
+  owner_engineer_id: number | null;
+  needed_by: string | null;
 }
 
 export interface MyWorkspace {

@@ -8,8 +8,9 @@ from app.api.v1.drift import drift_score_from_events
 from app.api.v1.risk import report_for
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
-from app.models.base import TaskType
+from app.models.base import RiskScope, RiskStatus, TaskType, utcnow
 from app.models.project import Holiday, Project, Task
+from app.models.risk_register import RiskItem
 from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.schemas.entities import (
     HolidayCreate,
@@ -22,6 +23,7 @@ from app.schemas.entities import (
 )
 from app.services.capacity import AvailabilitySpan
 from app.services.drift import level as drift_level
+from app.services.metadata import normalize_tags
 
 router = APIRouter()
 
@@ -37,11 +39,13 @@ def summarize_project(
     activity_events: list[ActivityEvent],
     today: date,
     availability: list[AvailabilitySpan] | None = None,
+    open_risks: int = 0,
 ) -> ProjectSummary:
     """Build a project's portfolio summary (risk + drift + progress) from loaded rows.
 
     Shared by the portfolio rollup and the initiative rollup so a project's headline numbers
-    are computed in exactly one place."""
+    are computed in exactly one place. `open_risks` is the count of open register risks
+    (the human RAID register) — separate from the computed risk score."""
     assert project.id is not None
     leaves = [t for t in tasks if t.type != TaskType.summary]
     total = len(leaves)
@@ -75,7 +79,23 @@ def summarize_project(
         risk_level=report.level,
         drift_score=drift,
         drift_level=drift_level(drift),
+        tags=project.tags,
+        health=project.health,
+        status_note=project.status_note,
+        open_risks=open_risks,
     )
+
+
+_OPEN_RISK_STATUSES = {RiskStatus.open, RiskStatus.mitigating}
+
+
+def open_project_risk_counts(risk_items: list[RiskItem]) -> dict[int, int]:
+    """Count open/mitigating project-scoped register risks, keyed by project id."""
+    counts: dict[int, int] = {}
+    for r in risk_items:
+        if r.scope_level == RiskScope.project and r.status in _OPEN_RISK_STATUSES:
+            counts[r.scope_id] = counts.get(r.scope_id, 0) + 1
+    return counts
 
 
 @router.get("/portfolio", response_model=PortfolioResponse)
@@ -105,6 +125,9 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
     activity_by_project: dict[int, list[ActivityEvent]] = {}
     for ae in all_activity:
         activity_by_project.setdefault(ae.project_id, []).append(ae)
+    open_risks_by_project = open_project_risk_counts(
+        list((await session.execute(select(RiskItem))).scalars().all())
+    )
     availability = [
         AvailabilitySpan(a.engineer_id, a.capacity_factor, a.start_date, a.end_date)
         for a in (await session.execute(select(EngineerAvailability))).scalars().all()
@@ -130,6 +153,7 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
                 activity_events=activity_by_project.get(project.id, []),
                 today=today,
                 availability=availability,
+                open_risks=open_risks_by_project.get(project.id, 0),
             )
         )
     return PortfolioResponse(projects=summaries)
@@ -148,7 +172,9 @@ async def create_project(
     existing = await session.execute(select(Project).where(Project.key == payload.key))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project key exists")
-    project = Project(**payload.model_dump())
+    data = payload.model_dump()
+    data["tags"] = normalize_tags(data.get("tags") or [])
+    project = Project(**data)
     session.add(project)
     await session.commit()
     await session.refresh(project)
@@ -170,8 +196,13 @@ async def update_project(
     project = await session.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "tags" in data and data["tags"] is not None:
+        data["tags"] = normalize_tags(data["tags"])
+    for field, value in data.items():
         setattr(project, field, value)
+    if "health" in data or "status_note" in data:
+        project.status_updated_at = utcnow()
     await session.commit()
     await session.refresh(project)
     return project

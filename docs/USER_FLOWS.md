@@ -108,9 +108,10 @@ projects and rolls up their health.
 ### R1. List / create initiatives
 - **UI:** `/initiatives` (sidebar) — list initiatives and (architect) create one (KEY + name +
   optional outcome statement + target date). Each row opens its cockpit.
-- **API:** `GET /api/v1/initiatives`, `POST /api/v1/initiatives` (architect),
-  `GET/PATCH/DELETE /api/v1/initiatives/{id}` (delete **unlinks** sub-projects, never deletes them)
-  · **MCP:** `list_initiatives`, `create_initiative`.
+- **API:** `GET /api/v1/initiatives`, `POST /api/v1/initiatives` (architect, also accepts `tags`),
+  `GET/PATCH/DELETE /api/v1/initiatives/{id}` (PATCH also accepts `tags`, `health`, `status_note` —
+  stamping `status_updated_at`; delete **unlinks** sub-projects, never deletes them) · **MCP:**
+  `list_initiatives`, `create_initiative`, `set_initiative_health`, `set_tags`/`add_tags`/`remove_tags`.
 
 ### R2. Link a project to an initiative
 - **UI:** `/projects` → per-project **initiative** select (architect). A project carries
@@ -119,11 +120,12 @@ projects and rolls up their health.
   also accepts `initiative_id` · **MCP:** `set_project_initiative`, `create_project(initiative_id=)`.
 
 ### R3. Initiative cockpit (rolled-up health)
-- **UI:** `/initiatives/:id` — outcome statement, an **on track / behind target** badge, aggregate
+- **UI:** `/initiatives/:id` — outcome statement, a **delivery meta bar** (manual health + status
+  note + tags, editable by architects — §B4), an **on track / behind target** badge, aggregate
   cards (progress, **worst** sub-project risk, **worst** drift, open-decision backlog, latest end
-  vs target, **P85 forecast** §C8), the **cross-project critical path** (§R4), and the sub-project
-  cards (each with its own risk/drift, linking into the project). An **Export ▾** control exports
-  the initiative as a PDF/CSV snapshot (§S).
+  vs target, **P85 forecast** §C8), the **cross-project critical path** (§R4), an initiative-scoped
+  **risk register** (RAID, §Q3a), and the sub-project cards (each with its own risk/drift, linking
+  into the project). An **Export ▾** control exports the initiative as a PDF/CSV snapshot (§S).
 - **API:** `GET /api/v1/initiatives/{id}/rollup` (per-project summaries + aggregates: total/completed
   tasks, avg %, latest `project_end`, max `risk_score`/`drift_score` with the owning level,
   `open_decisions` = ADRs proposed/under-discussion, `on_track`) · **MCP:** `get_initiative_rollup`.
@@ -172,11 +174,18 @@ projects and rolls up their health.
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
   `/projects/:id?tab=drift`).
 
-### B4. Edit / archive a project · toggle working week
-- **UI:** the "5-day week" checkbox in the project header toggles weekend-aware scheduling.
-- **API:** `PATCH /api/v1/projects/{id}` (`name`, `description`, dates, `archived`, `skip_weekends`),
-  `DELETE /api/v1/projects/{id}`.
-- **UI gap:** renaming/archiving/date edits are API-only today (only the weekend toggle is in the UI).
+### B4. Edit / archive a project · toggle working week · status & tags
+- **UI:** the "5-day week" checkbox in the project header toggles weekend-aware scheduling. A
+  **delivery meta bar** under the title shows the manual **health** (on_track / at_risk / off_track,
+  RAG badge) + a weekly **status note** headline + **tags**, all inline-editable ("edit status").
+- **API:** `PATCH /api/v1/projects/{id}` (`name`, `description`, dates, `archived`, `skip_weekends`,
+  `tags`, `health`, `status_note` — setting health/status_note stamps `status_updated_at`),
+  `DELETE /api/v1/projects/{id}` · **MCP:** `set_project_health`, `set_tags`/`add_tags`/`remove_tags`.
+- **Notes:** `health` is the architect's narrative status that sits **alongside** the computed risk
+  score (it doesn't override the score); `health=null` means "use the computed on-track signal".
+  The portfolio card (§B1) shows the health badge, status note, tags, and open-risk count.
+- **UI gap:** renaming/archiving/date edits are API-only today (the header has the weekend toggle +
+  the health/status/tags meta bar).
 
 ---
 
@@ -192,6 +201,20 @@ projects and rolls up their health.
   assigned to them — §A3a) · **MCP:** `update_task` (planning fields: name/duration/start/end/
   deadline/percent_complete/parent — **status stays Jira-mirrored, read-only**) and `assign_task`
   (set/clear `assignee_engineer_id`). Re-run `replan_schedule` after duration/structure changes.
+
+### C1a. Task detail panel — estimates, tags, progress, blockers, risks **[new]**
+- **UI:** click a task bar in the **Gantt** (or a card on the **Board**) to open a right-side
+  **detail panel**. It edits the task's **progress** + **duration**, a **3-point estimate**
+  (aggressive / practical / buffered, with the computed PERT mean + spread + a confidence badge),
+  **tags**, the task's **blockers** (raise/resolve with category + severity + needed-by), and the
+  task-scoped **risk register** (RAID).
+- **API:** `PATCH /api/v1/tasks/{id}` (`tags`, `estimate_optimistic`/`estimate_likely`/
+  `estimate_pessimistic`; `TaskRead` returns computed `pert_mean` + `estimate_spread`) ·
+  `GET/POST /api/v1/tasks/{id}/blockers` · `GET/POST /api/v1/risks?scope_level=task&scope_id=…` ·
+  **MCP:** `set_task_estimates`, `set_tags`/`add_tags`/`remove_tags`, `raise_blocker`, `add_risk`.
+- **Notes:** the 3-point estimate is **advisory** — it never moves the scheduling `duration`; a wide
+  optimistic→pessimistic spread instead raises the schedule-risk "estimate uncertainty" indicator
+  (§Q1). There is deliberately **no** "apply estimate to duration" action.
 
 ### C2. Add a dependency
 - **UI:** Gantt tab → "Add dependency (finish → start)" form: pick predecessor + successor → "Link".
@@ -312,17 +335,22 @@ surfaces where decisions get made — the engineer workspace and the project ale
 
 ### D0.1 Raise / resolve a blocker
 - **UI:** `/me` → **Blockers** section → "Flag a blocker on…" (pick one of your tasks + a reason);
-  open blockers list with a **resolve** action. (Raising is also possible per task via the API/MCP.)
-- **API:** `POST /api/v1/tasks/{task_id}/blockers` (`reason`, optional `blocking_task_id`;
-  `raised_by_engineer_id` defaults to the caller's engineer), `GET /api/v1/tasks/{task_id}/blockers`,
-  `GET /api/v1/blockers?project_id=&open_only=`, `PATCH /api/v1/blockers/{id}` (`resolved`),
-  `DELETE /api/v1/blockers/{id}` (planner) · **MCP:** `raise_blocker`, `list_blockers`,
-  `resolve_blocker`. Raise/resolve = any contributor; delete = planner.
+  open blockers list with a **resolve** action. Also raisable from the **task detail panel** (§C1a)
+  with the enrichment fields below.
+- **API:** `POST /api/v1/tasks/{task_id}/blockers` (`reason`, optional `blocking_task_id`,
+  `category` [dependency|resource|decision|external|technical], `severity`
+  [low|medium|high|critical], `owner_engineer_id`, `needed_by`; `raised_by_engineer_id` defaults to
+  the caller's engineer), `GET /api/v1/tasks/{task_id}/blockers`,
+  `GET /api/v1/blockers?project_id=&open_only=`, `PATCH /api/v1/blockers/{id}` (`resolved` + the
+  enrichment fields), `DELETE /api/v1/blockers/{id}` (planner) · **MCP:** `raise_blocker` (now takes
+  category/severity/owner/needed_by), `list_blockers`, `resolve_blocker`. Raise/resolve = any
+  contributor; delete = planner.
 
 ### D0.2 Where blockers surface
 - **`/me` workspace (§M):** open blockers on your tasks or raised by you (`MyWorkspaceResponse.blockers`).
-- **Alerts digest (§I/Q):** each open blocker is a `blocked` warning in the project's alerts list
-  (shown in the Risk tab).
+- **Alerts digest (§I/Q):** each open blocker is a `blocked` alert in the project's alerts list
+  (shown in the Risk tab). **high/critical** `severity` escalates it from a warning to an **error**,
+  and a `needed_by` date is appended to the message.
 - **Not yet:** blocked-time folded into the composite **risk score** (Q-R2) and a red marker on the
   Gantt/dependency-graph nodes — follow-ups.
 
@@ -523,7 +551,8 @@ digest (§I) sits underneath.
 - **UI:** project → **Risk** tab → the overall score + level (low/moderate/high/critical) and four
   **families**, each with a score bar and drillable **indicators**:
   - **Schedule** — deadline misses, schedule variance vs baseline (drifted tasks), critical-path
-    float consumption.
+    float consumption, **estimate uncertainty** (count of tasks whose 3-point estimate spread is
+    wide — see §C1a; stays inside the schedule weight, no new family).
   - **Capacity** — engineer-week over-allocation (from the capacity grid).
   - **Architecture** — deferred decisions past `decide_by` + decisions stuck in `under_discussion`
     > 14 days (both from §G) **+ the drift score (§N)** as a third indicator.
@@ -552,11 +581,33 @@ digest (§I) sits underneath.
   delete).
 - **API:** `GET` (embedded in the risk response), `POST/PATCH/DELETE
   /api/v1/projects/{id}/risk/mitigations[/{mid}]` · **MCP:** `log_risk_mitigation`.
+- **Note:** the mitigation log **acknowledges a computed indicator**. It is distinct from the **risk
+  register** (Q3a), which tracks human-identified qualitative risks.
+
+### Q3a. Risk register (RAID) **[new]**
+- A **human-tracked** risk register, kept **separate from the computed risk score** (it does not feed
+  the 0–100 score). Each entry hangs off a **task / project / initiative**, graded by **probability ×
+  impact** (low/medium/high each → an exposure of 1–9, banded to low/moderate/high/critical), with an
+  owner, a **mitigation** (lower the probability), a **contingency** (if it occurs anyway), and a
+  target resolution date. Status: open | mitigating | accepted | resolved | occurred (terminal
+  statuses stamp `resolved_at`).
+- **UI:** a **"Risk register (RAID)"** section in the project **Risk** tab, on the **initiative**
+  cockpit, and in the **task detail panel** (§C1a) — list with exposure/status badges + add / status /
+  delete. Writes are planner-gated.
+- **API:** `GET /api/v1/risks?scope_level=&scope_id=&status=`, `POST /api/v1/risks`,
+  `GET/PATCH/DELETE /api/v1/risks/{id}`, `POST /api/v1/risks/{id}/close` · **MCP:** `list_risks`,
+  `add_risk`, `update_risk`, `close_risk`.
+- **Where it surfaces:** the portfolio card shows a project's **open-risk count** (§B1/B4); an open
+  register risk **past its target_resolution_date** appears in the alerts digest (§I) as a
+  `risk_overdue` alert (error when high-exposure) — reporting only, the **computed score is
+  unchanged**.
 
 ### Q4. Not built (v2 §Q)
 - Automated **check-in follow-ups** / notifications on mitigations past their date.
 - PR-latency / churn **quality** metrics (need GitHub PR-metrics, §J6). *(The nightly risk-snapshot
   schedule is now built — the arq worker captures it; see Q2.)*
+- Folding the **risk register** into the computed score (deliberately kept separate for now), and the
+  full RAID set (assumptions / issues) — the register is risks-only today.
 
 ---
 
@@ -884,6 +935,16 @@ what-if (the Gantt's §C5 covers task durations only).
   `scenario_capacity`) and reports the project-end and critical-path trade-off. It **does not
   `apply_scenario`** unless explicitly told to (apply writes canopy's plan + replans, never Jira).
   This is the agentic surface behind §T.
+
+### L13. Enrich delivery metadata (subagent) **[new]**
+- The **`delivery-enricher`** subagent annotates a project the way a PM / eng-leader would: it reads
+  the plan (`list_tasks`, `get_gantt`, `get_risk`) then **proposes** 3-point estimates
+  (`set_task_estimates`, advisory — never moves `duration`), logs qualitative risks in the register
+  (`add_risk` / `update_risk` / `close_risk`, kept separate from the computed score), tags work
+  (`add_tags`), flags impediments (`raise_blocker` with category/severity/needed-by), and sets a
+  weekly health headline (`set_project_health`). Estimates/risks are proposals the architect
+  confirms; Jira status is never written. This is the agentic surface behind §C1a / §Q3a. (The
+  read-only **`risk-analyst`** §L6 still owns assessment of the computed score.)
 
 ---
 

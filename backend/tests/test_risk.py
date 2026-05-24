@@ -83,6 +83,7 @@ def test_strong_signals_across_families_reach_critical():
             drifted_tasks=[(i, "t") for i in range(7)],
             critical_task_count=2,
             critical_zero_float_count=2,
+            high_uncertainty_tasks=[(i, "t") for i in range(7)],
             over_allocations=[("Ada", "2026-W20", 130.0) for _ in range(5)],
             deferred_overdue=[(i, "x") for i in range(5)],
             stuck_decisions=[(i, "y") for i in range(5)],
@@ -95,6 +96,32 @@ def test_strong_signals_across_families_reach_critical():
     assert report.score == 100
     assert report.level == "critical"
     assert report.confidence == "high"
+
+
+def test_estimate_uncertainty_is_a_schedule_indicator():
+    # Wide 3-point estimates are a schedule-risk signal, inside the schedule family.
+    report = compute_risk(
+        RiskSignals(high_uncertainty_tasks=[(1, "Spike"), (2, "Migrate")])
+    )
+    schedule = _families(report)["schedule"]
+    indicator = next(i for i in schedule.indicators if i.key == "estimate_uncertainty")
+    assert indicator.score == 30  # cap(2 * 15)
+    assert indicator.details == ["#1 Spike", "#2 Migrate"]
+    # No new family was introduced — the schedule family still owns this signal.
+    assert {f.key for f in report.families} == {
+        "schedule",
+        "capacity",
+        "architecture",
+        "quality",
+    }
+
+
+def test_no_estimate_uncertainty_does_not_raise_schedule_score():
+    # Tasks without a 3-point estimate contribute nothing to the indicator.
+    report = compute_risk(RiskSignals())
+    schedule = _families(report)["schedule"]
+    indicator = next(i for i in schedule.indicators if i.key == "estimate_uncertainty")
+    assert indicator.score == 0
 
 
 def test_indicator_details_are_surfaced_for_drilldown():
