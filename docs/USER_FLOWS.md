@@ -124,8 +124,9 @@ projects and rolls up their health.
   note + tags, editable by architects — §B4), an **on track / behind target** badge, aggregate
   cards (progress, **worst** sub-project risk, **worst** drift, open-decision backlog, latest end
   vs target, **P85 forecast** §C8), the **cross-project critical path** (§R4), an initiative-scoped
-  **risk register** (RAID, §Q3a), and the sub-project cards (each with its own risk/drift, linking
-  into the project). An **Export ▾** control exports the initiative as a PDF/CSV snapshot (§S).
+  **risk register** (RAID, §Q3a), the sub-project cards (each with its own risk/drift, linking
+  into the project), and a **Linked Jira tickets** panel (link Jira tickets into the initiative —
+  §J9). An **Export ▾** control exports the initiative as a PDF/CSV snapshot (§S).
 - **API:** `GET /api/v1/initiatives/{id}/rollup` (per-project summaries + aggregates: total/completed
   tasks, avg %, latest `project_end`, max `risk_score`/`drift_score` with the owning level,
   `open_decisions` = ADRs proposed/under-discussion, `on_track`) · **MCP:** `get_initiative_rollup`.
@@ -168,7 +169,8 @@ projects and rolls up their health.
 
 ### B3. Open a project (the cockpit)
 - **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Dependencies · Capacity ·
-  Decisions · Architecture · Drift · Roadmap · Plan → Jira · Burndown · Risk · Retros · Activity**.
+  Decisions · Architecture · Drift · Roadmap · Plan → Jira · Jira Links · Burndown · Risk · Retros ·
+  Activity** (the **Jira Links** tab links Jira tickets into the project — §J9).
   The header has an **Export ▾** menu (PDF/CSV snapshot, §S), a **5-day week** toggle, **Set
   baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
@@ -745,6 +747,34 @@ component map + ADRs and maintains the queue.
   the plugin) · **MCP:** `get_activity`, `record_activity`. Datadog / Sentry / GitHub Actions can be
   layered on this substrate.
 
+### J9. Link Jira tickets to a project / initiative **[new]**
+- **What:** instead of mirroring a whole Jira project (§J3), the architect links one or more
+  **specific** Jira tickets (initiative / epic / story) to a canopy **Project** or **Initiative**.
+  canopy reads the linked ticket **plus its full descendant subtree** (BFS over Jira `parent`
+  links) and maps it idempotently (via `ExternalRef`):
+  - **target = project:** every issue becomes a Task in that project (epics → summary tasks,
+    stories → leaf tasks, parented within the project). Auto-replans the project when tasks are
+    created.
+  - **target = initiative:** each descendant **epic becomes a Project** under the initiative and
+    its stories become tasks in that project (Jira initiative→epic→story mirrored onto canopy
+    initiative→project→task). Existing projects/tasks are re-used (idempotent); the initiative-level
+    anchor ticket is associated by the link, not turned into a task.
+  Status stays **Jira-owned** (never written back). Re-linking the same ticket is an update, not a
+  duplicate. Each Jira issue maps to a single canopy entity regardless of how many links reference it.
+- **UI:** the project cockpit's **Jira Links** tab (§B3) and a **Linked Jira tickets** panel on the
+  initiative cockpit (§R3): enter a Jira key + (if more than one) pick the Jira connection → **Link
+  ticket**; each link row has **Resync** / **Unlink** (writes are planner-gated; unlink keeps the
+  already-mapped canopy entities). Shows projects/tasks created/updated/skipped per run.
+- **API:** `POST /api/v1/jira-links` (`connection_id`, `jira_key`, `target_type` ∈
+  `project|initiative`, `target_id`) → maps the subtree and returns a `JiraLinkSyncResult`;
+  `GET /api/v1/jira-links?target_type=&target_id=` (list), `POST /api/v1/jira-links/{id}/resync`,
+  `DELETE /api/v1/jira-links/{id}` · **MCP:** `link_jira_ticket`, `list_jira_links`,
+  `resync_jira_link`, `unlink_jira_ticket` (skill: `syncing-jira`).
+- **Limits:** linking a bare story directly to an *initiative* (no epic in its subtree) maps nothing
+  and is reported in the result — link stories to a *project*, or link an epic/initiative-level
+  ticket to an initiative. Traversal follows Jira `parent` links (the same hierarchy field §J3 uses),
+  not classic "Epic Link"; ancestors are mapped only if you link them too.
+
 ### J7. PagerDuty / on-call **[not built]**
 - Deferred: an optional connector to pull on-call schedules into capacity (v2 §J7). Needs the
   external PagerDuty integration; the interrupt-budget/on-call capacity model (§F2/§F4) is also not
@@ -870,7 +900,7 @@ what-if (the Gantt's §C5 covers task durations only).
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~81 curated tools that call the REST API.
+  MCP server then exposes ~85 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -879,7 +909,10 @@ what-if (the Gantt's §C5 covers task durations only).
 
 ### L3. Sync from Jira (skill + subagent)
 - Ask Claude to "sync Jira". The **`syncing-jira`** skill / **`jira-sync`** subagent find the Jira
-  connection, run an incremental (or full) sync, then reconcile the plan (`replan_schedule`).
+  connection, run an incremental (or full) sync, then reconcile the plan (`replan_schedule`). The
+  skill also covers **linking a specific Jira ticket** (initiative/epic/story) into a project or
+  initiative via `link_jira_ticket` / `list_jira_links` / `resync_jira_link` / `unlink_jira_ticket`
+  (§J9) — for pulling in just a chosen ticket tree instead of the whole project.
 
 ### L4. Write, propose & shepherd decisions (skill)
 - The **`writing-adrs`** skill drafts an ADR with a consistent template and records it (`create_adr`),

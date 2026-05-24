@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
@@ -526,6 +527,40 @@ class PullRequestRead(BaseModel):
     state: str
     url: str | None
     author: str | None
+
+
+# --- Jira ticket linking (link a Jira ticket → canopy project/initiative) ---
+class JiraLinkCreate(BaseModel):
+    connection_id: int  # the Jira connection to read the ticket(s) through
+    jira_key: str  # the root Jira ticket to link, e.g. "PROJ-123"
+    target_type: Literal["project", "initiative"]
+    target_id: int
+
+
+class JiraLinkRead(BaseModel):
+    model_config = _read
+    id: int
+    connection_id: int
+    jira_issue_id: str
+    jira_key: str
+    jira_issue_type: str | None
+    target_type: str
+    target_id: int
+    last_synced_at: datetime | None
+    created_at: datetime
+
+
+class JiraLinkSyncResult(BaseModel):
+    """What a link create / resync mapped into canopy (idempotent via ExternalRef)."""
+
+    link: JiraLinkRead
+    projects_created: int = 0
+    projects_linked: int = 0
+    tasks_created: int = 0
+    tasks_updated: int = 0
+    skipped: int = 0
+    created_project_ids: list[int] = []
+    notes: list[str] = []
 
 
 # --- Gantt / scheduling ---

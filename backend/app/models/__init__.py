@@ -18,6 +18,7 @@ from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import (
     Connection,
     ExternalRef,
+    JiraLink,
     PullRequest,
 )
 from app.models.project import (
@@ -72,6 +73,7 @@ __all__ = [
     "ExternalRef",
     "Holiday",
     "Initiative",
+    "JiraLink",
     "Milestone",
     "Project",
     "PullRequest",

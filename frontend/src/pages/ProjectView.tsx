@@ -19,6 +19,7 @@ import RoadmapView from "../components/RoadmapView";
 import ExportMenu from "../components/ExportMenu";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
 import RiskRegister from "../components/RiskRegister";
+import JiraLinksPanel from "../components/JiraLinksPanel";
 import TaskDetailPanel from "../components/TaskDetailPanel";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
@@ -45,6 +46,7 @@ type Tab =
   | "drift"
   | "roadmap"
   | "drafts"
+  | "jiralinks"
   | "burndown"
   | "risk"
   | "retros"
@@ -60,6 +62,7 @@ const TABS: Tab[] = [
   "drift",
   "roadmap",
   "drafts",
+  "jiralinks",
   "burndown",
   "risk",
   "retros",
@@ -290,6 +293,7 @@ export default function ProjectView() {
           ["drift", "Drift"],
           ["roadmap", "Roadmap"],
           ["drafts", "Plan → Jira"],
+          ["jiralinks", "Jira Links"],
           ["burndown", "Burndown"],
           ["risk", "Risk"],
           ["retros", "Retros"],
@@ -423,6 +427,8 @@ export default function ProjectView() {
           <DraftPlanView projectId={id} />
         </Suspense>
       )}
+
+      {tab === "jiralinks" && <JiraLinksPanel targetType="project" targetId={id} />}
 
       {tab === "burndown" &&
         (burndown.data ? (
