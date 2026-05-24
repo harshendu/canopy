@@ -29,6 +29,7 @@ const DriftView = lazy(() => import("../components/DriftView"));
 const RetrosView = lazy(() => import("../components/RetrosView"));
 const ActivityView = lazy(() => import("../components/ActivityView"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
+const DraftPlanView = lazy(() => import("../components/DraftPlanView"));
 
 type Tab =
   | "gantt"
@@ -39,6 +40,7 @@ type Tab =
   | "architecture"
   | "drift"
   | "roadmap"
+  | "drafts"
   | "burndown"
   | "risk"
   | "retros"
@@ -53,6 +55,7 @@ const TABS: Tab[] = [
   "architecture",
   "drift",
   "roadmap",
+  "drafts",
   "burndown",
   "risk",
   "retros",
@@ -264,6 +267,7 @@ export default function ProjectView() {
           ["architecture", "Architecture"],
           ["drift", "Drift"],
           ["roadmap", "Roadmap"],
+          ["drafts", "Plan → Jira"],
           ["burndown", "Burndown"],
           ["risk", "Risk"],
           ["retros", "Retros"],
@@ -391,6 +395,12 @@ export default function ProjectView() {
       )}
 
       {tab === "roadmap" && <RoadmapView projectId={id} />}
+
+      {tab === "drafts" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading drafts…</p>}>
+          <DraftPlanView projectId={id} />
+        </Suspense>
+      )}
 
       {tab === "burndown" &&
         (burndown.data ? (

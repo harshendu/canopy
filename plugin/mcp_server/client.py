@@ -48,3 +48,11 @@ class CanopyClient:
             resp = await client.patch(path, json=json)
             resp.raise_for_status()
             return resp.json() if resp.content else {}
+
+    async def delete(self, path: str):
+        async with httpx.AsyncClient(
+            base_url=self.base_url, headers=self._headers(), timeout=60.0
+        ) as client:
+            resp = await client.delete(path)
+            resp.raise_for_status()
+            return resp.json() if resp.content else {}

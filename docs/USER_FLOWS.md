@@ -26,7 +26,10 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 
 ## Source-of-truth boundaries (affect every sync flow)
 - **Jira** owns epics/stories and ticket **status**. Canopy syncs *from* Jira and **never writes
-  status back**. Mirrored status on canopy tasks is read-only.
+  status back**. Mirrored status on canopy tasks is read-only. **Scoped exception (§C10):** from
+  an architect-reviewed **draft plan**, canopy can **create** new tickets and **update ticket
+  content** (summary / description / story points + the epic→story parent link) — but **status is
+  still never written**; the new issues flow back in via the normal Jira sync.
 - **GitHub** owns code + some architecture docs. **Google Drive** holds design docs. Canopy reads
   these on demand and caches lightly.
 
@@ -159,7 +162,8 @@ projects and rolls up their health.
 
 ### B3. Open a project (the cockpit)
 - **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Dependencies · Capacity ·
-  Decisions · Architecture · Drift · Roadmap · Burndown · Risk · Retros · Activity**. The header has a **5-day week** toggle, **Set
+  Decisions · Architecture · Drift · Roadmap · Plan → Jira · Burndown · Risk · Retros · Activity**.
+  The header has a **5-day week** toggle, **Set
   baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
   `/projects/:id?tab=drift`).
@@ -251,6 +255,49 @@ projects and rolls up their health.
   `app/services/flow.py` (grouping + P85 + aging); age/cycle dates come from `TaskStatusHistory`.
 - **Not built:** **persisted** per-lane / per-engineer WIP limits (the limit is a client-side knob
   for now); drag-to-change status (status is Jira-owned, read-only).
+
+---
+
+## C10. Draft plans → create/update Jira tickets **[new]**
+
+The architect's "plan first, then make the tickets" flow. A **draft plan** is a staging area
+(its own tables — kept out of the live Gantt/CPM/board) where the architect proposes phases,
+tasks, estimates, and story points, reviews them, then **creates the Jira tickets** from the
+draft. This is the only place canopy writes *to* Jira, and it writes **content only** — status
+stays Jira-owned (§Source-of-truth boundaries).
+
+### C10.1 Create & review a draft plan
+- **UI:** project → **Plan → Jira** tab → "New draft plan" (title + optional **source** note, e.g.
+  the design-doc/PRD url). Select a plan to expand it: add proposed tasks (name, **type** —
+  story/task · epic/phase · milestone, **estimate (days)**, **story points**, and a **parent**
+  epic to nest under), and remove tasks. Drafts carry a status: **draft → synced → archived**.
+- **API:** `GET/POST /api/v1/projects/{id}/draft-plans`, `GET/PATCH/DELETE
+  /api/v1/draft-plans/{plan_id}`, `POST /api/v1/draft-plans/{plan_id}/tasks`,
+  `PATCH/DELETE /api/v1/draft-tasks/{task_id}` (writes are planner-gated) · **MCP:**
+  `list_draft_plans`, `create_draft_plan`, `get_draft_plan`, `add_draft_task`,
+  `update_draft_task`, `delete_draft_task`.
+
+### C10.2 Push the draft to Jira (create / update tickets)
+- **UI:** expand a draft → **Create Jira tickets** (becomes **Update Jira tickets** once synced).
+  Picks the project's Jira connection automatically (or choose one when several match). Reports
+  per-task created/updated/failed with the new Jira keys; a partial failure doesn't abort the rest.
+- **API:** `POST /api/v1/draft-plans/{plan_id}/push-to-jira` (optional `connection_id`) · **MCP:**
+  `push_draft_to_jira`. Logic is in `app/services/draft_sync.py`; the Jira write methods are
+  `JiraConnector.create_issue` / `update_issue` (`POST/PUT /rest/api/3/issue`, description as ADF).
+  Epics (summary tasks) are created before their stories so the parent link resolves; each pushed
+  draft task is stamped with its Jira id/key, so a **re-push updates** rather than duplicates.
+- **Then sync back:** canopy does **not** create local tasks on push — run a Jira sync (§J3) to
+  pull the new issues in as canopy tasks (then `replan_schedule`). This keeps Jira the source of
+  truth for the materialized tickets.
+- **Jira config (per connection, §J1):** `story_point_field` (e.g. `customfield_10016`; without it
+  points are skipped), and optional `epic_issue_type` / `story_issue_type` (default `Epic` / `Story`).
+
+### C10.3 Not built (deliberate limits)
+- **No status writes** (by design — the source-of-truth rule holds).
+- **Draft dependencies** aren't modeled — the draft captures the WBS (epic→story via `parent_id`)
+  and estimates; sequencing/dependencies are added on the live tasks after sync-back.
+- No **diff/preview** of "what will change in Jira" before a push, and no automatic
+  `replan_schedule` after sync-back (run it from the project header).
 
 ---
 
@@ -573,7 +620,9 @@ component map + ADRs and maintains the queue.
 ### J1. Add a connection
 - **UI:** `/connectors` → choose provider (Jira / GitHub / Google Drive), name it, optionally paste an
   API token, and provide provider config JSON (e.g. Jira: `base_url`, `email`, `project_id`,
-  `jira_project_key`; GitHub: `owner`, `repo`).
+  `jira_project_key`; GitHub: `owner`, `repo`). Jira also accepts optional **ticket-creation** keys
+  used by §C10: `story_point_field` (e.g. `customfield_10016`), `epic_issue_type` (default `Epic`),
+  `story_issue_type` (default `Story`).
 - **API:** `POST /api/v1/connectors/connections` (token is encrypted at rest) · **MCP:**
   `list_connections`.
 
@@ -645,7 +694,7 @@ component map + ADRs and maintains the queue.
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~61 curated tools that call the REST API.
+  MCP server then exposes ~68 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -693,6 +742,14 @@ component map + ADRs and maintains the queue.
 - The **`pr-to-adr-linker`** skill maps a PR's changed paths to components (via code bindings),
   finds the ADRs governing them (`adr_impact`), and judges whether the PR implements / contradicts /
   is unrelated to each — building implementation traceability.
+
+### L11. Draft a plan → create Jira tickets (skill) **[new]**
+- The **`drafting-jira-tickets`** skill turns inputs (a codebase via `read_repo_file`, a design
+  doc/PRD via `read_design_doc`, existing epics via `trigger_jira_sync`) into a reviewable **draft
+  plan** (`create_draft_plan` + `add_draft_task` with estimates + story points), refines it with the
+  architect (`get_draft_plan` / `update_draft_task` / `delete_draft_task`), then **creates the Jira
+  tickets** from it (`push_draft_to_jira`) and syncs them back (`trigger_jira_sync`). Content only —
+  status is never written (§C10).
 
 ---
 

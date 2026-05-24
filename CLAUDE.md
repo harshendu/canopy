@@ -17,7 +17,11 @@ and a Claude Code plugin (FastMCP server + skills + subagents).
 
 ## Source-of-truth boundaries (do not violate)
 - **Jira** owns epics/stories and ticket **status**. canopy syncs *from* Jira and **never writes
-  status back**. Mirrored status on canopy tasks is read-only.
+  status back**. Mirrored status on canopy tasks is read-only. **Scoped exception:** from an
+  architect-reviewed **draft plan** (see Draft plans below) canopy may *create* tickets and *update
+  ticket content* (summary/description/story points + epic→story parent) via
+  `JiraConnector.create_issue`/`update_issue` — but **status is still never written**, and canopy
+  does not create local tasks on push (the normal Jira sync pulls the new issues back).
 - **GitHub** owns code + some architecture docs. **Google Drive** holds design docs. canopy reads
   these; it does not own them.
 
@@ -77,6 +81,14 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   event — `GET .../baselines`; the Gantt overlays current-vs-baseline as **schedule variance**, and
   "drift" is reserved for architecture drift §N). A Jira sync that creates tasks auto-replans the
   project. Keep the scheduler/planner pure-ish and unit-tested.
+- **Draft plans (plan → Jira):** `DraftPlan`/`DraftTask` (`app/models/draft.py`) are a staging area
+  the architect reviews **before** any real work exists — kept out of the live Gantt/CPM/board.
+  CRUD + push live in `app/api/v1/drafts.py` (planner-gated); the push orchestration is
+  `app/services/draft_sync.py` (creates epics before stories, stamps each draft task with its Jira
+  id/key so a re-push updates not duplicates, flips the plan to `synced`). It writes **content only**
+  via `JiraConnector.create_issue`/`update_issue` (story points use the connection's
+  `story_point_field`). MCP: `create_draft_plan`/`add_draft_task`/`push_draft_to_jira` (skill:
+  `drafting-jira-tickets`). USER_FLOWS §C10.
 - **Flow board:** `GET /projects/{id}/board` groups leaf tasks into status lanes with WIP per lane,
   and flags **aging** tasks (in-status age > the team's cycle-time P85) — pure logic in
   `app/services/flow.py`; age/cycle dates derived from `TaskStatusHistory`. WIP limits are a

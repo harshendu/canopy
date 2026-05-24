@@ -915,6 +915,93 @@ class RetroFollowUpResponse(BaseModel):
     created_adr_id: int | None = None
 
 
+# --- Draft plans (review → create Jira tickets) ---
+class DraftPlanCreate(BaseModel):
+    title: str
+    description: str | None = None
+    source: str | None = None  # where the plan came from (a design doc / PRD / url)
+
+
+class DraftPlanUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    status: str | None = None  # draft | synced | archived
+    source: str | None = None
+
+
+class DraftPlanRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    title: str
+    description: str | None
+    status: str
+    source: str | None
+    synced_at: datetime | None
+    created_at: datetime
+
+
+class DraftTaskCreate(BaseModel):
+    name: str
+    description: str | None = None
+    type: TaskType = TaskType.task
+    parent_id: int | None = None  # a summary draft-task id, to nest (epic → story)
+    estimate_days: int = 1
+    story_points: float | None = None
+    sort_order: int = 0
+
+
+class DraftTaskUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    type: TaskType | None = None
+    parent_id: int | None = None
+    estimate_days: int | None = None
+    story_points: float | None = None
+    sort_order: int | None = None
+
+
+class DraftTaskRead(BaseModel):
+    model_config = _read
+    id: int
+    plan_id: int
+    parent_id: int | None
+    name: str
+    description: str | None
+    type: TaskType
+    estimate_days: int
+    story_points: float | None
+    sort_order: int
+    jira_issue_id: str | None
+    jira_key: str | None
+
+
+class DraftPlanDetail(DraftPlanRead):
+    tasks: list[DraftTaskRead] = []
+
+
+class DraftPushRequest(BaseModel):
+    # The Jira connection to push to. Omit to auto-resolve the project's Jira connection.
+    connection_id: int | None = None
+
+
+class DraftPushTaskResult(BaseModel):
+    draft_task_id: int
+    name: str
+    action: str  # created | updated | failed
+    jira_key: str | None = None
+    error: str | None = None
+
+
+class DraftPushResult(BaseModel):
+    plan_id: int
+    connection_id: int
+    created: int
+    updated: int
+    failed: int
+    results: list[DraftPushTaskResult]
+
+
 # --- Engineer workspace (/me) ---
 class MyTodayResponse(BaseModel):
     user: UserRead

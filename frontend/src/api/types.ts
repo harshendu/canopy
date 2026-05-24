@@ -544,3 +544,49 @@ export interface AlertsResponse {
   project_id: number;
   alerts: Alert[];
 }
+
+export interface DraftPlan {
+  id: number;
+  project_id: number;
+  title: string;
+  description: string | null;
+  status: string;
+  source: string | null;
+  synced_at: string | null;
+  created_at: string;
+}
+
+export interface DraftTask {
+  id: number;
+  plan_id: number;
+  parent_id: number | null;
+  name: string;
+  description: string | null;
+  type: TaskType;
+  estimate_days: number;
+  story_points: number | null;
+  sort_order: number;
+  jira_issue_id: string | null;
+  jira_key: string | null;
+}
+
+export interface DraftPlanDetail extends DraftPlan {
+  tasks: DraftTask[];
+}
+
+export interface DraftPushTaskResult {
+  draft_task_id: number;
+  name: string;
+  action: string;
+  jira_key: string | null;
+  error: string | null;
+}
+
+export interface DraftPushResult {
+  plan_id: number;
+  connection_id: number;
+  created: number;
+  updated: number;
+  failed: number;
+  results: DraftPushTaskResult[];
+}
