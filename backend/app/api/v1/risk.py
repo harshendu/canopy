@@ -23,7 +23,7 @@ from app.schemas.entities import (
     RiskResponse,
     RiskSnapshotRead,
 )
-from app.services.capacity import AllocationSpan, weekly_capacity
+from app.services.capacity import AllocationSpan, AvailabilitySpan, over_allocated_weeks
 from app.services.risk import RiskReport, RiskSignals, compute_risk
 
 router = APIRouter()
@@ -50,6 +50,7 @@ def report_for(
     today: date,
     drift_score: int = 0,
     activity_events: list[ActivityEvent] | None = None,
+    availability: list[AvailabilitySpan] | None = None,
 ) -> RiskReport:
     """Adapt loaded ORM rows into pure RiskSignals and score them."""
     quality_available, build_failures, open_incidents = _quality_signals(activity_events or [])
@@ -74,20 +75,18 @@ def report_for(
         win_end = project_target or (max(ends) if ends else win_start + timedelta(weeks=8))
         if win_end < win_start:
             win_end = win_start
-        grid = weekly_capacity(
-            [
-                AllocationSpan(a.engineer_id, a.percent_allocation, a.start_date, a.end_date)
-                for a in allocations
-            ],
-            win_start,
-            win_end,
-        )
-        for eng_id, by_week in grid.items():
-            for week, pct in by_week.items():
-                if pct > 100:
-                    over_allocations.append(
-                        (engineer_names.get(eng_id, f"#{eng_id}"), week.isoformat(), pct)
-                    )
+        over_allocations = [
+            (engineer_names.get(o.engineer_id, f"#{o.engineer_id}"), o.week.isoformat(), o.percent)
+            for o in over_allocated_weeks(
+                [
+                    AllocationSpan(a.engineer_id, a.percent_allocation, a.start_date, a.end_date)
+                    for a in allocations
+                ],
+                availability or [],
+                win_start,
+                win_end,
+            )
+        ]
 
     deferred_overdue = [
         (a.number, a.title)
@@ -144,7 +143,7 @@ async def _compute_report(session: SessionDep, project: Project) -> RiskReport:
     """Load everything risk scoring needs for one project and score it."""
     from app.api.v1.drift import drift_score_from_events
     from app.models.architecture import DriftEvent
-    from app.models.team import Engineer
+    from app.models.team import Engineer, EngineerAvailability
 
     project_id = project.id
     tasks = list(
@@ -160,6 +159,10 @@ async def _compute_report(session: SessionDep, project: Project) -> RiskReport:
         for e in (await session.execute(select(Engineer))).scalars().all()
         if e.id is not None
     }
+    availability = [
+        AvailabilitySpan(a.engineer_id, a.capacity_factor, a.start_date, a.end_date)
+        for a in (await session.execute(select(EngineerAvailability))).scalars().all()
+    ]
     adrs = list(
         (
             await session.execute(
@@ -189,6 +192,7 @@ async def _compute_report(session: SessionDep, project: Project) -> RiskReport:
         today=date.today(),
         drift_score=drift_score_from_events(drift_events),
         activity_events=activity_events,
+        availability=availability,
     )
 
 

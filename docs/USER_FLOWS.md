@@ -360,7 +360,8 @@ surfaces where decisions get made — the engineer workspace and the project ale
   `add_engineer` (extended).
 - **Not built (v2 §F1):** on-call schedule (needs the PagerDuty connector §J7).
 - **Not built (v2 §F2–F5):** committed-hours/interrupt-budget *allocation*, planned-vs-realized
-  capacity, engineer PTO feeding CPM, and skill-task fit scores — allocation is still percent-based.
+  capacity, and skill-task fit scores — allocation is still percent-based. **Engineer availability
+  now exists (§F4)** but informs the capacity/over-allocation views only, **not** CPM dates.
 
 ### F2. Allocate engineers (capacity)
 - **UI:** project → Capacity tab → "Allocate" form (engineer, percent, date range) → "Add".
@@ -374,8 +375,22 @@ surfaces where decisions get made — the engineer workspace and the project ale
   three projects = 150%) is visible where per-project views hide it; rows split across >1 project
   are flagged with their contributing project keys.
 - **API:** `GET /api/v1/team/capacity?project_id=` (omit `project_id` for the org-wide grid;
-  `project_id` is `null` in the response and each row carries `projects` = contributing keys) ·
+  `project_id` is `null` in the response and each row carries `projects` = contributing keys, and
+  `availability` = week→factor for any week below full capacity) ·
   **MCP:** `get_capacity` (`project_id` now optional). Closes the v2 §F cross-project blind spot.
+
+### F4. Engineer availability (PTO / leave / ramp-up) **[new]**
+- **UI:** `/team` → an engineer's **availability** editor — add date ranges with a **capacity
+  factor** (0 = fully out, 0.5 = half). Reduced-capacity weeks are shaded on the capacity heatmap.
+- **API:** `GET /api/v1/team/availability?engineer_id=`, `POST /api/v1/team/availability`,
+  `PATCH/DELETE /api/v1/team/availability/{id}` (`EngineerAvailability`: engineer, date range,
+  `capacity_factor`, note). Reads are open; writes are planner-gated.
+- **Effect:** the capacity heatmap, the **risk** over-allocation indicator, and the **alerts**
+  digest now flag a week as over-allocated when summed allocation exceeds **100% × the worst
+  availability factor that week** (so 60% allocation during half-time PTO is already "over").
+- **Deliberately not built:** availability does **not** push CPM/schedule dates (that is
+  resource-constrained scheduling/leveling — a separate, harder problem); it adjusts the
+  capacity/over-allocation *views* only. Per-person time-off does not yet sync from any calendar.
 
 ---
 

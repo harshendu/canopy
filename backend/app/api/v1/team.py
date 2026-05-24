@@ -1,14 +1,17 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, status
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.models.project import Project
-from app.models.team import Allocation, Engineer, Role
+from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.schemas.entities import (
     AllocationCreate,
     AllocationRead,
+    AvailabilityCreate,
+    AvailabilityRead,
+    AvailabilityUpdate,
     CapacityResponse,
     CapacityRow,
     EngineerCreate,
@@ -17,7 +20,13 @@ from app.schemas.entities import (
     RoleCreate,
     RoleRead,
 )
-from app.services.capacity import AllocationSpan, mondays, weekly_capacity
+from app.services.capacity import (
+    AllocationSpan,
+    AvailabilitySpan,
+    mondays,
+    weekly_availability,
+    weekly_capacity,
+)
 
 router = APIRouter()
 
@@ -150,6 +159,18 @@ async def capacity(
     grid = weekly_capacity(spans, window_start, window_end)
     weeks = [w.isoformat() for w in mondays(window_start, window_end)]
 
+    # Per-engineer availability (PTO/ramp-up) reduces the effective ceiling — surface the
+    # factor so the heatmap can shade weeks where someone is partially out.
+    avail_rows = list((await session.execute(select(EngineerAvailability))).scalars().all())
+    avail_grid = weekly_availability(
+        [
+            AvailabilitySpan(a.engineer_id, a.capacity_factor, a.start_date, a.end_date)
+            for a in avail_rows
+        ],
+        window_start,
+        window_end,
+    )
+
     projects_by_engineer: dict[int, set[str]] = {}
     for a in allocations:
         if a.project_id is not None and a.project_id in project_keys:
@@ -161,7 +182,61 @@ async def capacity(
             engineer_name=engineers.get(eng_id, f"#{eng_id}"),
             cells={week.isoformat(): pct for week, pct in by_week.items()},
             projects=sorted(projects_by_engineer.get(eng_id, set())),
+            availability={
+                week.isoformat(): factor
+                for week, factor in avail_grid.get(eng_id, {}).items()
+            },
         )
         for eng_id, by_week in sorted(grid.items())
     ]
     return CapacityResponse(project_id=project_id, weeks=weeks, rows=rows)
+
+
+@router.get("/availability", response_model=list[AvailabilityRead])
+async def list_availability(
+    session: SessionDep, _: CurrentUser, engineer_id: int | None = None
+) -> list[EngineerAvailability]:
+    stmt = select(EngineerAvailability)
+    if engineer_id is not None:
+        stmt = stmt.where(EngineerAvailability.engineer_id == engineer_id)
+    result = await session.execute(stmt.order_by(col(EngineerAvailability.start_date)))
+    return list(result.scalars().all())
+
+
+@router.post(
+    "/availability", response_model=AvailabilityRead, status_code=status.HTTP_201_CREATED
+)
+async def create_availability(
+    session: SessionDep, _: PlannerWriter, payload: AvailabilityCreate
+) -> EngineerAvailability:
+    availability = EngineerAvailability(**payload.model_dump())
+    session.add(availability)
+    await session.commit()
+    await session.refresh(availability)
+    return availability
+
+
+@router.patch("/availability/{availability_id}", response_model=AvailabilityRead)
+async def update_availability(
+    session: SessionDep, _: PlannerWriter, availability_id: int, payload: AvailabilityUpdate
+) -> EngineerAvailability:
+    availability = await session.get(EngineerAvailability, availability_id)
+    if availability is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Availability not found"
+        )
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(availability, field, value)
+    await session.commit()
+    await session.refresh(availability)
+    return availability
+
+
+@router.delete("/availability/{availability_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_availability(
+    session: SessionDep, _: PlannerWriter, availability_id: int
+) -> None:
+    availability = await session.get(EngineerAvailability, availability_id)
+    if availability is not None:
+        await session.delete(availability)
+        await session.commit()

@@ -12,7 +12,7 @@ from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
 from app.models.base import ADRStatus, TaskType
 from app.models.project import Dependency, Initiative, Project, Task, TaskStatusHistory
-from app.models.team import Allocation, Engineer
+from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.schemas.entities import (
     CriticalPathHandoff,
     CriticalPathNode,
@@ -25,6 +25,7 @@ from app.schemas.entities import (
     ProjectSummary,
 )
 from app.services.burndown import is_done_status
+from app.services.capacity import AvailabilitySpan
 from app.services.cross_project import CPDep, CPTask, cross_project_critical_path
 from app.services.drift import level as drift_level
 from app.services.forecast import monte_carlo_forecast, weekly_throughput
@@ -118,6 +119,10 @@ async def initiative_rollup(
         for e in (await session.execute(select(Engineer))).scalars().all()
         if e.id is not None
     }
+    availability = [
+        AvailabilitySpan(a.engineer_id, a.capacity_factor, a.start_date, a.end_date)
+        for a in (await session.execute(select(EngineerAvailability))).scalars().all()
+    ]
     today = date.today()
 
     summaries: list[ProjectSummary] = []
@@ -170,6 +175,7 @@ async def initiative_rollup(
                 drift_events=drift_events,
                 activity_events=activity_events,
                 today=today,
+                availability=availability,
             )
         )
 

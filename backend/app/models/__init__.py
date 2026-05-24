@@ -34,7 +34,7 @@ from app.models.project import (
     TaskStatusHistory,
 )
 from app.models.retro import Retrospective, RetrospectiveComment
-from app.models.team import Allocation, Engineer, Role
+from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
 
 __all__ = [
@@ -58,6 +58,7 @@ __all__ = [
     "DriftScan",
     "DriftSuppression",
     "Engineer",
+    "EngineerAvailability",
     "ExternalRef",
     "Holiday",
     "Initiative",

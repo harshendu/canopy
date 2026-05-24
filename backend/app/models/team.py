@@ -37,3 +37,17 @@ class Allocation(TimestampMixin, table=True):
     capacity_hours_per_week: float = 40.0
     start_date: date | None = None
     end_date: date | None = None
+
+
+class EngineerAvailability(TimestampMixin, table=True):
+    """A date range during which an engineer is partially/fully unavailable (PTO, leave,
+    ramp-up). `capacity_factor` is the FRACTION of normal capacity available in the range:
+    0.0 = fully out, 0.5 = half. It scales the over-allocation ceiling in the capacity
+    views (a week's allocation demand is "over" when it exceeds 100% * factor)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    engineer_id: int = Field(foreign_key="engineer.id", index=True)
+    start_date: date = Field(index=True)
+    end_date: date
+    capacity_factor: float = 0.0  # 0..1
+    note: str | None = None

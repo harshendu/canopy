@@ -10,7 +10,7 @@ from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
 from app.models.base import TaskType
 from app.models.project import Holiday, Project, Task
-from app.models.team import Allocation, Engineer
+from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.schemas.entities import (
     HolidayCreate,
     HolidayRead,
@@ -20,6 +20,7 @@ from app.schemas.entities import (
     ProjectSummary,
     ProjectUpdate,
 )
+from app.services.capacity import AvailabilitySpan
 from app.services.drift import level as drift_level
 
 router = APIRouter()
@@ -35,6 +36,7 @@ def summarize_project(
     drift_events: list[DriftEvent],
     activity_events: list[ActivityEvent],
     today: date,
+    availability: list[AvailabilitySpan] | None = None,
 ) -> ProjectSummary:
     """Build a project's portfolio summary (risk + drift + progress) from loaded rows.
 
@@ -57,6 +59,7 @@ def summarize_project(
         today=today,
         drift_score=drift,
         activity_events=activity_events,
+        availability=availability,
     )
     return ProjectSummary(
         id=project.id,
@@ -102,6 +105,10 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
     activity_by_project: dict[int, list[ActivityEvent]] = {}
     for ae in all_activity:
         activity_by_project.setdefault(ae.project_id, []).append(ae)
+    availability = [
+        AvailabilitySpan(a.engineer_id, a.capacity_factor, a.start_date, a.end_date)
+        for a in (await session.execute(select(EngineerAvailability))).scalars().all()
+    ]
     today = date.today()
 
     summaries: list[ProjectSummary] = []
@@ -122,6 +129,7 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
                 drift_events=drift_by_project.get(project.id, []),
                 activity_events=activity_by_project.get(project.id, []),
                 today=today,
+                availability=availability,
             )
         )
     return PortfolioResponse(projects=summaries)

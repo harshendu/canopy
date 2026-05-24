@@ -16,7 +16,7 @@ from app.models.project import (
     Task,
     TaskStatusHistory,
 )
-from app.models.team import Allocation, Engineer
+from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.schemas.entities import (
     AlertRead,
     AlertsResponse,
@@ -42,7 +42,12 @@ from app.services.alerts import (
     compute_alerts,
 )
 from app.services.burndown import compute_burndown, is_done_status
-from app.services.capacity import AllocationSpan, mondays, weekly_capacity
+from app.services.capacity import (
+    AllocationSpan,
+    AvailabilitySpan,
+    mondays,
+    over_allocated_weeks,
+)
 from app.services.flow import BoardTaskInput, build_board
 from app.services.forecast import monte_carlo_forecast, weekly_throughput
 from app.services.planner import PlanOutcome, reschedule_project
@@ -372,18 +377,24 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
         ends = [a.end_date for a in allocations if a.end_date]
         win_start = project.start_date or (min(starts) if starts else date.today())
         win_end = project.target_date or (max(ends) if ends else win_start + timedelta(weeks=8))
-        grid = weekly_capacity(
-            [AllocationSpan(a.engineer_id, a.percent_allocation, a.start_date, a.end_date)
-             for a in allocations],
-            win_start,
-            win_end,
-        )
-        for eng_id, by_week in grid.items():
-            for week, pct in by_week.items():
-                if pct > 100:
-                    over.append(
-                        OverAllocation(engineers.get(eng_id, f"#{eng_id}"), week.isoformat(), pct)
-                    )
+        availability = [
+            AvailabilitySpan(a.engineer_id, a.capacity_factor, a.start_date, a.end_date)
+            for a in (await session.execute(select(EngineerAvailability))).scalars().all()
+        ]
+        over = [
+            OverAllocation(
+                engineers.get(o.engineer_id, f"#{o.engineer_id}"), o.week.isoformat(), o.percent
+            )
+            for o in over_allocated_weeks(
+                [
+                    AllocationSpan(a.engineer_id, a.percent_allocation, a.start_date, a.end_date)
+                    for a in allocations
+                ],
+                availability,
+                win_start,
+                win_end,
+            )
+        ]
 
     alert_tasks = [
         AlertTask(t.id, t.name, t.type == TaskType.summary, t.end, t.deadline)

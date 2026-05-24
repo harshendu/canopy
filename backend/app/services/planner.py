@@ -33,6 +33,70 @@ class PlanOutcome:
     deadline_violations: list[int]
 
 
+@dataclass
+class SchedInput:
+    """A task as the scheduler needs it, decoupled from the ORM so the pure pass can run over
+    live `Task`s or scenario rows alike. `duration` is already the *effective* duration."""
+
+    task_id: int
+    duration: int
+    type: TaskType
+    parent_id: int | None = None
+    pinned_start: date | None = None
+    deadline: date | None = None
+
+
+def effective_duration(task_type: TaskType, duration: int, override: int | None = None) -> int:
+    """The duration the scheduler should use: an explicit override wins; milestones are
+    zero-duration markers; everything else clamps to a non-negative day count."""
+    if override is not None:
+        return override
+    return 0 if task_type == TaskType.milestone else max(duration, 0)
+
+
+def compute_schedule(
+    tasks: list[SchedInput],
+    deps: list[SchedDep],
+    *,
+    project_start: date,
+    calendar: WorkingCalendar,
+) -> dict[int, SchedResult]:
+    """The pure middle of (re)scheduling: build SchedTasks, run CPM, map offsets to dates.
+    Shared by `reschedule_project` and the scenario engine. Raises CycleError on a cycle."""
+    sched_tasks = [
+        SchedTask(
+            id=t.task_id,
+            duration=t.duration,
+            is_summary=t.type == TaskType.summary,
+            pinned_start_offset=(
+                working_days_between(project_start, t.pinned_start, calendar)
+                if t.pinned_start
+                else None
+            ),
+        )
+        for t in tasks
+    ]
+    results = compute_cpm(sched_tasks, deps)
+    assign_dates(sched_tasks, results, project_start, calendar)
+    return results
+
+
+def schedule_outcome(
+    inputs: list[SchedInput], results: dict[int, SchedResult]
+) -> tuple[date | None, list[int]]:
+    """Derive (project_end, deadline_violations) from a computed schedule — pure."""
+    deadlines = {i.task_id: i.deadline for i in inputs}
+    project_end: date | None = None
+    violations: list[int] = []
+    for tid, res in results.items():
+        if res.end and (project_end is None or res.end > project_end):
+            project_end = res.end
+        deadline = deadlines.get(tid)
+        if deadline and res.end and res.end > deadline:
+            violations.append(tid)
+    return project_end, violations
+
+
 def _project_start(project: Project, tasks: list[Task]) -> date:
     if project.start_date:
         return project.start_date
@@ -85,9 +149,13 @@ async def reschedule_project(
     project_id: int,
     *,
     persist: bool = True,
+    commit: bool = True,
     duration_overrides: dict[int, int] | None = None,
 ) -> PlanOutcome | None:
-    """Recompute the schedule. None if the project is missing; raises CycleError on a cycle."""
+    """Recompute the schedule. None if the project is missing; raises CycleError on a cycle.
+
+    `persist` mutates the loaded `Task` rows; `commit` flushes the transaction (set
+    `commit=False` to fold the replan into a larger transaction, e.g. scenario apply)."""
     project = await session.get(Project, project_id)
     if project is None:
         return None
@@ -99,39 +167,27 @@ async def reschedule_project(
     start_ref = _project_start(project, tasks)
     overrides = duration_overrides or {}
 
-    sched_tasks: list[SchedTask] = []
-    for t in tasks:
-        if t.id is None:
-            continue
-        duration = overrides.get(t.id, 0 if t.type == TaskType.milestone else max(t.duration, 0))
-        sched_tasks.append(
-            SchedTask(
-                id=t.id,
-                duration=duration,
-                is_summary=t.type == TaskType.summary,
-                pinned_start_offset=(
-                    working_days_between(start_ref, t.start, calendar) if t.start else None
-                ),
-            )
+    inputs = [
+        SchedInput(
+            task_id=t.id,
+            duration=effective_duration(t.type, t.duration, overrides.get(t.id)),
+            type=t.type,
+            parent_id=t.parent_id,
+            pinned_start=t.start,
+            deadline=t.deadline,
         )
+        for t in tasks
+        if t.id is not None
+    ]
     sched_deps = [SchedDep(d.predecessor_id, d.successor_id, d.type.value, d.lag) for d in deps]
 
-    results = compute_cpm(sched_tasks, sched_deps)
-    assign_dates(sched_tasks, results, start_ref, calendar)
-
-    by_id = {t.id: t for t in tasks}
-    project_end: date | None = None
-    violations: list[int] = []
-    for tid, res in results.items():
-        if res.end and (project_end is None or res.end > project_end):
-            project_end = res.end
-        task = by_id.get(tid)
-        if task and task.deadline and res.end and res.end > task.deadline:
-            violations.append(tid)
+    results = compute_schedule(inputs, sched_deps, project_start=start_ref, calendar=calendar)
+    project_end, violations = schedule_outcome(inputs, results)
 
     if persist:
         _persist(tasks, results)
-        await session.commit()
+        if commit:
+            await session.commit()
 
     return PlanOutcome(
         scheduled_tasks=len(results),
