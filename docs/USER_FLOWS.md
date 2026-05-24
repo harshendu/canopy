@@ -819,7 +819,7 @@ what-if (the Gantt's §C5 covers task durations only).
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~68 curated tools that call the REST API.
+  MCP server then exposes ~81 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -875,6 +875,15 @@ what-if (the Gantt's §C5 covers task durations only).
   architect (`get_draft_plan` / `update_draft_task` / `delete_draft_task`), then **creates the Jira
   tickets** from it (`push_draft_to_jira`) and syncs them back (`trigger_jira_sync`). Content only —
   status is never written (§C10).
+
+### L12. Explore a what-if scenario (subagent) **[new]**
+- The **`scenario-architect`** subagent answers what-if questions on an initiative without touching
+  the live plan: it `create_scenario`s a branch, makes the edits (`set_scenario_allocation`,
+  `set_scenario_availability`, `add_scenario_task` / `add_scenario_dependency`,
+  `update_scenario_task`), then reads `compare_scenario` (+ `scenario_critical_path` /
+  `scenario_capacity`) and reports the project-end and critical-path trade-off. It **does not
+  `apply_scenario`** unless explicitly told to (apply writes canopy's plan + replans, never Jira).
+  This is the agentic surface behind §T.
 
 ---
 
