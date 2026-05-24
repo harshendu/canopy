@@ -1,5 +1,10 @@
 # canopy
 
+> *Like a **forest canopy** — the interconnected upper layer that shelters the ecosystem beneath it
+> and is the one vantage from which you see the whole of it at once.* canopy gives a software
+> architect that layer over delivery: a single overhead view tying together the projects, teams, and
+> dependencies growing underneath.
+
 **Technical Architect Project Management** — a tool for a software architect to manage the
 architecture and delivery of a codebase: projects, milestones, teams, dependencies, ADRs, and
 **Gantt scheduling** (critical path), with **sync from Jira** and reads from **GitHub** and
