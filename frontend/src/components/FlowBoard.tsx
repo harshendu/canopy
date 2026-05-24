@@ -4,7 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { BoardResponse } from "../api/types";
 
-export default function FlowBoard({ projectId }: { projectId: number }) {
+export default function FlowBoard({
+  projectId,
+  onTaskClick,
+}: {
+  projectId: number;
+  onTaskClick?: (taskId: number) => void;
+}) {
   const [wipLimit, setWipLimit] = useState(5);
   const { data } = useQuery({
     queryKey: ["board", projectId],
@@ -65,9 +71,10 @@ export default function FlowBoard({ projectId }: { projectId: number }) {
                 {lane.tasks.map((t) => (
                   <li
                     key={t.id}
+                    onClick={onTaskClick ? () => onTaskClick(t.id) : undefined}
                     className={`rounded border bg-white p-2 text-sm ${
                       t.aging ? "border-amber-300" : "border-slate-200"
-                    }`}
+                    } ${onTaskClick ? "cursor-pointer hover:border-canopy-400" : ""}`}
                   >
                     <div className="truncate">{t.name}</div>
                     <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">

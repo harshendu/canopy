@@ -56,12 +56,20 @@ def register(mcp, client) -> None:
         reason: str,
         blocking_task_id: int | None = None,
         raised_by_engineer_id: int | None = None,
+        category: str | None = None,
+        severity: str | None = None,
+        owner_engineer_id: int | None = None,
+        needed_by: str | None = None,
     ) -> dict:
         """Flag a blocker (impediment) on a task — the leading signal that work has stalled.
 
         `blocking_task_id` optionally names the task that must finish first. `raised_by_engineer_id`
         defaults to the calling user's engineer. Open blockers show in the engineer workspace and
         the project alerts digest.
+
+        For PM triage: `category` is dependency|resource|decision|external|technical; `severity`
+        is low|medium|high|critical (high/critical escalate the digest alert to an error);
+        `owner_engineer_id` is who must clear it; `needed_by` is the YYYY-MM-DD date it's needed by.
         """
         return await client.post(
             f"/tasks/{task_id}/blockers",
@@ -69,6 +77,10 @@ def register(mcp, client) -> None:
                 "reason": reason,
                 "blocking_task_id": blocking_task_id,
                 "raised_by_engineer_id": raised_by_engineer_id,
+                "category": category,
+                "severity": severity,
+                "owner_engineer_id": owner_engineer_id,
+                "needed_by": needed_by,
             },
         )
 

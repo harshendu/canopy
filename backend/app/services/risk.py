@@ -46,6 +46,8 @@ class RiskSignals:
     drifted_tasks: list[tuple[int, str]] = field(default_factory=list)  # (task_id, name)
     critical_task_count: int = 0
     critical_zero_float_count: int = 0
+    # tasks whose 3-point estimate spread is wide (optimistic↔pessimistic uncertainty)
+    high_uncertainty_tasks: list[tuple[int, str]] = field(default_factory=list)  # (task_id, name)
     # capacity
     over_allocations: list[tuple[str, str, float]] = field(
         default_factory=list
@@ -133,6 +135,13 @@ def _schedule_family(s: RiskSignals) -> RiskFamily:
                 "have zero float"
             ),
             details=[],
+        ),
+        RiskIndicator(
+            key="estimate_uncertainty",
+            label="Estimate uncertainty",
+            score=_cap(len(s.high_uncertainty_tasks) * 15),
+            summary=f"{len(s.high_uncertainty_tasks)} task(s) with a wide estimate spread",
+            details=[f"#{tid} {name}" for tid, name in s.high_uncertainty_tasks],
         ),
     ]
     return RiskFamily(

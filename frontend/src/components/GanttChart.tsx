@@ -32,7 +32,13 @@ interface Geom {
   y: number;
 }
 
-export default function GanttChart({ data }: { data: GanttResponse }) {
+export default function GanttChart({
+  data,
+  onTaskClick,
+}: {
+  data: GanttResponse;
+  onTaskClick?: (taskId: number) => void;
+}) {
   const [dayW, setDayW] = useState(DEFAULT_DAY_W);
   const { geoms, width, height, gridDays, minDay } = useMemo(() => {
     const tasks = data.tasks;
@@ -161,7 +167,20 @@ export default function GanttChart({ data }: { data: GanttResponse }) {
             g.task.deadline != null &&
             g.task.end_date > g.task.deadline;
           return (
-            <g key={g.task.id}>
+            <g
+              key={g.task.id}
+              onClick={onTaskClick ? () => onTaskClick(g.task.id) : undefined}
+              className={onTaskClick ? "cursor-pointer" : undefined}
+            >
+              {onTaskClick && (
+                <rect
+                  x={0}
+                  y={g.y}
+                  width={width}
+                  height={ROW_H}
+                  className="fill-transparent hover:fill-slate-50"
+                />
+              )}
               {g.dx !== null && (
                 <line
                   x1={LABEL_W + g.dx}

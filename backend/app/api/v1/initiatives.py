@@ -7,11 +7,12 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
 from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
-from app.api.v1.projects import summarize_project
+from app.api.v1.projects import open_project_risk_counts, summarize_project
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
-from app.models.base import ADRStatus, TaskType
+from app.models.base import ADRStatus, TaskType, utcnow
 from app.models.project import Dependency, Initiative, Project, Task, TaskStatusHistory
+from app.models.risk_register import RiskItem
 from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.schemas.entities import (
     CriticalPathHandoff,
@@ -29,6 +30,7 @@ from app.services.capacity import AvailabilitySpan
 from app.services.cross_project import CPDep, CPTask, cross_project_critical_path
 from app.services.drift import level as drift_level
 from app.services.forecast import monte_carlo_forecast, weekly_throughput
+from app.services.metadata import normalize_tags
 from app.services.scheduling import CycleError
 
 router = APIRouter()
@@ -49,7 +51,9 @@ async def create_initiative(
     existing = await session.execute(select(Initiative).where(Initiative.key == payload.key))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Initiative key exists")
-    initiative = Initiative(**payload.model_dump())
+    data = payload.model_dump()
+    data["tags"] = normalize_tags(data.get("tags") or [])
+    initiative = Initiative(**data)
     session.add(initiative)
     await session.commit()
     await session.refresh(initiative)
@@ -73,8 +77,13 @@ async def update_initiative(
     initiative = await session.get(Initiative, initiative_id)
     if initiative is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Initiative not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "tags" in data and data["tags"] is not None:
+        data["tags"] = normalize_tags(data["tags"])
+    for field, value in data.items():
         setattr(initiative, field, value)
+    if "health" in data or "status_note" in data:
+        initiative.status_updated_at = utcnow()
     await session.commit()
     await session.refresh(initiative)
     return initiative
@@ -124,6 +133,9 @@ async def initiative_rollup(
         for a in (await session.execute(select(EngineerAvailability))).scalars().all()
     ]
     today = date.today()
+    open_risks_by_project = open_project_risk_counts(
+        list((await session.execute(select(RiskItem))).scalars().all())
+    )
 
     summaries: list[ProjectSummary] = []
     open_decisions = 0
@@ -176,6 +188,7 @@ async def initiative_rollup(
                 activity_events=activity_events,
                 today=today,
                 availability=availability,
+                open_risks=open_risks_by_project.get(project.id, 0),
             )
         )
 

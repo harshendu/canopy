@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type {
@@ -9,6 +9,10 @@ import type {
 } from "../api/types";
 import { riskTone } from "../lib/risk";
 import ExportMenu from "../components/ExportMenu";
+import DeliveryMetaBar from "../components/DeliveryMetaBar";
+import RiskRegister from "../components/RiskRegister";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { canWriteProjects, isPlanner } from "../lib/permissions";
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -23,6 +27,10 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 export default function InitiativeView() {
   const { initiativeId } = useParams();
   const id = Number(initiativeId);
+  const qc = useQueryClient();
+  const { data: me } = useCurrentUser();
+  const mayWriteInitiative = canWriteProjects(me?.role);
+  const mayPlan = isPlanner(me?.role);
 
   const rollup = useQuery({
     queryKey: ["initiative-rollup", id],
@@ -68,6 +76,17 @@ export default function InitiativeView() {
         {r.initiative.outcome_statement && (
           <p className="mt-1 text-sm text-slate-500">{r.initiative.outcome_statement}</p>
         )}
+        <div className="mt-2">
+          <DeliveryMetaBar
+            scope="initiative"
+            id={id}
+            health={r.initiative.health}
+            statusNote={r.initiative.status_note}
+            tags={r.initiative.tags}
+            mayWrite={mayWriteInitiative}
+            onSaved={() => qc.invalidateQueries({ queryKey: ["initiative-rollup", id] })}
+          />
+        </div>
         </div>
         <div className="flex items-center gap-2">
           <Link
@@ -154,6 +173,10 @@ export default function InitiativeView() {
           </ol>
         </div>
       )}
+
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <RiskRegister scope="initiative" scopeId={id} mayWrite={mayPlan} />
+      </div>
 
       <div>
         <h2 className="mb-2 font-semibold">Sub-projects</h2>

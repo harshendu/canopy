@@ -34,6 +34,7 @@ from app.models.project import (
     TaskStatusHistory,
 )
 from app.models.retro import Retrospective, RetrospectiveComment
+from app.models.risk_register import RiskItem
 from app.models.scenario import (
     Scenario,
     ScenarioAllocation,
@@ -76,6 +77,7 @@ __all__ = [
     "PullRequest",
     "Retrospective",
     "RetrospectiveComment",
+    "RiskItem",
     "RiskMitigation",
     "RiskSnapshot",
     "Role",

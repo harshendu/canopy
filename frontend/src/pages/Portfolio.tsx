@@ -13,6 +13,7 @@ import {
 import { api } from "../api/client";
 import type { PortfolioResponse } from "../api/types";
 import { riskTone } from "../lib/risk";
+import { healthTone } from "../lib/health";
 import ExportMenu from "../components/ExportMenu";
 
 export default function Portfolio() {
@@ -60,10 +61,22 @@ export default function Portfolio() {
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-mono text-xs text-slate-400">{p.key}</span>
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center justify-end gap-1">
+                    {p.health && (
+                      <span
+                        className={`rounded px-2 py-0.5 text-xs font-medium ${healthTone(p.health).badge}`}
+                      >
+                        {healthTone(p.health).label}
+                      </span>
+                    )}
                     {p.critical_tasks > 0 && (
                       <span className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-700">
                         {p.critical_tasks} critical
+                      </span>
+                    )}
+                    {p.open_risks > 0 && (
+                      <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                        {p.open_risks} risk{p.open_risks === 1 ? "" : "s"}
                       </span>
                     )}
                     <span
@@ -79,6 +92,21 @@ export default function Portfolio() {
                   </div>
                 </div>
                 <div className="mt-1 font-medium">{p.name}</div>
+                {p.status_note && (
+                  <div className="mt-1 text-xs text-slate-500">{p.status_note}</div>
+                )}
+                {p.tags.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {p.tags.map((t) => (
+                      <span
+                        key={t}
+                        className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500"
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="mt-3 h-2 w-full rounded bg-slate-100">
                   <div
                     className="h-2 rounded bg-canopy-500"

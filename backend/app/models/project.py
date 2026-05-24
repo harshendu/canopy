@@ -1,8 +1,17 @@
 from datetime import date, datetime
 
+from sqlalchemy import JSON, Column
 from sqlmodel import Field
 
-from app.models.base import DecisionRule, DependencyType, TaskType, TimestampMixin
+from app.models.base import (
+    BlockerCategory,
+    BlockerSeverity,
+    DecisionRule,
+    DependencyType,
+    ProjectHealth,
+    TaskType,
+    TimestampMixin,
+)
 
 
 class Initiative(TimestampMixin, table=True):
@@ -18,6 +27,12 @@ class Initiative(TimestampMixin, table=True):
     target_date: date | None = None
     owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
     archived: bool = False
+    # Free-form labels (theme/workstream/etc.); see Engineer.skill_tags for the precedent.
+    tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # Architect's manual status; None = use the computed on-track signal.
+    health: ProjectHealth | None = None
+    status_note: str | None = None  # the weekly status headline
+    status_updated_at: datetime | None = None
 
 
 class Project(TimestampMixin, table=True):
@@ -34,6 +49,12 @@ class Project(TimestampMixin, table=True):
     # a freshly `proposed` ADR may sit before its owner must triage it.
     decision_rule: DecisionRule = Field(default=DecisionRule.owner_decides)
     decision_sla_hours: int = 72
+    # Free-form labels (theme/workstream/etc.); see Engineer.skill_tags for the precedent.
+    tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # Architect's manual status; None = use the computed on-track signal.
+    health: ProjectHealth | None = None
+    status_note: str | None = None  # the weekly status headline
+    status_updated_at: datetime | None = None
 
 
 class Holiday(TimestampMixin, table=True):
@@ -68,8 +89,17 @@ class Task(TimestampMixin, table=True):
 
     start: date | None = None
     end: date | None = None
-    duration: int = 1  # working/calendar days
+    duration: int = 1  # working/calendar days — the authoritative CPM scheduling input
     percent_complete: float = 0.0
+
+    # Free-form labels (area/workstream/risk-domain); see Engineer.skill_tags for the precedent.
+    tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+
+    # Advisory 3-point (PERT) estimate, working days. Never auto-moves `duration`; the
+    # optimistic↔pessimistic spread is surfaced as a schedule-risk uncertainty signal.
+    estimate_optimistic: int | None = None  # aggressive
+    estimate_likely: int | None = None  # practical / most-likely
+    estimate_pessimistic: int | None = None  # buffered
 
     # Baseline (set when a plan is committed) — drives drift visualisation.
     baseline_start: date | None = None
@@ -156,3 +186,8 @@ class Blocker(TimestampMixin, table=True):
     raised_by_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
     blocking_task_id: int | None = Field(default=None, foreign_key="task.id")
     resolved_at: datetime | None = None
+    # PM enrichment: what kind of impediment, how bad, who owns clearing it, and by when.
+    category: BlockerCategory | None = None
+    severity: BlockerSeverity | None = None
+    owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    needed_by: date | None = None

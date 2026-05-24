@@ -1,19 +1,27 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
 
 from app.models.base import (
     ActivityKind,
     ADRCommentKind,
     ADRStatus,
+    BlockerCategory,
+    BlockerSeverity,
     DecisionRule,
     DependencyType,
+    ProjectHealth,
     Provider,
     RetrospectiveKind,
     Reversibility,
+    RiskCategory,
+    RiskGrade,
+    RiskScope,
+    RiskStatus,
     TaskType,
 )
 from app.schemas.auth import UserRead
+from app.services import metadata
 
 _read = ConfigDict(from_attributes=True)
 
@@ -26,6 +34,7 @@ class ProjectCreate(BaseModel):
     initiative_id: int | None = None
     start_date: date | None = None
     target_date: date | None = None
+    tags: list[str] = []
 
 
 class ProjectUpdate(BaseModel):
@@ -38,6 +47,9 @@ class ProjectUpdate(BaseModel):
     skip_weekends: bool | None = None
     decision_rule: DecisionRule | None = None
     decision_sla_hours: int | None = None
+    tags: list[str] | None = None
+    health: ProjectHealth | None = None
+    status_note: str | None = None
 
 
 class ProjectRead(BaseModel):
@@ -53,6 +65,10 @@ class ProjectRead(BaseModel):
     skip_weekends: bool
     decision_rule: DecisionRule
     decision_sla_hours: int
+    tags: list[str] = []
+    health: ProjectHealth | None = None
+    status_note: str | None = None
+    status_updated_at: datetime | None = None
 
 
 class HolidayCreate(BaseModel):
@@ -101,6 +117,10 @@ class TaskCreate(BaseModel):
     status: str | None = None
     deadline: date | None = None
     assignee_engineer_id: int | None = None
+    tags: list[str] = []
+    estimate_optimistic: int | None = None
+    estimate_likely: int | None = None
+    estimate_pessimistic: int | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -115,6 +135,10 @@ class TaskUpdate(BaseModel):
     status: str | None = None
     deadline: date | None = None
     assignee_engineer_id: int | None = None
+    tags: list[str] | None = None
+    estimate_optimistic: int | None = None
+    estimate_likely: int | None = None
+    estimate_pessimistic: int | None = None
 
 
 class TaskRead(BaseModel):
@@ -137,6 +161,35 @@ class TaskRead(BaseModel):
     sprint: str | None
     deadline: date | None
     assignee_engineer_id: int | None
+    tags: list[str] = []
+    estimate_optimistic: int | None = None
+    estimate_likely: int | None = None
+    estimate_pessimistic: int | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def pert_mean(self) -> float | None:
+        """The PERT expected duration, when a full 3-point estimate is set."""
+        if (
+            self.estimate_optimistic is None
+            or self.estimate_likely is None
+            or self.estimate_pessimistic is None
+        ):
+            return None
+        return round(
+            metadata.pert_mean(
+                self.estimate_optimistic, self.estimate_likely, self.estimate_pessimistic
+            ),
+            1,
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def estimate_spread(self) -> int | None:
+        """The optimistic→pessimistic uncertainty band, when both ends are set."""
+        if self.estimate_optimistic is None or self.estimate_pessimistic is None:
+            return None
+        return metadata.estimate_spread(self.estimate_optimistic, self.estimate_pessimistic)
 
 
 class TaskStatusHistoryRead(BaseModel):
@@ -549,11 +602,19 @@ class BlockerCreate(BaseModel):
     reason: str
     raised_by_engineer_id: int | None = None  # defaults to the caller's engineer
     blocking_task_id: int | None = None
+    category: BlockerCategory | None = None
+    severity: BlockerSeverity | None = None
+    owner_engineer_id: int | None = None
+    needed_by: date | None = None
 
 
 class BlockerUpdate(BaseModel):
     reason: str | None = None
     resolved: bool | None = None  # True -> set resolved_at=now; False -> reopen
+    category: BlockerCategory | None = None
+    severity: BlockerSeverity | None = None
+    owner_engineer_id: int | None = None
+    needed_by: date | None = None
 
 
 class BlockerRead(BaseModel):
@@ -565,6 +626,10 @@ class BlockerRead(BaseModel):
     blocking_task_id: int | None
     resolved_at: datetime | None
     created_at: datetime
+    category: BlockerCategory | None = None
+    severity: BlockerSeverity | None = None
+    owner_engineer_id: int | None = None
+    needed_by: date | None = None
 
 
 # --- Probabilistic forecast (Monte-Carlo throughput) ---
@@ -628,6 +693,10 @@ class ProjectSummary(BaseModel):
     risk_level: str
     drift_score: int
     drift_level: str
+    tags: list[str] = []
+    health: ProjectHealth | None = None
+    status_note: str | None = None
+    open_risks: int = 0  # open/mitigating register risks (separate from the risk score)
 
 
 class PortfolioResponse(BaseModel):
@@ -642,6 +711,7 @@ class InitiativeCreate(BaseModel):
     start_date: date | None = None
     target_date: date | None = None
     owner_engineer_id: int | None = None
+    tags: list[str] = []
 
 
 class InitiativeUpdate(BaseModel):
@@ -651,6 +721,9 @@ class InitiativeUpdate(BaseModel):
     target_date: date | None = None
     owner_engineer_id: int | None = None
     archived: bool | None = None
+    tags: list[str] | None = None
+    health: ProjectHealth | None = None
+    status_note: str | None = None
 
 
 class InitiativeRead(BaseModel):
@@ -663,6 +736,10 @@ class InitiativeRead(BaseModel):
     target_date: date | None
     owner_engineer_id: int | None
     archived: bool
+    tags: list[str] = []
+    health: ProjectHealth | None = None
+    status_note: str | None = None
+    status_updated_at: datetime | None = None
 
 
 class CriticalPathNode(BaseModel):
@@ -796,6 +873,79 @@ class RiskResponse(BaseModel):
     confidence_note: str
     families: list[RiskFamilyRead]
     mitigations: list[RiskMitigationRead]
+
+
+# --- Risk register (human-tracked RAID risks; separate from the computed score above) ---
+class RiskItemCreate(BaseModel):
+    scope_level: RiskScope
+    scope_id: int
+    title: str
+    description: str | None = None
+    category: RiskCategory = RiskCategory.technical
+    probability: RiskGrade = RiskGrade.medium
+    impact: RiskGrade = RiskGrade.medium
+    status: RiskStatus = RiskStatus.open
+    owner_engineer_id: int | None = None
+    mitigation: str | None = None
+    contingency: str | None = None
+    target_resolution_date: date | None = None
+
+
+class RiskItemUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    category: RiskCategory | None = None
+    probability: RiskGrade | None = None
+    impact: RiskGrade | None = None
+    status: RiskStatus | None = None
+    owner_engineer_id: int | None = None
+    mitigation: str | None = None
+    contingency: str | None = None
+    target_resolution_date: date | None = None
+
+
+class RiskItemClose(BaseModel):
+    status: RiskStatus = RiskStatus.resolved  # resolved | accepted | occurred
+    note: str | None = None  # appended to the mitigation log
+
+
+class RiskItemRead(BaseModel):
+    model_config = _read
+    id: int
+    scope_level: RiskScope
+    scope_id: int
+    title: str
+    description: str | None
+    category: RiskCategory
+    probability: RiskGrade
+    impact: RiskGrade
+    status: RiskStatus
+    owner_engineer_id: int | None
+    mitigation: str | None
+    contingency: str | None
+    target_resolution_date: date | None
+    resolved_at: datetime | None
+    created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def probability_value(self) -> int:
+        return metadata.risk_grade_value(self.probability)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def impact_value(self) -> int:
+        return metadata.risk_grade_value(self.impact)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def exposure(self) -> int:
+        return metadata.risk_exposure(self.probability, self.impact)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def exposure_level(self) -> str:
+        return metadata.exposure_level(metadata.risk_exposure(self.probability, self.impact))
 
 
 # --- Architecture drift ---

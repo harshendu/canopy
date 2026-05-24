@@ -20,6 +20,7 @@ from tools import (  # noqa: E402
     architecture,
     connectors,
     drafts,
+    metadata,
     planning,
     projects,
     scenarios,
@@ -36,6 +37,7 @@ team.register(mcp, client)
 architecture.register(mcp, client)
 drafts.register(mcp, client)
 scenarios.register(mcp, client)
+metadata.register(mcp, client)
 
 
 if __name__ == "__main__":
