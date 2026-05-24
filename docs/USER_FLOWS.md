@@ -748,6 +748,72 @@ initiative / portfolio rollups), so the numbers match what's on screen.
 
 ---
 
+## T. Scenario simulation (initiative what-if) **[new]**
+
+A durable, named **what-if branch of an initiative**: change team composition, per-engineer
+availability, milestones, deadlines, and scope (add/remove/resize tasks + dependencies), then
+regenerate **every** analysis view and compare to the live plan before committing. Conceptually
+the draft-plan pattern (§C10) raised to the whole initiative, and the only multi-dimensional
+what-if (the Gantt's §C5 covers task durations only).
+
+### T1. Create a scenario (snapshot)
+- **UI:** initiative cockpit (`/initiatives/:id`) → **Scenarios** → "New scenario". Opens the
+  scenario workspace at `/initiatives/:id/scenarios/:scenarioId`.
+- **API:** `GET/POST /api/v1/initiatives/{id}/scenarios`, `GET/PATCH/DELETE /api/v1/scenarios/{id}`.
+  Creating one **snapshots** the initiative's tasks, dependencies, milestones, allocations,
+  availability, and per-project scheduling knobs into editable scenario tables (live data is
+  untouched). `base_captured_at` records the snapshot moment. Status: draft | ready | applied |
+  archived. · **MCP:** `list_scenarios`, `create_scenario`, `get_scenario`.
+
+### T2. Edit the scenario (team / availability / milestones / deadlines / scope)
+- **UI:** the workspace **Edit** tab — sub-panels for team & availability, milestones & deadlines,
+  scope (tasks + dependencies), and per-project knobs (start/target/skip-weekends).
+- **API (all planner-gated, scenario must be draft/ready):**
+  `POST /api/v1/scenarios/{id}/tasks` + `PATCH/DELETE /api/v1/scenario-tasks/{tid}`, and the same
+  shape for `dependencies`, `milestones`, `allocations`, `availability`; plus
+  `PATCH /api/v1/scenarios/{id}/projects/{project_id}` for project knobs. Deleting a cloned row
+  tombstones it (apply then deletes the live row); deleting an added row hard-deletes it.
+  · **MCP:** `add_scenario_task`, `update_scenario_task`, `remove_scenario_task`,
+  `add_scenario_dependency`, `set_scenario_availability`, `set_scenario_allocation`.
+
+### T3. Regenerate all views over the scenario
+- **UI:** the workspace mirrors the project cockpit's tabs (Gantt · Dependencies · Capacity ·
+  Board · Burndown · Forecast · Critical path · Alerts), reusing the same view components against
+  scenario data. Cross-project critical path + capacity are initiative-wide; the rest take a
+  project picker.
+- **API:** `GET /api/v1/scenarios/{id}/{gantt|capacity|board|burndown|forecast|alerts}`
+  (`?project_id=` where relevant) and `GET /api/v1/scenarios/{id}/critical-path`. Each returns the
+  **same schema as the live endpoint**, recomputed over the snapshot — never persisted. Cloned
+  tasks pin at their live start (so an unedited scenario reproduces live); added tasks have no
+  history (they count as remaining for forecast/burndown). · **MCP:** `scenario_critical_path`,
+  `scenario_capacity`.
+
+### T4. Compare to live
+- **UI:** a persistent "Compare to live" panel — counts added/removed/changed, project-end delta,
+  and critical-path working-day delta.
+- **API:** `GET /api/v1/scenarios/{id}/compare` → the diff (by `live_*_id`/`removed` provenance) +
+  any **staleness conflicts**. · **MCP:** `compare_scenario` (the key read before applying).
+
+### T5. Apply (commit to canopy's planning layer)
+- **UI:** "Apply scenario" (planner only). On a staleness conflict, offer force-apply.
+- **API:** `POST /api/v1/scenarios/{id}/apply` (`{force}`). In one transaction: create/update/
+  delete the live tasks/dependencies/milestones/allocations/availability (remapping new scenario
+  task ids), then replan each affected project, then flip status to `applied`. Returns
+  created/updated/deleted + replanned projects. **409** with the conflict list when live drifted
+  since the snapshot and `force` is false. · **MCP:** `apply_scenario`.
+- **Source-of-truth boundary:** apply writes **canopy planning rows only — never Jira** (Jira
+  stays the owner of tickets/status; use the draft-plan flow §C10 for plan→Jira). Replans publish
+  live-refresh events (§K).
+
+### T6. Not built (deliberate limits)
+- **No resource-leveling / capacity-constrained scheduling:** availability informs the
+  capacity/over-allocation views, **not** CPM dates.
+- **No scenario → Jira**, **no scenario-vs-scenario diff/branch/merge**, and **no concurrent-edit
+  locks** beyond the snapshot watermark conflict check. **Resync** (re-snapshotting after live
+  drift) is API-pending.
+
+---
+
 ## L. Claude plugin (agentic flows)
 
 ### L1. Install & configure the plugin

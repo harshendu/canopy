@@ -34,6 +34,15 @@ from app.models.project import (
     TaskStatusHistory,
 )
 from app.models.retro import Retrospective, RetrospectiveComment
+from app.models.scenario import (
+    Scenario,
+    ScenarioAllocation,
+    ScenarioAvailability,
+    ScenarioDependency,
+    ScenarioMilestone,
+    ScenarioProject,
+    ScenarioTask,
+)
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
 
@@ -70,6 +79,13 @@ __all__ = [
     "RiskMitigation",
     "RiskSnapshot",
     "Role",
+    "Scenario",
+    "ScenarioAllocation",
+    "ScenarioAvailability",
+    "ScenarioDependency",
+    "ScenarioMilestone",
+    "ScenarioProject",
+    "ScenarioTask",
     "Task",
     "TaskStatusHistory",
     "User",

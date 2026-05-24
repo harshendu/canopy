@@ -19,6 +19,7 @@ from app.api.v1 import (
     projects,
     retros,
     risk,
+    scenarios,
     tasks,
     team,
 )
@@ -44,3 +45,4 @@ api_router.include_router(drift.router, tags=["drift"])
 api_router.include_router(retros.router, tags=["retros"])
 api_router.include_router(activity.router, tags=["activity"])
 api_router.include_router(blockers.router, tags=["blockers"])
+api_router.include_router(scenarios.router, tags=["scenarios"])
