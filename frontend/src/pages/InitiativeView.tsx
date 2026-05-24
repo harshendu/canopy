@@ -69,7 +69,15 @@ export default function InitiativeView() {
           <p className="mt-1 text-sm text-slate-500">{r.initiative.outcome_statement}</p>
         )}
         </div>
-        <ExportMenu scope="initiative" id={id} />
+        <div className="flex items-center gap-2">
+          <Link
+            to={`/initiatives/${id}/scenarios`}
+            className="rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          >
+            Scenarios
+          </Link>
+          <ExportMenu scope="initiative" id={id} />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
