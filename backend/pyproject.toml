@@ -21,6 +21,7 @@ dependencies = [
     "cryptography>=42.0",
     "arq>=0.25",
     "redis>=5.0",
+    "reportlab>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -83,7 +84,7 @@ strict_equality = true
 exclude = ["alembic/", "tests/"]
 
 [[tool.mypy.overrides]]
-module = ["networkx.*", "arq.*", "google.*", "jose.*"]
+module = ["networkx.*", "arq.*", "google.*", "jose.*", "reportlab.*"]
 ignore_missing_imports = true
 
 [build-system]

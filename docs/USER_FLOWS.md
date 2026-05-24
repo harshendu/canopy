@@ -26,9 +26,14 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 
 ## Source-of-truth boundaries (affect every sync flow)
 - **Jira** owns epics/stories and ticket **status**. Canopy syncs *from* Jira and **never writes
-  status back**. Mirrored status on canopy tasks is read-only.
+  status back**. Mirrored status on canopy tasks is read-only. **Scoped exception (§C10):** from
+  an architect-reviewed **draft plan**, canopy can **create** new tickets and **update ticket
+  content** (summary / description / story points + the epic→story parent link) — but **status is
+  still never written**; the new issues flow back in via the normal Jira sync.
 - **GitHub** owns code + some architecture docs. **Google Drive** holds design docs. Canopy reads
-  these on demand and caches lightly.
+  these on demand and caches lightly. **Scoped write (§S):** canopy can *upload an export snapshot*
+  (a generated PDF/CSV) into a connected Drive — it stores its own artifacts there but still does
+  not own the design docs it reads.
 
 ---
 
@@ -117,7 +122,8 @@ projects and rolls up their health.
 - **UI:** `/initiatives/:id` — outcome statement, an **on track / behind target** badge, aggregate
   cards (progress, **worst** sub-project risk, **worst** drift, open-decision backlog, latest end
   vs target, **P85 forecast** §C8), the **cross-project critical path** (§R4), and the sub-project
-  cards (each with its own risk/drift, linking into the project).
+  cards (each with its own risk/drift, linking into the project). An **Export ▾** control exports
+  the initiative as a PDF/CSV snapshot (§S).
 - **API:** `GET /api/v1/initiatives/{id}/rollup` (per-project summaries + aggregates: total/completed
   tasks, avg %, latest `project_end`, max `risk_score`/`drift_score` with the owning level,
   `open_decisions` = ADRs proposed/under-discussion, `on_track`) · **MCP:** `get_initiative_rollup`.
@@ -144,7 +150,8 @@ projects and rolls up their health.
 ### B1. View the portfolio dashboard
 - **UI:** `/portfolio` (landing page). Shows a completion bar chart and a card per project
   (avg % complete, completed/total tasks, critical-task count, end date, and **risk + drift score
-  badges** — see §Q / §N). Clicking a card opens it.
+  badges** — see §Q / §N). Clicking a card opens it. An **Export ▾** control exports the whole
+  portfolio as a PDF/CSV snapshot (§S).
 - **API:** `GET /api/v1/projects/portfolio` (each `ProjectSummary` includes `risk_score`/`risk_level`
   and `drift_score`/`drift_level`, computed by the same scorers as the Risk/Drift tabs) · **MCP:**
   `list_projects`.
@@ -159,7 +166,8 @@ projects and rolls up their health.
 
 ### B3. Open a project (the cockpit)
 - **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Dependencies · Capacity ·
-  Decisions · Architecture · Drift · Roadmap · Burndown · Risk · Retros · Activity**. The header has a **5-day week** toggle, **Set
+  Decisions · Architecture · Drift · Roadmap · Plan → Jira · Burndown · Risk · Retros · Activity**.
+  The header has an **Export ▾** menu (PDF/CSV snapshot, §S), a **5-day week** toggle, **Set
   baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
   `/projects/:id?tab=drift`).
@@ -251,6 +259,49 @@ projects and rolls up their health.
   `app/services/flow.py` (grouping + P85 + aging); age/cycle dates come from `TaskStatusHistory`.
 - **Not built:** **persisted** per-lane / per-engineer WIP limits (the limit is a client-side knob
   for now); drag-to-change status (status is Jira-owned, read-only).
+
+---
+
+## C10. Draft plans → create/update Jira tickets **[new]**
+
+The architect's "plan first, then make the tickets" flow. A **draft plan** is a staging area
+(its own tables — kept out of the live Gantt/CPM/board) where the architect proposes phases,
+tasks, estimates, and story points, reviews them, then **creates the Jira tickets** from the
+draft. This is the only place canopy writes *to* Jira, and it writes **content only** — status
+stays Jira-owned (§Source-of-truth boundaries).
+
+### C10.1 Create & review a draft plan
+- **UI:** project → **Plan → Jira** tab → "New draft plan" (title + optional **source** note, e.g.
+  the design-doc/PRD url). Select a plan to expand it: add proposed tasks (name, **type** —
+  story/task · epic/phase · milestone, **estimate (days)**, **story points**, and a **parent**
+  epic to nest under), and remove tasks. Drafts carry a status: **draft → synced → archived**.
+- **API:** `GET/POST /api/v1/projects/{id}/draft-plans`, `GET/PATCH/DELETE
+  /api/v1/draft-plans/{plan_id}`, `POST /api/v1/draft-plans/{plan_id}/tasks`,
+  `PATCH/DELETE /api/v1/draft-tasks/{task_id}` (writes are planner-gated) · **MCP:**
+  `list_draft_plans`, `create_draft_plan`, `get_draft_plan`, `add_draft_task`,
+  `update_draft_task`, `delete_draft_task`.
+
+### C10.2 Push the draft to Jira (create / update tickets)
+- **UI:** expand a draft → **Create Jira tickets** (becomes **Update Jira tickets** once synced).
+  Picks the project's Jira connection automatically (or choose one when several match). Reports
+  per-task created/updated/failed with the new Jira keys; a partial failure doesn't abort the rest.
+- **API:** `POST /api/v1/draft-plans/{plan_id}/push-to-jira` (optional `connection_id`) · **MCP:**
+  `push_draft_to_jira`. Logic is in `app/services/draft_sync.py`; the Jira write methods are
+  `JiraConnector.create_issue` / `update_issue` (`POST/PUT /rest/api/3/issue`, description as ADF).
+  Epics (summary tasks) are created before their stories so the parent link resolves; each pushed
+  draft task is stamped with its Jira id/key, so a **re-push updates** rather than duplicates.
+- **Then sync back:** canopy does **not** create local tasks on push — run a Jira sync (§J3) to
+  pull the new issues in as canopy tasks (then `replan_schedule`). This keeps Jira the source of
+  truth for the materialized tickets.
+- **Jira config (per connection, §J1):** `story_point_field` (e.g. `customfield_10016`; without it
+  points are skipped), and optional `epic_issue_type` / `story_issue_type` (default `Epic` / `Story`).
+
+### C10.3 Not built (deliberate limits)
+- **No status writes** (by design — the source-of-truth rule holds).
+- **Draft dependencies** aren't modeled — the draft captures the WBS (epic→story via `parent_id`)
+  and estimates; sequencing/dependencies are added on the live tasks after sync-back.
+- No **diff/preview** of "what will change in Jira" before a push, and no automatic
+  `replan_schedule` after sync-back (run it from the project header).
 
 ---
 
@@ -573,7 +624,9 @@ component map + ADRs and maintains the queue.
 ### J1. Add a connection
 - **UI:** `/connectors` → choose provider (Jira / GitHub / Google Drive), name it, optionally paste an
   API token, and provide provider config JSON (e.g. Jira: `base_url`, `email`, `project_id`,
-  `jira_project_key`; GitHub: `owner`, `repo`).
+  `jira_project_key`; GitHub: `owner`, `repo`). Jira also accepts optional **ticket-creation** keys
+  used by §C10: `story_point_field` (e.g. `customfield_10016`), `epic_issue_type` (default `Epic`),
+  `story_issue_type` (default `Story`).
 - **API:** `POST /api/v1/connectors/connections` (token is encrypted at rest) · **MCP:**
   `list_connections`.
 
@@ -610,6 +663,8 @@ component map + ADRs and maintains the queue.
 - **API:** `GET /api/v1/connectors/github/{id}/file?path=`, `.../github/{id}/pulls`,
   `.../github/cached-prs`; `GET /api/v1/connectors/gdrive/{id}/docs`, `.../gdrive/{id}/docs/{file_id}`
   · **MCP:** `read_repo_file`, `list_open_prs`, `read_design_doc`.
+- **Drive uploads (write):** the Drive connector also has `upload_file` (multipart) used by export
+  snapshots (§S) to store a generated PDF/CSV in Drive — the one place canopy writes to Drive.
 - **Not built (v2 §J6):** PR **review metrics** (time-to-review, churn, test status) and commit
   attribution to components — these would feed a PR-latency quality-risk indicator (the quality
   family is currently fed by §J8 build failures / incidents instead).
@@ -640,12 +695,50 @@ component map + ADRs and maintains the queue.
 
 ---
 
+## S. Export snapshots (PDF / CSV, viewable outside canopy) **[new]**
+
+A point-in-time **snapshot** of a project, initiative, or portfolio as a portable file — so the
+architect can store or share it where canopy isn't running. Two formats: **PDF** (the full visual
+snapshot: headline stats, a vector **Gantt**, and data tables) and **CSV** (the headline tabular
+dataset for that scope). Delivered two ways: **download** in the UI, or **save to a connected
+Google Drive**. Snapshots reuse the same aggregation as the live views (`summarize_project`, the
+initiative / portfolio rollups), so the numbers match what's on screen.
+
+### S1. Download a snapshot
+- **UI:** an **Export ▾** menu in the project header (§B3), the initiative cockpit (§R3), and the
+  portfolio page (§B1) → **PDF** / **CSV** download. Open to any authenticated user (it's a read).
+- **API:** `GET /api/v1/projects/{id}/export?fmt=pdf|csv`,
+  `GET /api/v1/initiatives/{id}/export?fmt=`, `GET /api/v1/portfolio/export?fmt=` — returns the file
+  with a `Content-Disposition` attachment. Rendering is `app/services/export_pdf.py` (reportlab —
+  pure Python, no headless browser, CI-safe) + `app/services/export_csv.py`; the snapshot data is
+  assembled in `app/api/v1/exports.py`.
+
+### S2. Save a snapshot to Google Drive
+- **UI:** the same Export menu → **Save to Google Drive** (pick a connection when more than one is
+  authorized; shows the resulting Drive link).
+- **API:** `POST /api/v1/projects/{id}/export/to-drive` (plus the `initiatives/{id}` and
+  `/portfolio` variants) with `{connection_id, fmt}` → uploads the rendered file via the Drive
+  connector's new `upload_file` (multipart) and returns `{file_id, name, link}`. An optional
+  `folder_id` in the Drive connection config targets a folder.
+
+### S3. What a snapshot contains / limits
+- **PDF (project):** summary stats (tasks / completed / critical / end / risk / drift), a vector
+  **Gantt** (critical bars red, % progress shaded, milestones marked; the chart is capped to ~26
+  scheduled tasks — the full set is in the table), and tables for tasks, milestones, and decisions.
+- **PDF (initiative / portfolio):** rollup stats + the sub-project / project table.
+- **CSV:** the headline table per scope — a project's **tasks**, or the initiative / portfolio
+  **rollup** (one row per project).
+- **Not built:** capacity / burndown charts in the PDF, JSON / HTML formats, multi-table CSV
+  bundles, and scheduled/automatic exports (snapshots are on-demand). No MCP tool — UI + API only.
+
+---
+
 ## L. Claude plugin (agentic flows)
 
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~61 curated tools that call the REST API.
+  MCP server then exposes ~68 curated tools that call the REST API.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
@@ -693,6 +786,14 @@ component map + ADRs and maintains the queue.
 - The **`pr-to-adr-linker`** skill maps a PR's changed paths to components (via code bindings),
   finds the ADRs governing them (`adr_impact`), and judges whether the PR implements / contradicts /
   is unrelated to each — building implementation traceability.
+
+### L11. Draft a plan → create Jira tickets (skill) **[new]**
+- The **`drafting-jira-tickets`** skill turns inputs (a codebase via `read_repo_file`, a design
+  doc/PRD via `read_design_doc`, existing epics via `trigger_jira_sync`) into a reviewable **draft
+  plan** (`create_draft_plan` + `add_draft_task` with estimates + story points), refines it with the
+  architect (`get_draft_plan` / `update_draft_task` / `delete_draft_task`), then **creates the Jira
+  tickets** from it (`push_draft_to_jira`) and syncs them back (`trigger_jira_sync`). Content only —
+  status is never written (§C10).
 
 ---
 

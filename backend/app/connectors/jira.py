@@ -1,10 +1,14 @@
 """Jira Cloud connector (deep).
 
 Jira is the source of truth for epics/stories and their status. Canopy syncs
-*from* Jira and never writes ticket status back. Reads use the enhanced JQL
+*from* Jira and never writes ticket **status** back. Reads use the enhanced JQL
 search endpoint (POST /rest/api/3/search/jql, cursor pagination) plus the Agile
-API for sprints. Status-transition history comes from the issue changelog. All
-requests are rate-limit-aware (Retry-After + backoff). Sync is idempotent via
+API for sprints. Status-transition history comes from the issue changelog.
+
+As a deliberate, scoped exception, canopy can **create and update ticket content**
+(summary, description, story points) from an architect-reviewed draft plan via
+`create_issue` / `update_issue` — but status remains Jira-owned and is never pushed.
+All requests are rate-limit-aware (Retry-After + backoff). Sync is idempotent via
 ExternalRef.
 """
 
@@ -213,6 +217,100 @@ class JiraConnector(Connector):
             await self._wire_parents([(ext_id, parent_ext_id)])
         await self.session.commit()
         return result
+
+    # --- writing issues (content only — status stays Jira-owned, never pushed) ---
+    @staticmethod
+    def _adf(text: str) -> dict[str, Any]:
+        """Wrap plain text in a minimal Atlassian Document Format doc (API v3 needs ADF)."""
+        return {
+            "type": "doc",
+            "version": 1,
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}],
+        }
+
+    @property
+    def _story_point_field(self) -> str | None:
+        """Jira custom field id holding story points (e.g. 'customfield_10016'), per config."""
+        field = self.config.get("story_point_field")
+        return str(field) if field else None
+
+    def issue_type_for(self, task_type: TaskType) -> str:
+        """Map a canopy task type to a Jira issue-type name (overridable via config)."""
+        if task_type == TaskType.summary:
+            return str(self.config.get("epic_issue_type", "Epic"))
+        return str(self.config.get("story_issue_type", "Story"))
+
+    def _build_create_fields(
+        self,
+        *,
+        summary: str,
+        description: str | None,
+        issue_type: str,
+        story_points: float | None,
+        parent_key: str | None,
+    ) -> dict[str, Any]:
+        fields: dict[str, Any] = {
+            "project": {"key": self.jira_project_key},
+            "summary": summary,
+            "issuetype": {"name": issue_type},
+        }
+        if description:
+            fields["description"] = self._adf(description)
+        if parent_key:
+            fields["parent"] = {"key": parent_key}
+        story_field = self._story_point_field
+        if story_field and story_points is not None:
+            fields[story_field] = story_points
+        return fields
+
+    async def create_issue(
+        self,
+        *,
+        summary: str,
+        issue_type: str,
+        description: str | None = None,
+        story_points: float | None = None,
+        parent_key: str | None = None,
+    ) -> dict[str, str]:
+        """Create a Jira issue from plan content. Returns {'id', 'key'}. Never sets status."""
+        fields = self._build_create_fields(
+            summary=summary,
+            description=description,
+            issue_type=issue_type,
+            story_points=story_points,
+            parent_key=parent_key,
+        )
+        async with await self.open_client() as client:
+            resp = await request_with_retry(
+                client, "POST", "/rest/api/3/issue", json={"fields": fields}
+            )
+        data: dict[str, Any] = resp.json()
+        return {"id": str(data["id"]), "key": str(data["key"])}
+
+    async def update_issue(
+        self,
+        issue_id_or_key: str,
+        *,
+        summary: str | None = None,
+        description: str | None = None,
+        story_points: float | None = None,
+    ) -> None:
+        """Update an existing issue's content fields. Only provided fields change; status is
+        never touched (it stays Jira-owned)."""
+        fields: dict[str, Any] = {}
+        if summary is not None:
+            fields["summary"] = summary
+        if description:
+            fields["description"] = self._adf(description)
+        story_field = self._story_point_field
+        if story_field and story_points is not None:
+            fields[story_field] = story_points
+        if not fields:
+            return
+        async with await self.open_client() as client:
+            await request_with_retry(
+                client, "PUT", f"/rest/api/3/issue/{issue_id_or_key}", json={"fields": fields}
+            )
 
     # --- Agile API: boards & sprints ---
     async def list_boards(self) -> list[dict[str, Any]]:
