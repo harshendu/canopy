@@ -16,8 +16,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # batch (table recreate) is required on SQLite to add the owner FK to an existing table.
-    with op.batch_alter_table('architecturecomponent', recreate='always') as batch_op:
+    # batch mode lets SQLite recreate the table to add the owner FK; Postgres/MySQL get a
+    # native ALTER (recreate='auto', the default, never force-recreates a FK-referenced table).
+    with op.batch_alter_table('architecturecomponent') as batch_op:
         batch_op.add_column(sa.Column('owner_engineer_id', sa.Integer(), nullable=True))
         batch_op.add_column(
             sa.Column('criticality', sqlmodel.sql.sqltypes.AutoString(), nullable=True)
@@ -32,7 +33,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('architecturecomponent', recreate='always') as batch_op:
+    with op.batch_alter_table('architecturecomponent') as batch_op:
         batch_op.drop_constraint('fk_component_owner', type_='foreignkey')
         batch_op.drop_column('observability_url')
         batch_op.drop_column('tier')

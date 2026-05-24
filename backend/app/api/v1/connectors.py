@@ -1,5 +1,5 @@
 from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
@@ -14,7 +14,7 @@ from app.connectors.github import GitHubConnector
 from app.connectors.jira import JiraConnector
 from app.core.config import settings
 from app.core.crypto import encrypt_token
-from app.models.base import Provider
+from app.models.base import Provider, utcnow
 from app.models.integration import Connection, PullRequest
 from app.schemas.entities import ConnectionCreate, ConnectionRead, PullRequestRead
 from app.services import sync as sync_service
@@ -102,7 +102,7 @@ async def oauth_callback(session: SessionDep, code: str, state: str) -> Redirect
     if tokens.refresh_token:
         connection.encrypted_refresh_token = encrypt_token(tokens.refresh_token)
     if tokens.expires_in:
-        connection.token_expires_at = datetime.now(UTC) + timedelta(seconds=tokens.expires_in)
+        connection.token_expires_at = utcnow() + timedelta(seconds=tokens.expires_in)
 
     if connection.provider == Provider.jira:
         cloud_id = await oauth.fetch_jira_cloud_id(tokens.access_token)

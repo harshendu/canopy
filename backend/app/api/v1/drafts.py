@@ -6,6 +6,8 @@ the next Jira sync pulls the new issues back as canopy tasks. Writes are planner
 """
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import update as sa_update
 from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
@@ -94,9 +96,13 @@ async def delete_draft_plan(session: SessionDep, _: PlannerWriter, plan_id: int)
     plan = await session.get(DraftPlan, plan_id)
     if plan is None:
         return
-    rows = await session.execute(select(DraftTask).where(DraftTask.plan_id == plan_id))
-    for task in rows.scalars().all():
-        await session.delete(task)
+    # Clear the self-referential parent links first, then bulk-delete: Postgres/MySQL enforce
+    # the parent_id FK (SQLite does not), so per-row deletes could drop a parent before its
+    # child. Nulling parents removes that ordering hazard.
+    await session.execute(
+        sa_update(DraftTask).where(col(DraftTask.plan_id) == plan_id).values(parent_id=None)
+    )
+    await session.execute(sa_delete(DraftTask).where(col(DraftTask.plan_id) == plan_id))
     await session.delete(plan)
     await session.commit()
 
@@ -135,6 +141,10 @@ async def update_draft_task(
 async def delete_draft_task(session: SessionDep, _: PlannerWriter, task_id: int) -> None:
     task = await session.get(DraftTask, task_id)
     if task is not None:
+        # Detach any child tasks first (parent_id FK is enforced on Postgres/MySQL).
+        await session.execute(
+            sa_update(DraftTask).where(col(DraftTask.parent_id) == task_id).values(parent_id=None)
+        )
         await session.delete(task)
         await session.commit()
 

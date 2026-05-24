@@ -901,6 +901,12 @@ what-if (the Gantt's §C5 covers task durations only).
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
   `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
   MCP server then exposes ~85 curated tools that call the REST API.
+- **Transport.** Locally the plugin launches the MCP server over **stdio** (`plugin/.mcp.json`).
+  For production / cloud Claude sessions, run the server as a long-lived service over **SSE**
+  (`CANOPY_MCP_TRANSPORT=sse` + `CANOPY_MCP_HOST`/`CANOPY_MCP_PORT`/`CANOPY_MCP_PATH`) and point the
+  session at the SSE URL. Backend connection (`CANOPY_API_BASE_URL`, `CANOPY_API_TOKEN`) and transport
+  are all read from **environment variables**, so a headless cloud session needs no interactive
+  plugin config. See README → *Production deployment*.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**

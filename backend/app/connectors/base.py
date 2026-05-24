@@ -12,7 +12,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt_token, encrypt_token
-from app.models.base import Provider
+from app.models.base import Provider, utcnow
 from app.models.integration import Connection
 
 _REFRESH_SKEW_SECONDS = 60
@@ -74,7 +74,7 @@ class Connector(ABC):
         if tokens.refresh_token:  # providers like Jira rotate the refresh token
             self.connection.encrypted_refresh_token = encrypt_token(tokens.refresh_token)
         if tokens.expires_in:
-            self.connection.token_expires_at = datetime.now(UTC) + timedelta(
+            self.connection.token_expires_at = utcnow() + timedelta(
                 seconds=tokens.expires_in
             )
         await self.session.commit()

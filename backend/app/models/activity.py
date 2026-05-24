@@ -1,3 +1,4 @@
+from sqlalchemy import Column, Text
 from sqlmodel import Field
 
 from app.models.base import TimestampMixin
@@ -12,7 +13,7 @@ class ActivityEvent(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
     kind: str = Field(index=True)  # see ActivityKind
-    summary: str
+    summary: str = Field(sa_column=Column(Text, nullable=False))
     component_id: int | None = Field(default=None, foreign_key="architecturecomponent.id")
     source: str = "webhook"  # ci | webhook | system | ...
     reference: str | None = None  # external id / URL (deploy sha, incident id, run url)

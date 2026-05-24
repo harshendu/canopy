@@ -1,5 +1,6 @@
 from datetime import date, datetime
 
+from sqlalchemy import Column, Text
 from sqlmodel import Field
 
 from app.models.base import (
@@ -29,13 +30,15 @@ class RiskItem(TimestampMixin, table=True):
     scope_level: RiskScope = Field(index=True)
     scope_id: int = Field(index=True)  # task_id | project_id | initiative_id
     title: str
-    description: str | None = None
+    description: str | None = Field(default=None, sa_column=Column(Text))
     category: RiskCategory = Field(default=RiskCategory.technical)
     probability: RiskGrade = Field(default=RiskGrade.medium)
     impact: RiskGrade = Field(default=RiskGrade.medium)
     status: RiskStatus = Field(default=RiskStatus.open)
     owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
-    mitigation: str | None = None  # the plan to lower probability before it occurs
-    contingency: str | None = None  # the plan if it occurs anyway
+    # the plan to lower probability before it occurs
+    mitigation: str | None = Field(default=None, sa_column=Column(Text))
+    # the plan if it occurs anyway
+    contingency: str | None = Field(default=None, sa_column=Column(Text))
     target_resolution_date: date | None = None
     resolved_at: datetime | None = None  # stamped when status becomes terminal

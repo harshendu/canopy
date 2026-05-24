@@ -31,6 +31,12 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.10",
 ]
+# Async MySQL / MariaDB driver. Postgres (asyncpg) and SQLite (aiosqlite) ship in the
+# core deps; install this extra to run the backend against MySQL/MariaDB:
+#   pip install -e ".[mysql]"   and set DATABASE_URL=mysql+aiomysql://user:pass@host/db
+mysql = [
+    "aiomysql>=0.2",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
