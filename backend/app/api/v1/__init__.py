@@ -14,6 +14,7 @@ from app.api.v1 import (
     exports,
     gantt,
     initiatives,
+    jira_links,
     me,
     milestones,
     projects,
@@ -37,6 +38,7 @@ api_router.include_router(team.router, prefix="/team", tags=["team"])
 api_router.include_router(architecture.router, prefix="/architecture", tags=["architecture"])
 api_router.include_router(decisions.router, prefix="/decisions", tags=["decisions"])
 api_router.include_router(connectors.router, prefix="/connectors", tags=["connectors"])
+api_router.include_router(jira_links.router, tags=["jira-links"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])
 api_router.include_router(drafts.router, tags=["drafts"])

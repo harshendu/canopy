@@ -11,6 +11,7 @@ import { riskTone } from "../lib/risk";
 import ExportMenu from "../components/ExportMenu";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
 import RiskRegister from "../components/RiskRegister";
+import JiraLinksPanel from "../components/JiraLinksPanel";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canWriteProjects, isPlanner } from "../lib/permissions";
 
@@ -220,6 +221,8 @@ export default function InitiativeView() {
           </ul>
         )}
       </div>
+
+      <JiraLinksPanel targetType="initiative" targetId={id} />
     </div>
   );
 }

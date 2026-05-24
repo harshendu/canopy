@@ -46,6 +46,33 @@ class ExternalRef(TimestampMixin, table=True):
     last_synced_at: datetime | None = None
 
 
+class JiraLink(TimestampMixin, table=True):
+    """An architect-created link from a Jira ticket (the *root*) into a canopy target —
+    either a Project or an Initiative.
+
+    Syncing a link pulls the root ticket plus its full descendant subtree from Jira and
+    maps it onto canopy entities idempotently (via ExternalRef):
+      - target_type="project":    every issue in the subtree becomes a Task in that project
+        (epics → summary tasks, everything else → leaf tasks), parented within the project.
+      - target_type="initiative": each epic in the subtree becomes a Project under the
+        initiative and its stories become tasks in that project (Jira initiative→epic→story
+        mirrored onto canopy initiative→project→task).
+
+    Status stays Jira-owned and is never written back (same boundary as the rest of sync).
+    """
+
+    __table_args__ = (UniqueConstraint("connection_id", "jira_issue_id", name="uq_jira_link"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    connection_id: int = Field(foreign_key="connection.id", index=True)
+    jira_issue_id: str = Field(index=True)  # Jira numeric issue id (opaque)
+    jira_key: str  # human key, e.g. "PROJ-123"
+    jira_issue_type: str | None = None  # issue-type name at link time (Epic/Story/Initiative…)
+    target_type: str = Field(index=True)  # "project" | "initiative"
+    target_id: int = Field(index=True)  # Project.id or Initiative.id (polymorphic, no FK)
+    last_synced_at: datetime | None = None
+
+
 class PullRequest(TimestampMixin, table=True):
     """Lightweight cache of GitHub pull requests, kept fresh by webhooks."""
 

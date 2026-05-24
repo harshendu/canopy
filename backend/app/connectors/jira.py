@@ -14,6 +14,7 @@ ExternalRef.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -24,11 +25,25 @@ from app.connectors.base import Connector, SyncResult, register
 from app.connectors.http import request_with_retry
 from app.models.base import Provider, TaskType
 from app.models.integration import ExternalRef
-from app.models.project import Task, TaskStatusHistory
+from app.models.project import Project, Task, TaskStatusHistory
 from app.services import mapping
 
 _FIELDS = ["summary", "status", "issuetype", "parent", "updated"]
 _EPIC_TYPES = {"Epic"}
+_CHILD_BATCH = 50  # max parent keys per `parent in (...)` JQL page
+
+
+@dataclass
+class LinkMapResult:
+    """Outcome of mapping a linked Jira subtree onto canopy entities (see `JiraLink`)."""
+
+    tasks_created: int = 0
+    tasks_updated: int = 0
+    projects_created: int = 0
+    projects_linked: int = 0
+    skipped: int = 0
+    created_project_ids: list[int] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 @register(Provider.jira)
@@ -83,8 +98,16 @@ class JiraConnector(Connector):
                 break
         return issues
 
-    async def _upsert_issue(self, issue: dict[str, Any]) -> tuple[str, str | None, str]:
-        """Upsert one Jira issue as a canopy Task. Returns (action, parent_external_id, ext_id)."""
+    async def _upsert_issue(
+        self, issue: dict[str, Any], *, project_id: int | None = None, force_leaf: bool = False
+    ) -> tuple[str, str | None, str]:
+        """Upsert one Jira issue as a canopy Task. Returns (action, parent_external_id, ext_id).
+
+        `project_id` overrides the connection's configured project (used when linking a ticket
+        into a specific target project). `force_leaf` keeps the task a leaf even for an epic
+        issue type (used when an epic is mapped to a Project elsewhere, not a summary task).
+        """
+        pid = project_id if project_id is not None else self.canopy_project_id
         ext_id = issue["id"]
         key = issue["key"]
         fields = issue.get("fields", {})
@@ -99,12 +122,13 @@ class JiraConnector(Connector):
         if ref is not None and not mapping.is_stale(ref, updated):
             return "skipped", parent_ext_id, ext_id
 
-        task_type = TaskType.summary if issuetype in _EPIC_TYPES else TaskType.task
+        is_epic = issuetype in self._epic_type_names()
+        task_type = TaskType.summary if is_epic and not force_leaf else TaskType.task
         task: Task | None = None
         if ref is not None:
             task = await self.session.get(Task, ref.entity_id)
         if task is None:  # new issue, or dangling ref — create
-            task = Task(project_id=self.canopy_project_id, name=summary, type=task_type)
+            task = Task(project_id=pid, name=summary, type=task_type)
             self.session.add(task)
             await self.session.flush()
             action = "created" if ref is None else "updated"
@@ -159,16 +183,17 @@ class JiraConnector(Connector):
             await self._auto_replan()
         return result
 
-    async def _auto_replan(self) -> None:
-        """Reschedule the canopy project after new tasks were imported (best-effort)."""
+    async def _auto_replan(self, project_id: int | None = None) -> None:
+        """Reschedule a canopy project after new tasks were imported (best-effort)."""
         import contextlib
 
         from app.services.planner import reschedule_project
         from app.services.scheduling import CycleError
 
+        pid = project_id if project_id is not None else self.canopy_project_id
         # Leave dates as-is if the imported graph happens to contain a cycle.
         with contextlib.suppress(CycleError):
-            await reschedule_project(self.session, self.canopy_project_id)
+            await reschedule_project(self.session, pid)
 
     @staticmethod
     def _to_jql_time(iso_ts: str | None) -> str | None:
@@ -216,6 +241,195 @@ class JiraConnector(Connector):
         if parent_ext_id:
             await self._wire_parents([(ext_id, parent_ext_id)])
         await self.session.commit()
+        return result
+
+    # --- ticket linking: map a chosen ticket + its descendant subtree into canopy ---
+    def _epic_type_names(self) -> set[str]:
+        """Issue-type names treated as epics (the configured `epic_issue_type`, plus `Epic`)."""
+        names = set(_EPIC_TYPES)
+        configured = self.config.get("epic_issue_type")
+        if configured:
+            names.add(str(configured))
+        return names
+
+    def _is_epic_issue(self, issue: dict[str, Any]) -> bool:
+        name = (issue.get("fields", {}).get("issuetype") or {}).get("name", "")
+        return name in self._epic_type_names()
+
+    def _nearest_epic_ancestor(
+        self, issue: dict[str, Any], by_id: dict[str, dict[str, Any]]
+    ) -> str | None:
+        """Walk up the parent chain (within the imported set) to the closest epic, if any."""
+        seen: set[str] = set()
+        parent = issue.get("fields", {}).get("parent")
+        cur: str | None = str(parent["id"]) if parent else None
+        while cur is not None and cur in by_id and cur not in seen:
+            seen.add(cur)
+            node = by_id[cur]
+            if self._is_epic_issue(node):
+                return cur
+            parent = node.get("fields", {}).get("parent")
+            cur = str(parent["id"]) if parent else None
+        return None
+
+    async def get_issue(self, key_or_id: str) -> dict[str, Any] | None:
+        """Fetch a single issue (the link root). Returns None if it doesn't exist (404)."""
+        async with await self.open_client() as client:
+            try:
+                resp = await request_with_retry(
+                    client,
+                    "GET",
+                    f"/rest/api/3/issue/{key_or_id}",
+                    params={"fields": ",".join(_FIELDS)},
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == httpx.codes.NOT_FOUND:
+                    return None
+                raise
+        data: dict[str, Any] = resp.json()
+        return data
+
+    async def fetch_descendant_tree(self, root_key: str) -> list[dict[str, Any]]:
+        """The root issue plus every descendant (BFS over Jira `parent` links). Deduped."""
+        root = await self.get_issue(root_key)
+        if root is None:
+            return []
+        issues: dict[str, dict[str, Any]] = {str(root["id"]): root}
+        frontier = [str(root["key"])]
+        async with await self.open_client() as client:
+            while frontier:
+                next_frontier: list[str] = []
+                for start in range(0, len(frontier), _CHILD_BATCH):
+                    batch = frontier[start : start + _CHILD_BATCH]
+                    keys = ", ".join(f'"{k}"' for k in batch)
+                    for child in await self._search(client, f"parent in ({keys})"):
+                        cid = str(child["id"])
+                        if cid not in issues:
+                            issues[cid] = child
+                            next_frontier.append(str(child["key"]))
+                frontier = next_frontier
+        return list(issues.values())
+
+    async def _unique_project_key(self, base: str) -> str:
+        """A project `key` (unique slug) derived from a Jira key, disambiguated on collision."""
+        candidate, n = base, 1
+        while True:
+            existing = (
+                await self.session.execute(select(Project).where(Project.key == candidate))
+            ).scalar_one_or_none()
+            if existing is None:
+                return candidate
+            n += 1
+            candidate = f"{base}-{n}"
+
+    async def _upsert_epic_project(
+        self, issue: dict[str, Any], initiative_id: int
+    ) -> tuple[int, str]:
+        """Map a Jira epic onto a canopy Project under the initiative. Returns (id, action)."""
+        ext_id = str(issue["id"])
+        key = str(issue["key"])
+        summary = issue.get("fields", {}).get("summary") or key
+        updated = issue.get("fields", {}).get("updated")
+
+        ref = await mapping.get_ref(self.session, Provider.jira, ext_id, "project")
+        project: Project | None = None
+        if ref is not None:
+            project = await self.session.get(Project, ref.entity_id)
+        if project is None:  # new epic, or dangling ref — create the project
+            project = Project(
+                key=await self._unique_project_key(key), name=summary, initiative_id=initiative_id
+            )
+            self.session.add(project)
+            action = "created"
+        else:
+            project.name = summary
+            if project.initiative_id is None:
+                project.initiative_id = initiative_id
+            action = "linked"
+        await self.session.flush()
+        assert project.id is not None
+        await mapping.upsert_ref(
+            self.session,
+            provider=Provider.jira,
+            external_id=ext_id,
+            entity_type="project",
+            entity_id=project.id,
+            external_key=key,
+            remote_updated=updated,
+        )
+        return project.id, action
+
+    async def map_subtree_into_project(
+        self, issues: list[dict[str, Any]], project_id: int
+    ) -> LinkMapResult:
+        """Map every issue in the subtree onto a Task in `project_id` (epics → summary tasks)."""
+        result = LinkMapResult()
+        imported = {str(i["id"]) for i in issues}
+        parent_links: list[tuple[str, str]] = []
+        for issue in issues:
+            action, parent_ext_id, ext_id = await self._upsert_issue(issue, project_id=project_id)
+            if action == "created":
+                result.tasks_created += 1
+            elif action == "updated":
+                result.tasks_updated += 1
+            else:
+                result.skipped += 1
+            if parent_ext_id and parent_ext_id in imported:
+                parent_links.append((ext_id, parent_ext_id))
+        await self._wire_parents(parent_links)
+        await self.session.commit()
+        if result.tasks_created:
+            await self._auto_replan(project_id)
+        return result
+
+    async def map_subtree_into_initiative(
+        self, issues: list[dict[str, Any]], initiative_id: int
+    ) -> LinkMapResult:
+        """Map epics → Projects under the initiative; each non-epic → a Task in its epic project."""
+        result = LinkMapResult()
+        by_id = {str(i["id"]): i for i in issues}
+
+        epic_project: dict[str, int] = {}
+        for issue in issues:
+            if self._is_epic_issue(issue):
+                project_id, action = await self._upsert_epic_project(issue, initiative_id)
+                epic_project[str(issue["id"])] = project_id
+                if action == "created":
+                    result.projects_created += 1
+                    result.created_project_ids.append(project_id)
+                else:
+                    result.projects_linked += 1
+
+        parent_links: list[tuple[str, str]] = []
+        for issue in issues:
+            if self._is_epic_issue(issue):
+                continue
+            epic_id = self._nearest_epic_ancestor(issue, by_id)
+            if epic_id is None:  # the initiative-level anchor, or a story with no epic ancestor
+                result.skipped += 1
+                result.notes.append(f"{issue['key']}: no epic ancestor — not mapped")
+                continue
+            project_id = epic_project[epic_id]
+            action, parent_ext_id, ext_id = await self._upsert_issue(
+                issue, project_id=project_id, force_leaf=True
+            )
+            if action == "created":
+                result.tasks_created += 1
+            elif action == "updated":
+                result.tasks_updated += 1
+            else:
+                result.skipped += 1
+            # Wire a parent only when it's a non-epic in the same project (e.g. sub-task → story);
+            # a task whose parent is the epic stays top-level (the epic is the project itself).
+            if parent_ext_id and parent_ext_id in by_id and not self._is_epic_issue(
+                by_id[parent_ext_id]
+            ):
+                parent_links.append((ext_id, parent_ext_id))
+        await self._wire_parents(parent_links)
+        await self.session.commit()
+        if result.tasks_created:
+            for pid in set(epic_project.values()):
+                await self._auto_replan(pid)
         return result
 
     # --- writing issues (content only — status stays Jira-owned, never pushed) ---

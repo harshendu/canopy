@@ -673,6 +673,31 @@ export interface ExportToDriveResult {
   link: string | null;
 }
 
+export type JiraLinkTarget = "project" | "initiative";
+
+export interface JiraLink {
+  id: number;
+  connection_id: number;
+  jira_issue_id: string;
+  jira_key: string;
+  jira_issue_type: string | null;
+  target_type: string;
+  target_id: number;
+  last_synced_at: string | null;
+  created_at: string;
+}
+
+export interface JiraLinkSyncResult {
+  link: JiraLink;
+  projects_created: number;
+  projects_linked: number;
+  tasks_created: number;
+  tasks_updated: number;
+  skipped: number;
+  created_project_ids: number[];
+  notes: string[];
+}
+
 // --- Scenario simulation ---
 export interface Scenario {
   id: number;
