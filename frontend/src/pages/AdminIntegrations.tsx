@@ -14,18 +14,16 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   gdrive: "Google Drive",
 };
 
-// Phase 1 only wires direct reads; mcp/file reads light up in a later phase, so they're shown
-// (to signal the roadmap) but not selectable — picking them today would leave canopy with no data.
-const READ_OPTIONS: { value: ReadStrategy; label: string; disabled?: boolean }[] = [
-  { value: "direct", label: "Direct — canopy's own credentials" },
-  { value: "mcp", label: "MCP / Claude (later phase)", disabled: true },
-  { value: "file", label: "File drop (later phase)", disabled: true },
+const READ_OPTIONS: { value: ReadStrategy; label: string }[] = [
+  { value: "direct", label: "Direct — canopy polls with its own credentials" },
+  { value: "mcp", label: "MCP — Claude ingests (poll/webhooks stand down)" },
+  { value: "file", label: "File drop — load from uploads / a watched folder" },
 ];
 
 const WRITE_OPTIONS: { value: WriteStrategy; label: string }[] = [
-  { value: "direct", label: "Direct — canopy's own credentials" },
-  { value: "mcp", label: "MCP / Claude" },
-  { value: "disabled", label: "Disabled — read-only" },
+  { value: "direct", label: "Direct — canopy writes with its own credentials" },
+  { value: "mcp", label: "MCP — Claude performs the write (in-app push disabled)" },
+  { value: "disabled", label: "Disabled — read-only (no writes)" },
 ];
 
 export default function AdminIntegrations() {
@@ -45,10 +43,16 @@ export default function AdminIntegrations() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Integrations</h1>
-        <p className="mt-1 max-w-2xl text-sm text-slate-500">
-          Choose, per provider, how canopy reads and writes. <strong>Reads</strong> use canopy's
-          own credentials when available; <strong>writes</strong> can run directly, be routed
-          through Claude over MCP, or be disabled. Defaults are direct/direct.
+        <p className="mt-1 max-w-3xl text-sm text-slate-500">
+          Choose, per provider, how canopy moves data — this governs every role.{" "}
+          <strong>Reads:</strong> <code>direct</code> polls with canopy's credentials;{" "}
+          <code>mcp</code> stands the poll/webhooks down and waits for Claude to ingest;{" "}
+          <code>file</code> loads from an upload or watched folder. <strong>Writes:</strong>{" "}
+          <code>direct</code> writes with canopy's credentials; <code>mcp</code> disables the
+          in-app push/export (Claude does the write); <code>disabled</code> blocks writes. Choosing{" "}
+          <code>mcp</code>/<code>disabled</code> writes will disable push-to-Jira and
+          export-to-Drive for users. <strong>Per-user SSO</strong> lets each contributor connect
+          their own account so canopy acts as them. Defaults are direct/direct, SSO off.
         </p>
       </div>
 
@@ -69,7 +73,7 @@ export default function AdminIntegrations() {
                 className="rounded border border-slate-300 px-2 py-1.5 text-sm"
               >
                 {READ_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value} disabled={o.disabled}>
+                  <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
                 ))}
@@ -93,6 +97,20 @@ export default function AdminIntegrations() {
                   </option>
                 ))}
               </select>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={s.allow_user_connect}
+                onChange={(e) =>
+                  update.mutate({
+                    provider: s.provider,
+                    body: { allow_user_connect: e.target.checked },
+                  })
+                }
+                className="rounded border-slate-300"
+              />
+              <span className="text-xs uppercase text-slate-400">Per-user SSO</span>
             </label>
           </div>
         ))}

@@ -3,6 +3,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { api, downloadExport } from "../api/client";
 import type { Connection, ExportToDriveResult } from "../api/types";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { isPlanner } from "../lib/permissions";
 
 type Scope = "project" | "initiative" | "portfolio";
 type Fmt = "pdf" | "csv";
@@ -25,13 +27,18 @@ export default function ExportMenu({ scope, id }: { scope: Scope; id?: number })
     queryFn: () => api.get<Connection[]>(`/connectors/connections`),
     enabled: open,
   });
+  const { data: me } = useCurrentUser();
+  // Save-to-Drive is an external write: planner role + the provider's writes set to `direct`.
+  const mayWriteDrive = isPlanner(me?.role);
   const driveConns = (connections.data ?? []).filter(
     (c) => c.provider === "gdrive" && c.active && c.authorized,
   );
   const base = basePath(scope, id);
   const stem = scope === "portfolio" ? "portfolio" : `${scope}-${id}`;
   const resolvedConn = connId === "" && driveConns.length === 1 ? driveConns[0].id : connId;
-  const canDrive = driveConns.length > 0 && resolvedConn !== "";
+  const resolvedConnObj = driveConns.find((c) => c.id === resolvedConn);
+  const writeDirect = resolvedConnObj?.write_strategy === "direct";
+  const canDrive = mayWriteDrive && driveConns.length > 0 && resolvedConn !== "" && writeDirect;
 
   const download = async (fmt: Fmt) => {
     setBusy(`dl-${fmt}`);
@@ -87,7 +94,11 @@ export default function ExportMenu({ scope, id }: { scope: Scope; id?: number })
 
           <div className="border-t border-slate-100 pt-2">
             <div className="mb-1 font-semibold">Save to Google Drive</div>
-            {driveConns.length === 0 ? (
+            {!mayWriteDrive ? (
+              <p className="text-xs text-slate-400">
+                Saving to Drive needs a planner role. You can still download the snapshot above.
+              </p>
+            ) : driveConns.length === 0 ? (
               <p className="text-xs text-slate-400">No authorized Google Drive connection.</p>
             ) : (
               <div className="space-y-2">
@@ -123,6 +134,12 @@ export default function ExportMenu({ scope, id }: { scope: Scope; id?: number })
                     Save CSV
                   </button>
                 </div>
+                {resolvedConn !== "" && !writeDirect && (
+                  <p className="text-xs text-amber-700">
+                    Drive writes are {resolvedConnObj?.write_strategy}-managed — saving from
+                    canopy is unavailable for this connection.
+                  </p>
+                )}
               </div>
             )}
           </div>
