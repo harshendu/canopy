@@ -9,6 +9,7 @@ from app.models.base import (
     ADRStatus,
     BlockerCategory,
     BlockerSeverity,
+    CriterionStatus,
     DecisionRule,
     DependencyType,
     DocKind,
@@ -23,6 +24,7 @@ from app.models.base import (
     RiskGrade,
     RiskScope,
     RiskStatus,
+    SpecStatus,
     TaskType,
 )
 from app.schemas.auth import UserRead
@@ -122,6 +124,7 @@ class TaskCreate(BaseModel):
     status: str | None = None
     deadline: date | None = None
     assignee_engineer_id: int | None = None
+    spec_id: int | None = None
     tags: list[str] = []
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
@@ -140,6 +143,7 @@ class TaskUpdate(BaseModel):
     status: str | None = None
     deadline: date | None = None
     assignee_engineer_id: int | None = None
+    spec_id: int | None = None
     tags: list[str] | None = None
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
@@ -166,6 +170,7 @@ class TaskRead(BaseModel):
     sprint: str | None
     deadline: date | None
     assignee_engineer_id: int | None
+    spec_id: int | None = None
     tags: list[str] = []
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
@@ -1330,3 +1335,86 @@ class HarvestDocsResult(BaseModel):
     skipped: int
     epics_scanned: int
     notes: list[str] = []
+
+
+# --- Specs (spec-driven development) ---
+class SpecCriterionCreate(BaseModel):
+    text: str
+    verification: str | None = None
+    sort_order: int = 0
+
+
+class SpecCriterionUpdate(BaseModel):
+    text: str | None = None
+    status: CriterionStatus | None = None
+    verification: str | None = None
+    sort_order: int | None = None
+
+
+class SpecCriterionRead(BaseModel):
+    model_config = _read
+    id: int
+    spec_id: int
+    text: str
+    status: CriterionStatus
+    verification: str | None
+    sort_order: int
+    created_at: datetime
+
+
+class SpecCreate(BaseModel):
+    project_id: int
+    title: str
+    problem: str
+    context: str | None = None
+    out_of_scope: str | None = None
+    status: SpecStatus = SpecStatus.draft
+    owner_engineer_id: int | None = None
+    adr_id: int | None = None
+    source_url: str | None = None
+
+
+class SpecUpdate(BaseModel):
+    title: str | None = None
+    problem: str | None = None
+    context: str | None = None
+    out_of_scope: str | None = None
+    status: SpecStatus | None = None
+    owner_engineer_id: int | None = None
+    adr_id: int | None = None
+    source_url: str | None = None
+
+
+class SpecRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    title: str
+    problem: str
+    context: str | None
+    out_of_scope: str | None
+    status: SpecStatus
+    owner_engineer_id: int | None
+    adr_id: int | None
+    source_url: str | None
+    created_at: datetime
+
+
+class SpecLinkedTask(BaseModel):
+    model_config = _read
+    id: int
+    name: str
+    status: str | None
+    percent_complete: float
+    is_critical: bool
+
+
+class SpecDetail(SpecRead):
+    """The self-audit bundle: the spec, its acceptance criteria, the tasks implementing it,
+    and the computed readiness (met / effective criteria)."""
+
+    criteria: list[SpecCriterionRead] = []
+    linked_tasks: list[SpecLinkedTask] = []
+    criteria_total: int = 0  # excludes waived
+    criteria_met: int = 0
+    acceptance_ratio: float = 0.0  # met / effective total

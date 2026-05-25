@@ -180,3 +180,21 @@ class DocLinkHealth(StrEnum):
     ok = "ok"
     stale = "stale"
     broken = "broken"
+
+
+# --- Specs (spec-driven development: intent as the source of truth) ---
+class SpecStatus(StrEnum):
+    draft = "draft"
+    approved = "approved"  # reviewed, ready to build
+    in_progress = "in_progress"  # work linked / under way
+    verified = "verified"  # all acceptance criteria met
+    archived = "archived"
+
+
+class CriterionStatus(StrEnum):
+    """State of one acceptance criterion in the agent self-audit."""
+
+    open = "open"  # not yet verified
+    met = "met"
+    unmet = "unmet"
+    waived = "waived"  # consciously dropped (excluded from readiness)

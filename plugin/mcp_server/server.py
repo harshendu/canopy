@@ -38,6 +38,7 @@ from tools import (  # noqa: E402
     planning,
     projects,
     scenarios,
+    specs,
     team,
 )
 
@@ -53,6 +54,7 @@ drafts.register(mcp, client)
 scenarios.register(mcp, client)
 metadata.register(mcp, client)
 docs.register(mcp, client)
+specs.register(mcp, client)
 
 
 def main() -> None:

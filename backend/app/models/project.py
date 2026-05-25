@@ -119,6 +119,8 @@ class Task(TimestampMixin, table=True):
     # Hard deadline; the scheduler flags tasks whose computed end exceeds it.
     deadline: date | None = None
     assignee_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    # The spec this task implements (intent → work traceability; spec-driven development).
+    spec_id: int | None = Field(default=None, foreign_key="spec.id", index=True)
 
 
 class TaskStatusHistory(TimestampMixin, table=True):

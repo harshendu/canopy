@@ -144,6 +144,14 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   URL/ADF extraction + harvest + coverage roll-up) attaches references to the entity each epic maps
   to. MCP: `sample_epic_doc_fields`/`set_epic_doc_field_mapping`/`harvest_epic_docs`/`get_doc_coverage`
   (skill: `mapping-epic-docs`). USER_FLOWS §V.
+- **Specs (spec-driven development):** `Spec` + `SpecCriterion` (`app/models/spec.py`) capture
+  *intent as the source of truth* — a problem statement + explicit, checkable **acceptance
+  criteria** — before work begins. Tasks implement a spec via `Task.spec_id`; an agent self-audits
+  each criterion (met|unmet|waived) against the implementation. `GET /specs/{id}` returns the
+  audit bundle (criteria + linked tasks + readiness from pure `app/services/specs.py`). Criterion
+  verdicts are contributor-writable (the engineer/agent records them); spec CRUD is planner-gated.
+  MCP: `create_spec`/`add_spec_criterion`/`get_spec`/`update_spec_criterion`/`link_task_to_spec`
+  (skill: `spec-driven-development`). Vision + roadmap in `docs/AI_NATIVE_EXECUTION.md`; USER_FLOWS §W.
 - Connectors implement the ABC in `app/connectors/base.py` and self-register via `@register`. Sync is
   idempotent through the `ExternalRef` table (`app/services/mapping.py`). Connector tokens are
   encrypted at rest with Fernet (`app/core/crypto.py`). All outbound HTTP goes through

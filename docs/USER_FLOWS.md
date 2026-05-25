@@ -951,6 +951,49 @@ release | qa | runbook | other), a `source` (jira_epic | manual | repo | drive),
 
 ---
 
+## W. Specs — spec-driven development **[new]**
+
+**Intent is the source of truth.** A `Spec` (`app/models/spec.py`) captures the *problem* and
+explicit, checkable **acceptance criteria** before work begins; tasks implement it
+(`Task.spec_id`); and afterward each criterion is **self-audited** (met | unmet | waived) against
+the implementation. This is the intent end of the spine in
+[`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) (roadmap gap #1) — the artifact that aligns
+humans and agents and the thing an agent struggles without. Source docs (PRD/design) link via the
+document graph (§V) or `source_url`; the governing decision links via `adr_id`. Status:
+`draft → approved → in_progress → verified → archived` (set explicitly; not transition-gated).
+
+### W1. Create / manage a spec
+- **API:** `GET /api/v1/specs?project_id=&status=` (open read), `POST /api/v1/specs` (planner;
+  validates the project exists), `PATCH/DELETE /api/v1/specs/{id}` (planner; delete unlinks its
+  tasks and drops its criteria first — PG/MySQL enforce the FK) · **MCP:** `list_specs`,
+  `create_spec`, `set_spec_status`.
+
+### W2. Acceptance criteria
+- **API:** `POST /api/v1/specs/{id}/criteria` (planner), `PATCH /api/v1/criteria/{id}`
+  (**contributor** — the implementing engineer or the agent records the verdict),
+  `DELETE /api/v1/criteria/{id}` (planner). A criterion carries `text`, `status`
+  (open|met|unmet|waived), an optional `verification` note (how it was checked), and `sort_order`
+  · **MCP:** `add_spec_criterion`, `update_spec_criterion`.
+
+### W3. Link work + self-audit
+- A task implements a spec via `Task.spec_id` (`PATCH /api/v1/tasks/{id}` with `spec_id`; planner,
+  or an engineer on their own task) · **MCP:** `link_task_to_spec`.
+- `GET /api/v1/specs/{id}` returns the **self-audit bundle**: the spec + its criteria + the linked
+  tasks (name/status/percent) + computed **readiness** (`criteria_met` / `criteria_total` excluding
+  waived, `acceptance_ratio`). Readiness is pure in `app/services/specs.py` · **MCP:** `get_spec`.
+- **Skill `spec-driven-development`** scripts the loop: draft the spec from a PRD/ADRs → write
+  checkable criteria → approve → plan + link the work (via `drafting-jira-tickets`) → self-audit
+  each criterion against the implementation → mark `verified` when all are met.
+
+### W4. Not built (deliberate limits)
+- **No React UI yet** — specs + criteria are API/MCP-only; a Specs panel on the project cockpit is
+  a fast-follow.
+- **No status transition gating** (unlike ADRs §G2) and **no DraftPlan→Spec FK** (link a draft
+  plan's `source` to the spec, then link the synced tasks). **No `Task.implements_adr_id`** yet
+  (decision→task traceability is roadmap gap #5).
+
+---
+
 ## L. Claude plugin (agentic flows)
 
 ### L1. Install & configure the plugin
@@ -1049,6 +1092,13 @@ release | qa | runbook | other), a `source` (jira_epic | manual | repo | drive),
   (`get_doc_coverage`). canopy reads only — links are never written back to Jira and documents
   are never stored.
 
+### L15. Spec-driven development (skill) **[new]**
+- The **`spec-driven-development`** skill runs the spec loop (§W): draft a `Spec` from a PRD/design
+  (doc graph §V) + ADRs (`create_spec`), write explicit checkable acceptance criteria
+  (`add_spec_criterion`), approve it, plan + link the implementing work (`link_task_to_spec`, with
+  `drafting-jira-tickets`), then **self-audit** each criterion against the implementation
+  (`get_spec` → `update_spec_criterion` met/unmet) and mark the spec `verified` when all are met.
+
 ---
 
 ## M. Engineer workspace (`/me`)
@@ -1081,6 +1131,8 @@ backlog:
 - **What-if** scheduling (C5).
 - **Document graph** (§V): references + coverage + the epic doc-field mapping/harvest are
   API/MCP-only — no Docs panel on the cockpit yet.
+- **Specs** (§W): spec CRUD + acceptance criteria + self-audit are API/MCP-only — no Specs panel
+  on the project cockpit yet.
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - *(closed previously: G5 blast radius; Risk (§Q) + portfolio scores (§B1); user/role mgmt (A3) +
   engineer workspace (§M); per-role enforcement (§A3a); drift detection (§N); retros/postmortems

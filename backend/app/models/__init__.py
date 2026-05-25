@@ -47,6 +47,7 @@ from app.models.scenario import (
     ScenarioProject,
     ScenarioTask,
 )
+from app.models.spec import Spec, SpecCriterion
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
 
@@ -93,6 +94,8 @@ __all__ = [
     "ScenarioMilestone",
     "ScenarioProject",
     "ScenarioTask",
+    "Spec",
+    "SpecCriterion",
     "Task",
     "TaskStatusHistory",
     "User",
