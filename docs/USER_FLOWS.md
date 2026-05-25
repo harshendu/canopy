@@ -296,19 +296,30 @@ projects and rolls up their health.
   deadline/percent_complete/parent — **status stays Jira-mirrored, read-only**) and `assign_task`
   (set/clear `assignee_engineer_id`). Re-run `replan_schedule` after duration/structure changes.
 
-### C1a. Task detail panel — estimates, tags, progress, blockers, risks **[new]**
+### C1a. Task detail panel — estimates, tags, progress, blockers, risks, external links **[new]**
 - **UI:** click a task bar in the **Gantt** (or a card on the **Board**) to open a right-side
   **detail panel**. It edits the task's **progress** + **duration**, a **3-point estimate**
   (aggressive / practical / buffered, with the computed PERT mean + spread + a confidence badge),
   **tags**, the task's **blockers** (raise/resolve with category + severity + needed-by), and the
-  task-scoped **risk register** (RAID).
+  task-scoped **risk register** (RAID). An **External links** section shows the task's links out to
+  the systems that own the work: its **Jira issue** (clickable when the connection exposes a
+  browsable site), the **GitHub PRs** implementing it (with open/closed state), and its
+  task-scoped **design docs** (GitHub / Drive / Jira / manual, badged by source). Read-only —
+  canopy links, it never stores; doc CRUD lives on the project **Docs** tab (§V).
 - **API:** `PATCH /api/v1/tasks/{id}` (`tags`, `estimate_optimistic`/`estimate_likely`/
   `estimate_pessimistic`; `TaskRead` returns computed `pert_mean` + `estimate_spread`) ·
   `GET/POST /api/v1/tasks/{id}/blockers` · `GET/POST /api/v1/risks?scope_level=task&scope_id=…` ·
-  **MCP:** `set_task_estimates`, `set_tags`/`add_tags`/`remove_tags`, `raise_blocker`, `add_risk`.
+  `GET /api/v1/tasks/{id}/links` (the external-links bundle: Jira issue from `ExternalRef`, PRs
+  from `PullRequest.task_id`, task-scoped `DocReference`s — pure URL build in
+  `app/services/links.py`) · **MCP:** `set_task_estimates`, `set_tags`/`add_tags`/`remove_tags`,
+  `raise_blocker`, `add_risk`.
 - **Notes:** the 3-point estimate is **advisory** — it never moves the scheduling `duration`; a wide
   optimistic→pessimistic spread instead raises the schedule-risk "estimate uncertainty" indicator
-  (§Q1). There is deliberately **no** "apply estimate to duration" action.
+  (§Q1). There is deliberately **no** "apply estimate to duration" action. The Jira **browse URL**
+  is built from the connection's `base_url`; OAuth connections store the non-browsable API base
+  (`api.atlassian.com/ex/jira/{cloudId}`), so the key is shown without a link there. A PR↔task link
+  comes from `PullRequest.task_id` (a webhook would match by branch / Jira key); the demo seed wires
+  it directly. Gantt/Board still show no per-row link badge (a possible follow-up).
 
 ### C2. Add a dependency
 - **UI:** Gantt tab → "Add dependency (finish → start)" form: pick predecessor + successor → "Link".
@@ -884,6 +895,9 @@ GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the
 - **API:** `GET /api/v1/connectors/github/{id}/file?path=`, `.../github/{id}/pulls`,
   `.../github/cached-prs`; `GET /api/v1/connectors/gdrive/{id}/docs`, `.../gdrive/{id}/docs/{file_id}`
   · **MCP:** `read_repo_file`, `list_open_prs`, `read_design_doc`.
+- **PR↔task link:** a cached `PullRequest` carries an optional `task_id` (the task it implements,
+  matched by branch / Jira key on ingest), which surfaces the PR in that task's detail panel (§C1a)
+  via `GET /api/v1/tasks/{id}/links`.
 - **Drive uploads (write):** the Drive connector also has `upload_file` (multipart) used by export
   snapshots (§S) to store a generated PDF/CSV in Drive — the one place canopy writes to Drive.
 - **Not built (v2 §J6):** PR **review metrics** (time-to-review, churn, test status) and commit

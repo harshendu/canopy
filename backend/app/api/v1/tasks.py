@@ -12,10 +12,12 @@ from app.api.deps import (
 from app.models.project import Task, TaskStatusHistory
 from app.schemas.entities import (
     TaskCreate,
+    TaskExternalLinksRead,
     TaskRead,
     TaskStatusHistoryRead,
     TaskUpdate,
 )
+from app.services.links import collect_task_links
 from app.services.metadata import normalize_tags
 
 router = APIRouter()
@@ -49,6 +51,18 @@ async def get_task(session: SessionDep, _: CurrentUser, task_id: int) -> Task:
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return task
+
+
+@router.get("/{task_id}/links", response_model=TaskExternalLinksRead)
+async def get_task_links(
+    session: SessionDep, _: CurrentUser, task_id: int
+) -> TaskExternalLinksRead:
+    """A task's external resource links: its Jira issue, the GitHub PRs implementing it, and the
+    design docs (GitHub/Drive) scoped to it. Canopy links out; it never stores the resources."""
+    task = await session.get(Task, task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return await collect_task_links(session, task_id)
 
 
 @router.get("/{task_id}/history", response_model=list[TaskStatusHistoryRead])

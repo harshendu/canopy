@@ -548,6 +548,7 @@ class PullRequestRead(BaseModel):
     state: str
     url: str | None
     author: str | None
+    task_id: int | None = None
 
 
 # --- Jira ticket linking (link a Jira ticket → canopy project/initiative) ---
@@ -1388,6 +1389,21 @@ class DocCoverageRead(BaseModel):
     present: list[DocKind]
     missing: list[DocKind]  # expected kinds with no reference — a coverage gap
     by_kind: dict[str, int]
+
+
+# --- A task's external resource links (Jira issue + GitHub PRs + design docs) ---
+class JiraIssueLink(BaseModel):
+    key: str  # human key, e.g. "HELIX-101"
+    url: str | None  # browse URL, when the connection exposes a site (None for OAuth API bases)
+
+
+class TaskExternalLinksRead(BaseModel):
+    """Everything that links a task out to the systems that own the work: its Jira issue,
+    the GitHub PRs implementing it, and the design docs (GitHub/Drive) scoped to it."""
+
+    jira: JiraIssueLink | None
+    pull_requests: list[PullRequestRead]
+    docs: list[DocReferenceRead]
 
 
 # --- Jira epic → doc field mapping (the AI-driven setup) ---

@@ -992,3 +992,25 @@ export interface DocCoverage {
   missing: DocKind[];
   by_kind: Record<string, number>;
 }
+
+export interface PullRequest {
+  id: number;
+  repo: string;
+  number: number;
+  title: string;
+  state: string;
+  url: string | null;
+  author: string | null;
+  task_id: number | null;
+}
+
+export interface JiraIssueLink {
+  key: string;
+  url: string | null;
+}
+
+export interface TaskExternalLinks {
+  jira: JiraIssueLink | null;
+  pull_requests: PullRequest[];
+  docs: DocReference[];
+}

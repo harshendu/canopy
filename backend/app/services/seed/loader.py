@@ -666,21 +666,29 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
             provider=Provider(dc.provider), name=dc.name, config=dict(dc.config),
             encrypted_token=encrypt_token("demo-token")))
 
+    # GitHub PRs, each tied to the task it implements (a webhook would match by branch/Jira key).
     prs = [
-        (318, "Wire secure gateway into engine", "open", "tombecker"),
-        (316, "Egress allow-list enforcement", "open", "yukitanaka"),
-        (309, "Streaming pipeline core", "closed", "tombecker"),
+        (318, "Wire secure gateway into engine", "open", "tombecker", "Wire secure gateway in"),
+        (316, "Egress allow-list enforcement", "open", "yukitanaka", "Wire secure gateway in"),
+        (309, "Streaming pipeline core", "closed", "tombecker", "Streaming pipeline core"),
     ]
-    for number, title, state, author in prs:
+    for number, title, state, author, task_name in prs:
+        pr_task = refs.tasks[FLAGSHIP_KEY].get(task_name)
         await _add(session, PullRequest(
             repo="helix-io/data-plane", number=number, title=title, state=state,
-            url=f"https://github.com/helix-io/data-plane/pull/{number}", author=author))
+            url=f"https://github.com/helix-io/data-plane/pull/{number}", author=author,
+            task_id=pr_task.id if pr_task is not None else None))
 
     await _add(session, JiraLink(
         connection_id=_req(conns["jira"].id), jira_issue_id="910000", jira_key="HELIX-100",
         jira_issue_type="Epic", target_type="project", target_id=fid))
+    # Mirror Jira issue keys onto tasks so each shows a clickable HELIX-… link in the UI.
     for ext_id, key, name in (("910101", "HELIX-101", "Processing contract spec"),
-                              ("910102", "HELIX-102", "Streaming pipeline core")):
+                              ("910102", "HELIX-102", "Streaming pipeline core"),
+                              ("910103", "HELIX-103", "Engine architecture"),
+                              ("910104", "HELIX-104", "In-VPC model execution"),
+                              ("910105", "HELIX-105", "Wire secure gateway in"),
+                              ("910106", "HELIX-106", "Enclave & key-handling ADR")):
         task = refs.tasks[FLAGSHIP_KEY].get(name)
         if task is not None and task.id is not None:
             await _add(session, ExternalRef(
