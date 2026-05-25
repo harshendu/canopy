@@ -26,6 +26,18 @@ plugin/    Claude Code plugin: FastMCP server (thin API client) + skills + subag
 compose.yml  postgres + redis + backend + worker + frontend
 ```
 
+## Quickstart (guided setup)
+
+```bash
+python3 scripts/init.py
+```
+
+An interactive wizard that collects the inputs it needs (database, admin
+account, integrations), generates `.env` for you — auto-creating a random
+`SECRET_KEY`, a Fernet `TOKEN_ENCRYPTION_KEY`, and a strong admin password —
+then offers to start either the Docker stack or local dev servers. It backs up
+any existing `.env` first; pass `--no-start` to only (re)generate the file.
+
 ## Run the whole stack (Docker)
 
 ```bash
@@ -33,6 +45,8 @@ cp .env.example .env
 # edit .env: set SECRET_KEY, TOKEN_ENCRYPTION_KEY (see comment in the file), superuser creds
 docker compose up --build
 ```
+
+(or just run `python3 scripts/init.py` and pick the Docker option)
 
 - API: http://localhost:8000 (`/docs` for OpenAPI, `/api/v1/health` for health)
 - Web: http://localhost:5173
