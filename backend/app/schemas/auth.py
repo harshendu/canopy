@@ -42,3 +42,11 @@ class UserRead(BaseModel):
     role: UserRole
     function: UserFunction = UserFunction.engineering
     is_active: bool
+
+
+class SessionInfo(BaseModel):
+    """The active session: the effective (possibly impersonated) user, plus the real admin behind
+    it when an admin is impersonating someone else (``None`` for an ordinary session)."""
+
+    user: UserRead
+    impersonator: UserRead | None = None

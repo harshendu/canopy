@@ -533,6 +533,18 @@ export interface User {
   is_active: boolean;
 }
 
+export interface Token {
+  access_token: string;
+  token_type?: string;
+}
+
+/** The active session: the effective (possibly impersonated) user plus, when an admin is
+ *  impersonating, the real admin behind it. */
+export interface SessionInfo {
+  user: User;
+  impersonator: User | null;
+}
+
 // --- Demo / seeded-data mode (local & dev only) ---
 export interface DemoAccount {
   email: string;

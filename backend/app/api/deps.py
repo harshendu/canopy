@@ -8,7 +8,7 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.core.db import get_session
-from app.core.security import decode_access_token, decode_token_scope
+from app.core.security import decode_access_token, decode_token_actor, decode_token_scope
 from app.models.base import TokenScope, UserRole
 from app.models.team import Engineer
 from app.models.user import User
@@ -40,6 +40,34 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_impersonator(
+    session: SessionDep, token: Annotated[str, Depends(oauth2_scheme)]
+) -> User | None:
+    """The real admin behind an impersonation token (its `act` claim), or ``None`` for an ordinary
+    session — drives the impersonation banner and the actor-gated account switcher."""
+    actor_email = decode_token_actor(token)
+    if not actor_email:
+        return None
+    result = await session.execute(select(User).where(User.email == actor_email))
+    return result.scalar_one_or_none()
+
+
+Impersonator = Annotated[User | None, Depends(get_impersonator)]
+
+
+async def require_admin_actor(user: CurrentUser, impersonator: Impersonator) -> User:
+    """The acting admin for account-switching: the impersonator when impersonating, else the
+    current user. Gating on the actor (not the impersonated user) means an admin keeps the power
+    to switch — to another user or back to themselves — even while acting as a non-admin."""
+    actor = impersonator or user
+    if not actor.is_active or actor.role != UserRole.admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin required")
+    return actor
+
+
+AdminActor = Annotated[User, Depends(require_admin_actor)]
 
 
 async def current_token_scope(token: Annotated[str, Depends(oauth2_scheme)]) -> TokenScope:

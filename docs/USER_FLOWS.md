@@ -99,6 +99,9 @@ allowed; legacy `member` ≈ architect):
 
 ### A4. Get current user
 - **API:** `GET /api/v1/auth/me`. The web app caches this to gate admin-only nav.
+- **API:** `GET /api/v1/auth/session` returns the active session — the effective (possibly
+  impersonated) user plus the real admin behind it when impersonating (§A9). Backs the bottom-of-
+  sidebar account display and the impersonation banner.
 
 ### A5. Engineer ↔ login link & workspace **[new]**
 - A team **Engineer** record can be linked to a login via `Engineer.user_id` (set on the **Team**
@@ -175,6 +178,34 @@ ingest, and file-drop ingest are later phases.)
 - **Built in Phase 4:** file-drop ingest (§J3b) — an upload endpoint + a watched local/S3 drop
   folder — so the `file` read strategy is now functional too. The full integration-strategy matrix
   is in place.
+
+### A9. Admin user impersonation (act as another user) **[new]**
+An admin can **switch into any other account** to see canopy exactly as that user does (debug a
+persona's landing/permissions, reproduce a report). It is a **session-identity switch, not a data
+write** — Jira/ticket status is never touched (§Source-of-truth) and nothing is created on the
+user's behalf.
+- **UI — current user + switcher:** the bottom of the left panel always shows the **current user**
+  (avatar + name + role; `frontend/src/components/UserSwitcher.tsx`). For an admin — including the
+  *real* admin behind an active impersonation — it expands into a switcher over **every account**:
+  pick anyone to act as them, or pick **your own account** to step back. Non-admins just see their
+  own identity (no switcher).
+- **UI — impersonation banner:** while impersonating, a thin amber **strip across the top of every
+  page** (`ImpersonationBanner.tsx`, rendered in `App.tsx`'s `ProtectedLayout`) reads "Viewing as
+  <user> — impersonated by <admin>" with a one-click **Back to <admin>** exit.
+- **API:** `POST /api/v1/auth/impersonate/{user_id}` mints a token that acts **as** `user_id`
+  (404 unknown / 400 deactivated target); `POST /api/v1/auth/impersonate/stop` returns to the
+  admin's own account. Selecting your own id via `…/impersonate/{id}` also drops impersonation.
+- **How it's bounded:** the minted JWT keeps `sub`=target but carries an **`act`=admin** claim
+  (RFC 8693-style delegation, `app/core/security.py`). Switching is gated on the *acting admin*
+  (`AdminActor` in `app/api/deps.py`) — **not** the impersonated user — so the admin keeps the
+  power to switch again or back even while acting as a non-admin (`GET /auth/users` is likewise
+  actor-readable for the switcher; user **writes** stay on the impersonated identity). The action
+  is **human-only** (`HumanOnly`): a bounded **agent** token (§A6) is rejected (403) — no MCP tool.
+  The web app drops its entire query cache on a switch so all data refetches as the new principal.
+- **Not built:** a server-side impersonation **audit log** (who acted as whom, when) — the `act`
+  claim makes the session attributable in the moment, but events aren't persisted yet; and a
+  configurable **short expiry** for impersonation tokens (they currently inherit the normal login
+  TTL).
 
 ---
 
