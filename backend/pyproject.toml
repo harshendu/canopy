@@ -37,6 +37,12 @@ dev = [
 mysql = [
     "aiomysql>=0.2",
 ]
+# Optional S3 backend for the file-drop ingest poll (FILE_DROP_BACKEND=s3). The local-directory
+# backend needs no extra deps; install this only for cloud deployments using S3:
+#   pip install -e ".[s3]"
+s3 = [
+    "boto3>=1.34",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -90,7 +96,7 @@ strict_equality = true
 exclude = ["alembic/", "tests/"]
 
 [[tool.mypy.overrides]]
-module = ["networkx.*", "arq.*", "google.*", "jose.*", "reportlab.*"]
+module = ["networkx.*", "arq.*", "google.*", "jose.*", "reportlab.*", "boto3.*"]
 ignore_missing_imports = true
 
 [build-system]

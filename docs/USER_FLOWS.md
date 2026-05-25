@@ -160,8 +160,9 @@ ingest, and file-drop ingest are later phases.)
 - **Built in Phase 3:** MCP-orchestrated ingest (Claude pushes external data in idempotently) +
   the draft push write-back + the scheduled-Claude-job pattern (§J3a) — so the `mcp` read strategy
   and `mcp` write strategy are now functional, not inert.
-- **Not built (later phase):** the file-drop ingest pipeline (the `file` read strategy stays inert
-  until Phase 4).
+- **Built in Phase 4:** file-drop ingest (§J3b) — an upload endpoint + a watched local/S3 drop
+  folder — so the `file` read strategy is now functional too. The full integration-strategy matrix
+  is in place.
 
 ---
 
@@ -838,6 +839,23 @@ and (issues) replans on new tasks; ingest does **not** advance the connection wa
 - **Scheduling:** lives on the architect's Claude account (`/loop` or a scheduled task); canopy
   doesn't drive it. Runbook: skill **`mcp-ingest`**. Logic: `app/services/ingest.py` (shares the
   task-upsert core with the Jira sync so the two paths can't drift).
+
+### J3b. File-drop ingest — import a JSON/CSV export **[new — Phase 4]**
+A second *transport* for the same ingest (§J3a): drop an export file and canopy parses + loads it
+idempotently. The entity type is inferred from the connection's provider (Jira→issues,
+GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the file). Two ways in:
+- **Upload:** `/connectors` → **Import file** on a Jira/GitHub connection (or
+  `POST /api/v1/connectors/connections/{id}/ingest/file`, multipart; planner-gated, agent-allowed).
+  Accepts **JSON** (an array of `IngestIssue`/`IngestPullRequest` objects) or **CSV** (header row =
+  field names). Returns `{provider, created, updated, skipped, parsed, errors}`.
+- **Watched shared storage:** an arq cron (`poll_file_drops`) ingests files dropped into a
+  configured backend — **local** directory or **S3** bucket (`[s3]` extra) by deployment, *not*
+  Drive. Layout `<root>/<connection_id>/*.{json,csv}`; each file is moved to `processed/` (or
+  `failed/` + an `.error` note) so the poll is idempotent without a tracking table. Disabled when
+  no backend is configured. Config: `FILE_DROP_BACKEND` (`local`|`s3`), `FILE_DROP_LOCAL_DIR` /
+  `FILE_DROP_S3_BUCKET` / `FILE_DROP_S3_PREFIX`, `FILE_DROP_POLL_MINUTES`.
+- Logic: `app/services/file_ingest.py` (parser) + `app/services/file_drop.py` (storage backends +
+  poll), reusing the §J3a idempotent ingest.
 
 ### J4. Receive provider webhooks (live updates)
 - **Flow:** Jira/GitHub POST to `/webhooks/jira` / `/webhooks/github`. The receiver verifies the HMAC

@@ -74,6 +74,29 @@ export default function Connectors() {
     onError: (e: Error) => setSyncMsg(`Sync failed: ${e.message}`),
   });
 
+  // File-drop ingest: upload a JSON/CSV export; canopy parses + loads it idempotently.
+  const importFile = useMutation({
+    mutationFn: ({ connectionId, file }: { connectionId: number; file: File }) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api.upload<{
+        created: number;
+        updated: number;
+        skipped: number;
+        parsed: number;
+        errors: string[];
+      }>(`/connectors/connections/${connectionId}/ingest/file`, form);
+    },
+    onSuccess: (res) => {
+      const errs = res.errors.length ? `, ${res.errors.length} row error(s)` : "";
+      setSyncMsg(
+        `Imported: ${res.created} created, ${res.updated} updated, ${res.skipped} skipped${errs}`,
+      );
+      qc.invalidateQueries({ queryKey: ["connections"] });
+    },
+    onError: (e: Error) => setSyncMsg(`Import failed: ${e.message}`),
+  });
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Connectors</h1>
@@ -208,6 +231,24 @@ export default function Connectors() {
               >
                 Sync now
               </button>
+              {c.provider !== "gdrive" && (
+                <label
+                  className="cursor-pointer rounded border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  title="Import a JSON or CSV export — canopy parses and loads it idempotently."
+                >
+                  Import file
+                  <input
+                    type="file"
+                    accept=".json,.csv"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) importFile.mutate({ connectionId: c.id, file });
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              )}
             </span>
           </li>
         ))}

@@ -43,6 +43,12 @@ If a Jira connection's **writes** are MCP-managed, `push_draft_to_jira` is disab
    `[{"draft_task_id": 12, "jira_issue_id": "<jira id>", "jira_key": "PROJ-123"}]` to stamp each
    task and flip the plan to `synced`. This is idempotent, so a re-run won't create duplicates.
 
+## Alternative: file drop (no live read at all)
+If reads are set to `file` (or the architect just has an export), the same ingest accepts a
+**JSON or CSV** file instead of live data: upload it on `/connectors` → **Import file**, or have
+the architect drop it into the configured shared folder (`<root>/<connection_id>/*.{json,csv}`,
+local or S3) for canopy's poll to pick up. Same idempotent upsert, same normalized shape.
+
 ## Scheduled sync (from your Claude account)
 The admin can run this on a schedule so canopy stays fresh without a server-side poll:
 - Authenticate the MCP server with an **agent-scope token** (`POST /auth/agent-token`, see

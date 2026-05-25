@@ -66,6 +66,16 @@ class Settings(BaseSettings):
     GOOGLE_OAUTH_CLIENT_ID: str = ""
     GOOGLE_OAUTH_CLIENT_SECRET: str = ""
 
+    # --- File-drop ingest (Phase 4) ---
+    # Watched shared storage canopy polls for export files to ingest, layout
+    # <root>/<connection_id>/*.{json,csv}. Backend "local" (a directory) or "s3" (a bucket);
+    # empty disables the poll — the upload endpoint still works regardless.
+    FILE_DROP_BACKEND: str = ""  # "" (disabled) | "local" | "s3"
+    FILE_DROP_LOCAL_DIR: str = ""  # required when FILE_DROP_BACKEND=local
+    FILE_DROP_S3_BUCKET: str = ""  # required when FILE_DROP_BACKEND=s3 (needs the [s3] extra)
+    FILE_DROP_S3_PREFIX: str = "canopy-drops"  # key prefix within the bucket
+    FILE_DROP_POLL_MINUTES: int = 10
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:

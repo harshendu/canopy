@@ -2,7 +2,7 @@ from dataclasses import asdict
 from datetime import timedelta
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -22,13 +22,14 @@ from app.schemas.entities import (
     ConnectionRead,
     DocFieldMapping,
     EpicDocSampleResponse,
+    FileIngestResult,
     HarvestDocsResult,
     IngestIssuesRequest,
     IngestPullRequestsRequest,
     IngestResult,
     PullRequestRead,
 )
-from app.services import doc_graph, ingest, integration_policy
+from app.services import doc_graph, file_ingest, ingest, integration_policy
 from app.services import sync as sync_service
 
 router = APIRouter()
@@ -162,6 +163,23 @@ async def ingest_pull_requests(
         )
     try:
         return await ingest.ingest_pull_requests(session, connection, payload.pull_requests)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/connections/{connection_id}/ingest/file", response_model=FileIngestResult)
+async def ingest_file_upload(
+    session: SessionDep,
+    _: PlannerWriter,
+    connection_id: int,
+    file: UploadFile = File(...),
+) -> FileIngestResult:
+    """Upload a JSON or CSV export and ingest it idempotently (entity type inferred from the
+    connection's provider). The direct-upload twin of the watched file-drop poll."""
+    connection = await _get_connection(session, connection_id)
+    data = await file.read()
+    try:
+        return await file_ingest.ingest_file(session, connection, file.filename or "", data)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

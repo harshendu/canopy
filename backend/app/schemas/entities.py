@@ -1293,6 +1293,14 @@ class IngestResult(BaseModel):
     skipped: int
 
 
+class FileIngestResult(IngestResult):
+    """Ingest result for a dropped/uploaded file — adds how many rows parsed and per-row errors
+    (invalid rows are skipped, not fatal)."""
+
+    parsed: int
+    errors: list[str] = []
+
+
 # --- Draft push write-back (write_strategy=mcp: Claude creates tickets, records ids here) ---
 class DraftPushRecord(BaseModel):
     draft_task_id: int

@@ -19,7 +19,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers = new Headers(options.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (options.body && !headers.has("Content-Type")) {
+  if (options.body && !headers.has("Content-Type") && !(options.body instanceof FormData)) {
+    // Let the browser set the multipart boundary for FormData uploads.
     headers.set("Content-Type", "application/json");
   }
   const resp = await fetch(`/api/v1${path}`, { ...options, headers });
@@ -42,6 +43,8 @@ export const api = {
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   del: (path: string) => request<void>(path, { method: "DELETE" }),
+  upload: <T>(path: string, form: FormData) =>
+    request<T>(path, { method: "POST", body: form }),
 };
 
 /** Fetch a binary/file endpoint and trigger a browser download. Honors the server's
