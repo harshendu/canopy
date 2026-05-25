@@ -21,6 +21,8 @@ import AdminUsers from "./pages/AdminUsers";
 import AdminIntegrations from "./pages/AdminIntegrations";
 import DemoData from "./pages/DemoData";
 import Team from "./pages/Team";
+import ImpersonationBanner from "./components/ImpersonationBanner";
+import UserSwitcher from "./components/UserSwitcher";
 
 const Portfolio = lazy(() => import("./pages/Portfolio")); // Recharts — load on demand
 
@@ -41,57 +43,63 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
       isActive ? "bg-canopy-500 text-white" : "text-slate-600 hover:bg-slate-200"
     }`;
   return (
-    <div className="flex min-h-screen">
-      <aside className="w-56 shrink-0 border-r border-slate-200 bg-white p-4">
-        <div className="mb-6 text-lg font-bold text-canopy-700">canopy</div>
-        <nav className="space-y-1">
-          <NavLink to="/me" className={navClass}>
-            My work
-          </NavLink>
-          <NavLink to="/portfolio" className={navClass}>
-            Portfolio
-          </NavLink>
-          <NavLink to="/initiatives" className={navClass}>
-            Initiatives
-          </NavLink>
-          <NavLink to="/projects" className={navClass}>
-            Projects
-          </NavLink>
-          <NavLink to="/decisions" className={navClass}>
-            Decisions
-          </NavLink>
-          <NavLink to="/team" className={navClass}>
-            Team
-          </NavLink>
-          {canContribute(me?.role) && (
-            <NavLink to="/connectors" className={navClass}>
-              Connectors
+    <div className="flex min-h-screen flex-col">
+      <ImpersonationBanner />
+      <div className="flex min-h-0 flex-1">
+        <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white p-4">
+          <div className="mb-6 text-lg font-bold text-canopy-700">canopy</div>
+          <nav className="space-y-1">
+            <NavLink to="/me" className={navClass}>
+              My work
             </NavLink>
-          )}
-          {me?.role === "admin" && (
-            <NavLink to="/admin/users" className={navClass}>
-              Users
+            <NavLink to="/portfolio" className={navClass}>
+              Portfolio
             </NavLink>
-          )}
-          {me?.role === "admin" && (
-            <NavLink to="/admin/integrations" className={navClass}>
-              Integrations
+            <NavLink to="/initiatives" className={navClass}>
+              Initiatives
             </NavLink>
-          )}
-          {me?.role === "admin" && (
-            <NavLink to="/admin/demo" className={navClass}>
-              Demo data
+            <NavLink to="/projects" className={navClass}>
+              Projects
             </NavLink>
-          )}
-        </nav>
-        <button
-          onClick={logout}
-          className="mt-8 text-xs text-slate-400 hover:text-slate-600"
-        >
-          Sign out
-        </button>
-      </aside>
-      <main className="flex-1 overflow-auto p-6">{children}</main>
+            <NavLink to="/decisions" className={navClass}>
+              Decisions
+            </NavLink>
+            <NavLink to="/team" className={navClass}>
+              Team
+            </NavLink>
+            {canContribute(me?.role) && (
+              <NavLink to="/connectors" className={navClass}>
+                Connectors
+              </NavLink>
+            )}
+            {me?.role === "admin" && (
+              <NavLink to="/admin/users" className={navClass}>
+                Users
+              </NavLink>
+            )}
+            {me?.role === "admin" && (
+              <NavLink to="/admin/integrations" className={navClass}>
+                Integrations
+              </NavLink>
+            )}
+            {me?.role === "admin" && (
+              <NavLink to="/admin/demo" className={navClass}>
+                Demo data
+              </NavLink>
+            )}
+          </nav>
+          <button
+            onClick={logout}
+            className="mt-8 self-start text-xs text-slate-400 hover:text-slate-600"
+          >
+            Sign out
+          </button>
+          <div className="mt-auto">
+            <UserSwitcher />
+          </div>
+        </aside>
+        <main className="flex-1 overflow-auto p-6">{children}</main>
+      </div>
     </div>
   );
 }

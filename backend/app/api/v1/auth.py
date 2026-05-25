@@ -4,13 +4,22 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import col, select
 
-from app.api.deps import AdminUser, CurrentUser, PlannerWriter, SessionDep
+from app.api.deps import (
+    AdminActor,
+    AdminUser,
+    CurrentUser,
+    HumanOnly,
+    Impersonator,
+    PlannerWriter,
+    SessionDep,
+)
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.base import TokenScope
 from app.models.user import User
 from app.schemas.auth import (
     AgentToken,
     AgentTokenRequest,
+    SessionInfo,
     Token,
     UserCreate,
     UserRead,
@@ -39,6 +48,42 @@ async def login(
 @router.get("/me", response_model=UserRead)
 async def me(user: CurrentUser) -> User:
     return user
+
+
+@router.get("/session", response_model=SessionInfo)
+async def session_info(user: CurrentUser, impersonator: Impersonator) -> SessionInfo:
+    """The effective user, plus the real admin when an admin is impersonating someone — drives the
+    account switcher and the impersonation banner."""
+    return SessionInfo(
+        user=UserRead.model_validate(user),
+        impersonator=UserRead.model_validate(impersonator) if impersonator is not None else None,
+    )
+
+
+@router.post("/impersonate/stop", response_model=Token)
+async def stop_impersonating(actor: AdminActor, _: HumanOnly) -> Token:
+    """Drop impersonation and return to the acting admin's own account."""
+    return Token(access_token=create_access_token(actor.email))
+
+
+@router.post("/impersonate/{user_id}", response_model=Token)
+async def impersonate(
+    session: SessionDep, actor: AdminActor, user_id: int, _: HumanOnly
+) -> Token:
+    """Admin-only: mint a token that acts **as** `user_id`. The acting admin rides along in the
+    token's `act` claim, so they keep the power to switch again — to another user or back to
+    themselves (selecting their own account drops impersonation). Status is never touched; this is
+    a session-identity switch, not a data write."""
+    target = await session.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if not target.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot switch to a deactivated user"
+        )
+    if target.id == actor.id:
+        return Token(access_token=create_access_token(actor.email))
+    return Token(access_token=create_access_token(target.email, actor=actor.email))
 
 
 @router.post("/agent-token", response_model=AgentToken)
@@ -72,7 +117,9 @@ async def register(session: SessionDep, _: AdminUser, payload: UserCreate) -> Us
 
 
 @router.get("/users", response_model=list[UserRead])
-async def list_users(session: SessionDep, _: AdminUser) -> list[User]:
+async def list_users(session: SessionDep, _: AdminActor) -> list[User]:
+    # Actor-gated (not impersonated-user-gated) so the account switcher can list targets even
+    # while the admin acts as a non-admin. Writes below stay on the impersonated identity.
     result = await session.execute(select(User).order_by(col(User.email)))
     return list(result.scalars().all())
 
