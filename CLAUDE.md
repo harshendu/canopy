@@ -158,6 +158,13 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   `app/services/flow_metrics.py`, reusing `build_board`/`weekly_throughput`/`is_done_status`.
   **Team-level only — never per-engineer** (Goodhart); reports `sufficient=false`/`null` instead of
   faking thin data. MCP: `get_delivery_metrics`. USER_FLOWS §X; roadmap gap #3 in AI_NATIVE_EXECUTION.md.
+- **Bounded agency (scoped tokens):** access tokens carry a `scope` claim — `full` (human) or
+  `agent`. An `agent` token (minted via `POST /auth/agent-token`, planner-gated) acts as its issuer
+  but is blocked (403) from **one-way-door / external-write** actions: accepting a `one_way` ADR,
+  `push-to-jira`, `apply_scenario`. Two-way-door actions stay open — the reversibility distinction
+  is the human-in-the-loop policy. Enforced via `require_human`/`HumanOnly` in `app/api/deps.py`
+  (scope in `app/core/security.py`). USER_FLOWS §A6; roadmap gap #4 in AI_NATIVE_EXECUTION.md (the
+  webhook that auto-runs guardrails on agent PRs stays agent-driven — the server can't crawl code, §N).
 - Connectors implement the ABC in `app/connectors/base.py` and self-register via `@register`. Sync is
   idempotent through the `ExternalRef` table (`app/services/mapping.py`). Connector tokens are
   encrypted at rest with Fernet (`app/core/crypto.py`). All outbound HTTP goes through

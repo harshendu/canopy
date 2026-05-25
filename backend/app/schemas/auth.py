@@ -8,6 +8,17 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class AgentTokenRequest(BaseModel):
+    expires_minutes: int | None = None  # default 7 days, capped at 30
+
+
+class AgentToken(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    scope: str = "agent"
+    expires_minutes: int
+
+
 class UserCreate(BaseModel):
     email: EmailStr
     password: str

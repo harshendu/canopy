@@ -97,6 +97,28 @@ allowed; legacy `member` ≈ architect):
   timezone/skills/hours) — an admin sets these on the Team page for now. **OIDC/SSO** and the
   `HttpOnly`-cookie token model (v2 §A1) are also not built; auth remains a `Bearer` JWT.
 
+### A6. Bounded agency — scoped agent tokens **[new]**
+As agents do more of the writing, their authority should be **intentionally constrained** (Team
+Topologies / "bounded agency"; the reversibility distinction *is* the human-in-the-loop policy —
+see [`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) §3/§8, roadmap gap #4). An access token
+carries a **scope** claim: `full` (a human login — does anything its role allows) or `agent` (a
+bounded token an architect hands to Claude). An `agent` token acts **as its issuer** but is
+forbidden from **one-way-door / external-write** actions; **two-way-door** actions run freely
+(bias to action on reversible work).
+- **Mint:** `POST /api/v1/auth/agent-token` (planner) → an `agent`-scoped JWT for the current
+  user (`{expires_minutes?}`, default 7 days, max 30). Configure the plugin's `CANOPY_API_TOKEN`
+  with this instead of a full login token.
+- **What an agent token is blocked from (403):** accepting a **one-way-door** decision
+  (`PATCH /architecture/adrs/{id}` → `accepted` when `reversibility=one_way`, §G2); **pushing a
+  draft plan to Jira** (`POST /draft-plans/{id}/push-to-jira`, §C10 — an external write);
+  **applying a scenario** to the live plan (`POST /scenarios/{id}/apply`, §T5). Everything else
+  (creating/updating tasks, proposing/refining decisions, accepting *two-way* doors, specs,
+  blockers, risks, draft authoring) stays open. Enforced in `app/api/deps.py`
+  (`require_human` / `HumanOnly`); the scope rides in the JWT (`app/core/security.py`).
+- **Not built:** auto-running the coherence guardrails (drift + PR-to-ADR + fitness) on an
+  agent-authored PR via webhook — the server can't crawl code itself (§N4), so that scan stays
+  agent-driven; the webhook→agent trigger is the remaining piece of roadmap gap #4.
+
 ---
 
 ## R. Initiatives (the program layer above projects) **[new — v2 §R / C1]**

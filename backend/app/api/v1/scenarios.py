@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, PlannerWriter, SessionDep
+from app.api.deps import CurrentUser, HumanOnly, PlannerWriter, SessionDep
 from app.models.base import TaskType
 from app.models.project import Dependency, Initiative, Milestone, Project, Task
 from app.models.scenario import (
@@ -749,7 +749,7 @@ async def compare_scenario(
 # --- Apply ---
 @router.post("/scenarios/{scenario_id}/apply", response_model=ScenarioApplyResult)
 async def apply_scenario_view(
-    session: SessionDep, _: PlannerWriter, scenario_id: int,
+    session: SessionDep, _: PlannerWriter, __: HumanOnly, scenario_id: int,
     payload: ScenarioApplyRequest | None = None,
 ) -> ScenarioApplyResult:
     force = payload.force if payload else False

@@ -4,12 +4,23 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import col, select
 
-from app.api.deps import AdminUser, CurrentUser, SessionDep
+from app.api.deps import AdminUser, CurrentUser, PlannerWriter, SessionDep
 from app.core.security import create_access_token, hash_password, verify_password
+from app.models.base import TokenScope
 from app.models.user import User
-from app.schemas.auth import Token, UserCreate, UserRead, UserUpdate
+from app.schemas.auth import (
+    AgentToken,
+    AgentTokenRequest,
+    Token,
+    UserCreate,
+    UserRead,
+    UserUpdate,
+)
 
 router = APIRouter()
+
+_AGENT_TOKEN_DEFAULT_MINUTES = 7 * 24 * 60  # 7 days
+_AGENT_TOKEN_MAX_MINUTES = 30 * 24 * 60  # 30 days
 
 
 @router.post("/login", response_model=Token)
@@ -28,6 +39,18 @@ async def login(
 @router.get("/me", response_model=UserRead)
 async def me(user: CurrentUser) -> User:
     return user
+
+
+@router.post("/agent-token", response_model=AgentToken)
+async def issue_agent_token(user: PlannerWriter, payload: AgentTokenRequest) -> AgentToken:
+    """Mint a bounded **agent** token for the current planner to hand to Claude. It acts as the
+    issuer but is restricted from one-way-door / external-write actions (accepting a one-way-door
+    decision, pushing to Jira, applying a scenario) — those stay human-gated. Two-way-door actions
+    run freely. Default 7-day expiry (max 30)."""
+    minutes = min(payload.expires_minutes or _AGENT_TOKEN_DEFAULT_MINUTES, _AGENT_TOKEN_MAX_MINUTES)
+    minutes = max(minutes, 1)
+    token = create_access_token(user.email, expires_minutes=minutes, scope=TokenScope.agent.value)
+    return AgentToken(access_token=token, expires_minutes=minutes)
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)

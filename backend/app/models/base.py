@@ -198,3 +198,12 @@ class CriterionStatus(StrEnum):
     met = "met"
     unmet = "unmet"
     waived = "waived"  # consciously dropped (excluded from readiness)
+
+
+class TokenScope(StrEnum):
+    """Bounded agency for access tokens. A `full` (human) token can do anything its role
+    allows; an `agent` token is restricted from one-way-door / external-write actions — the
+    reversibility distinction *is* the human-in-the-loop policy (AI_NATIVE_EXECUTION.md §3/§8)."""
+
+    full = "full"
+    agent = "agent"
