@@ -7,7 +7,13 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, PlannerWriter, SessionDep
+from app.api.deps import (
+    ArchitectWriter,
+    ContributorWriter,
+    CurrentUser,
+    PlannerWriter,
+    SessionDep,
+)
 from app.connectors import get_connector, oauth
 from app.connectors.base import SyncResult
 from app.connectors.gdrive import GoogleDriveConnector
@@ -89,7 +95,7 @@ async def list_connections(session: SessionDep, user: CurrentUser) -> list[Conne
 
 @router.post("/connections", response_model=ConnectionRead, status_code=status.HTTP_201_CREATED)
 async def create_connection(
-    session: SessionDep, _: CurrentUser, payload: ConnectionCreate
+    session: SessionDep, _: ArchitectWriter, payload: ConnectionCreate
 ) -> Connection:
     connection = Connection(
         provider=payload.provider,
@@ -107,7 +113,7 @@ async def create_connection(
 
 
 @router.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_connection(session: SessionDep, _: CurrentUser, connection_id: int) -> None:
+async def delete_connection(session: SessionDep, _: ArchitectWriter, connection_id: int) -> None:
     connection = await session.get(Connection, connection_id)
     if connection is not None:
         await session.delete(connection)
@@ -115,7 +121,7 @@ async def delete_connection(session: SessionDep, _: CurrentUser, connection_id: 
 
 
 @router.post("/connections/{connection_id}/sync")
-async def trigger_full_sync(session: SessionDep, user: CurrentUser, connection_id: int) -> dict:
+async def trigger_full_sync(session: SessionDep, user: PlannerWriter, connection_id: int) -> dict:
     try:
         result = await sync_service.run_full_sync(session, connection_id, user.id)
     except ValueError as exc:
@@ -125,7 +131,7 @@ async def trigger_full_sync(session: SessionDep, user: CurrentUser, connection_i
 
 @router.post("/connections/{connection_id}/sync/incremental")
 async def trigger_incremental_sync(
-    session: SessionDep, user: CurrentUser, connection_id: int
+    session: SessionDep, user: PlannerWriter, connection_id: int
 ) -> dict:
     try:
         result = await sync_service.run_incremental_sync(session, connection_id, user.id)
@@ -187,7 +193,7 @@ async def ingest_file_upload(
 # --- OAuth 2.0 (3LO) flows ---
 @router.get("/oauth/{connection_id}/authorize")
 async def oauth_authorize(
-    session: SessionDep, _: CurrentUser, connection_id: int
+    session: SessionDep, _: ArchitectWriter, connection_id: int
 ) -> dict[str, str]:
     """Return the provider authorize URL for the **shared/service** connection (admin flow)."""
     connection = await _get_connection(session, connection_id)
@@ -197,11 +203,12 @@ async def oauth_authorize(
 
 @router.post("/oauth/{connection_id}/connect-me")
 async def oauth_connect_me(
-    session: SessionDep, user: CurrentUser, connection_id: int
+    session: SessionDep, user: ContributorWriter, connection_id: int
 ) -> dict[str, str]:
-    """Per-user SSO: authorize the caller's **own** account against this integration. Gated by
-    the admin's `allow_user_connect` policy for the provider. The signed `state` carries the
-    user id so the (unauthenticated) callback can bind the tokens to a `UserConnection`."""
+    """Per-user SSO: authorize the caller's **own** account against this integration. Open to any
+    contributor (non-viewer) when the admin's `allow_user_connect` policy permits it. The signed
+    `state` carries the user id so the (unauthenticated) callback binds tokens to a
+    `UserConnection`."""
     connection = await _get_connection(session, connection_id)
     setting = await integration_policy.get_setting(session, connection.provider)
     if not setting.allow_user_connect:
@@ -306,7 +313,7 @@ async def jira_list_sprints(
 
 @router.post("/jira/{connection_id}/history")
 async def jira_sync_history(
-    session: SessionDep, _: CurrentUser, connection_id: int, issue_key: str
+    session: SessionDep, _: PlannerWriter, connection_id: int, issue_key: str
 ) -> dict[str, int]:
     connection = await _get_connection(session, connection_id)
     added = await _jira(connection, session).sync_status_history(issue_key)

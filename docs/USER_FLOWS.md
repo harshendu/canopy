@@ -75,15 +75,27 @@ allowed; legacy `member` ≈ architect):
 |ADR propose / comment (G2/G6)            |rw   |rw       |rw         |rw      |r     |
 |ADR status transition / components       |rw   |rw       |rw         |r       |r     |
 |Risk mitigations (Q)                     |rw   |rw       |rw         |r       |r     |
+|Connectors: create / authorize / delete connection (J)|rw|rw    |–          |–       |–     |
+|Connectors: sync / ingest / push-to-Jira / harvest / links (J)|rw|rw|rw      |–       |–     |
+|Connectors: connect my own account — per-user SSO (J2a)|rw|rw   |rw         |rw      |–     |
+|Connectors: list + read external / export download (J6/S)|r|r   |r          |r       |r     |
 
 - **Engineer "own task":** an engineer (linked via `Engineer.user_id`) may `PATCH` only a task
   whose `assignee_engineer_id` is theirs (e.g. update progress); creating/deleting tasks, editing
   the dependency graph, and replanning stay planner-only.
+- **Connectors (J):** connection lifecycle + the shared/service OAuth authorize is `ArchitectWriter`
+  (admin/architect); sync, ingest, push-to-Jira, doc harvest, jira-links, and status-history are
+  `PlannerWriter` (+ eng-manager). Per-user SSO connect (J2a) is open to any contributor (non-viewer)
+  when the admin's `allow_user_connect` permits it. **External writes are also human-only** —
+  push-to-Jira (§C10) and export-to-Drive (§S) reject `agent`-scope tokens (§A6); ingest, the draft
+  record-push, and sync stay open to agents (internal, idempotent two-way-door). Enforced in
+  `connectors.py` / `drafts.py` / `exports.py`; the `oauth/callback` is intentionally unauthenticated
+  (trust via signed `state`).
 - **The web app hides** write controls the current role can't use (a pure `src/lib/permissions.ts`
   mirrors the matrix); the server is the real gate and returns `403` regardless.
-- **Not enforced yet:** connector writes (still any authenticated user) and the engineer
-  "own-allocation / availability" carve-out (that self-service flow is §F4, not built) — capacity
-  writes are planner-only for now. Decision **rules/approval gates** (G3) remain advisory.
+- **Not enforced yet:** the engineer "own-allocation / availability" carve-out (that self-service
+  flow is §F4, not built) — capacity writes are planner-only for now. Decision **rules/approval
+  gates** (G3) remain advisory.
 
 ### A4. Get current user
 - **API:** `GET /api/v1/auth/me`. The web app caches this to gate admin-only nav.

@@ -10,7 +10,7 @@ from datetime import UTC, date, datetime
 from fastapi import APIRouter, HTTPException, Response, status
 from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import CurrentUser, HumanOnly, PlannerWriter, SessionDep
 from app.api.v1.initiatives import initiative_rollup
 from app.api.v1.projects import portfolio, summarize_project
 from app.connectors import get_connector
@@ -200,7 +200,11 @@ async def export_project(
 
 @router.post("/projects/{project_id}/export/to-drive", response_model=ExportToDriveResult)
 async def export_project_to_drive(
-    session: SessionDep, user: CurrentUser, project_id: int, payload: ExportToDriveRequest
+    session: SessionDep,
+    user: PlannerWriter,
+    _: HumanOnly,
+    project_id: int,
+    payload: ExportToDriveRequest,
 ) -> ExportToDriveResult:
     _validate_fmt(payload.fmt)
     snap = await _project_snapshot(session, project_id)
@@ -222,7 +226,11 @@ async def export_initiative(
 
 @router.post("/initiatives/{initiative_id}/export/to-drive", response_model=ExportToDriveResult)
 async def export_initiative_to_drive(
-    session: SessionDep, user: CurrentUser, initiative_id: int, payload: ExportToDriveRequest
+    session: SessionDep,
+    user: PlannerWriter,
+    _: HumanOnly,
+    initiative_id: int,
+    payload: ExportToDriveRequest,
 ) -> ExportToDriveResult:
     _validate_fmt(payload.fmt)
     snap = await _initiative_snapshot(session, user, initiative_id)
@@ -242,7 +250,7 @@ async def export_portfolio(session: SessionDep, user: CurrentUser, fmt: str = "p
 
 @router.post("/portfolio/export/to-drive", response_model=ExportToDriveResult)
 async def export_portfolio_to_drive(
-    session: SessionDep, user: CurrentUser, payload: ExportToDriveRequest
+    session: SessionDep, user: PlannerWriter, _: HumanOnly, payload: ExportToDriveRequest
 ) -> ExportToDriveResult:
     _validate_fmt(payload.fmt)
     snap = await _portfolio_snapshot(session, user)
