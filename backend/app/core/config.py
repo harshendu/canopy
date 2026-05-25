@@ -1,7 +1,8 @@
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -24,7 +25,13 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER_EMAIL: str | None = None
     FIRST_SUPERUSER_PASSWORD: str | None = None
 
-    BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:4173"]
+    # NoDecode: pydantic-settings JSON-decodes list/dict fields from env *before* validators
+    # run; this keeps the raw string so _split_origins can parse the comma-separated form
+    # shipped in .env.example.
+    BACKEND_CORS_ORIGINS: Annotated[list[str], NoDecode] = [
+        "http://localhost:5173",
+        "http://localhost:4173",
+    ]
 
     GITHUB_WEBHOOK_SECRET: str = ""
     JIRA_WEBHOOK_SECRET: str = ""
