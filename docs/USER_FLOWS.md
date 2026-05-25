@@ -97,6 +97,43 @@ allowed; legacy `member` ≈ architect):
   timezone/skills/hours) — an admin sets these on the Team page for now. **OIDC/SSO** and the
   `HttpOnly`-cookie token model (v2 §A1) are also not built; auth remains a `Bearer` JWT.
 
+### A6. Bounded agency — scoped agent tokens **[new]**
+As agents do more of the writing, their authority should be **intentionally constrained** (Team
+Topologies / "bounded agency"; the reversibility distinction *is* the human-in-the-loop policy —
+see [`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) §3/§8, roadmap gap #4). An access token
+carries a **scope** claim: `full` (a human login — does anything its role allows) or `agent` (a
+bounded token an architect hands to Claude). An `agent` token acts **as its issuer** but is
+forbidden from **one-way-door / external-write** actions; **two-way-door** actions run freely
+(bias to action on reversible work).
+- **Mint:** `POST /api/v1/auth/agent-token` (planner) → an `agent`-scoped JWT for the current
+  user (`{expires_minutes?}`, default 7 days, max 30). Configure the plugin's `CANOPY_API_TOKEN`
+  with this instead of a full login token.
+- **What an agent token is blocked from (403):** accepting a **one-way-door** decision
+  (`PATCH /architecture/adrs/{id}` → `accepted` when `reversibility=one_way`, §G2); **pushing a
+  draft plan to Jira** (`POST /draft-plans/{id}/push-to-jira`, §C10 — an external write);
+  **applying a scenario** to the live plan (`POST /scenarios/{id}/apply`, §T5). Everything else
+  (creating/updating tasks, proposing/refining decisions, accepting *two-way* doors, specs,
+  blockers, risks, draft authoring) stays open. Enforced in `app/api/deps.py`
+  (`require_human` / `HumanOnly`); the scope rides in the JWT (`app/core/security.py`).
+- **Not built:** auto-running the coherence guardrails (drift + PR-to-ADR + fitness) on an
+  agent-authored PR via webhook — the server can't crawl code itself (§N4), so that scan stays
+  agent-driven; the webhook→agent trigger is the remaining piece of roadmap gap #4.
+
+### A7. Cross-functional persona (`function`) + per-persona landing **[new]**
+A user carries a **`function`** — `engineering | product | design | architecture | management |
+leadership` — **orthogonal to their access `role`** (roadmap gap #6; the stakeholder model in
+[`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) §5). It makes PM/UX/staff/director/exec
+first-class identities (not all "viewer") and drives the **default landing surface**, *not* CRUD —
+reads stay open everywhere; writes are still gated by `role`. Personas are a **lens, not a wall**.
+- **API:** `function` is set on `POST /api/v1/auth/register` and `PATCH /api/v1/auth/users/{id}`
+  (admin) and returned on `GET /api/v1/auth/me` (defaults to `engineering`).
+- **UI:** on login (and the `/` root) the app routes to the persona's home (`src/lib/persona.ts`):
+  leadership/product → `/initiatives`, management → `/team`, architecture → `/decisions`,
+  engineering → `/me`. The `/me` workspace shows the persona badge. Any user can still navigate
+  anywhere — it only sets where you land.
+- **Not built:** bespoke per-persona *dashboards* (each persona sees the shared surfaces at a
+  default altitude, not a custom-built page); admin **UI** to edit a user's function (API-only).
+
 ---
 
 ## R. Initiatives (the program layer above projects) **[new — v2 §R / C1]**
@@ -146,6 +183,18 @@ projects and rolls up their health.
   project, total working days, `spans_projects`, and the `handoffs`; cyclic cross-project deps →
   409) · **MCP:** `get_initiative_critical_path`.
 
+### R5. Initiative digest — manage-by-exception weekly roll-up **[new]**
+- A synthesized health digest that **leads with what needs attention** (roadmap gap #6 / `PF L-R2`;
+  37signals/Cagan: green is silent, surface exceptions). Reuses the **rollup** (§R3) + **forecast**
+  (§C8) and adds **open blockers** (across the initiative's projects) + **outcomes** (§Y). Returns
+  a `headline`, an `attention` exception list (behind target, P85 past target, elevated risk/drift,
+  open blockers, decisions awaiting, at-risk sub-projects), the status numbers, the outcomes, and a
+  ready-to-send **`markdown`** rendering. Pure synthesis in `app/services/digest.py`.
+- **API:** `GET /api/v1/initiatives/{id}/digest` · **MCP:** `get_initiative_digest` (the spine of
+  the `daily-standup` skill §L16).
+- **Delivery** to Slack/email is a **hook over this output**, not built (same posture as the alerts
+  digest §I) — the digest *content* is the deliverable.
+
 ---
 
 ## B. Projects & portfolio
@@ -168,9 +217,10 @@ projects and rolls up their health.
   (§R) via `initiative_id`.
 
 ### B3. Open a project (the cockpit)
-- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Dependencies · Capacity ·
-  Decisions · Architecture · Drift · Roadmap · Plan → Jira · Jira Links · Burndown · Risk · Retros ·
-  Activity** (the **Jira Links** tab links Jira tickets into the project — §J9).
+- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Specs · Dependencies · Capacity ·
+  Decisions · Docs · Architecture · Drift · Roadmap · Plan → Jira · Jira Links · Burndown ·
+  Delivery · Risk · Retros · Activity** (the **Specs** tab is §W, **Docs** is §V, **Delivery** is
+  §X, and the **Jira Links** tab links Jira tickets into the project — §J9).
   The header has an **Export ▾** menu (PDF/CSV snapshot, §S), a **5-day week** toggle, **Set
   baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
@@ -895,6 +945,177 @@ what-if (the Gantt's §C5 covers task durations only).
 
 ---
 
+## V. Document graph & coverage (link, don't store) **[new]**
+
+Canopy is a document **graph**, not a document store. PRDs, Figma designs, tech-design docs,
+architecture docs, release notes, and QA plans live where they already are (most often
+attached to a **Jira epic**, plus Confluence/Drive/Figma URLs); canopy holds typed **links**
+to them, deduplicated and attached to the right entity, so the same docs are discoverable for
+everyone in context. It never copies the bytes (Source-of-truth boundaries hold). The
+`DocReference` model (`app/models/doc.py`) is polymorphic by scope (project / initiative /
+task, mirroring the risk register) with a `kind` (prd | design | tech_design | architecture |
+release | qa | runbook | other), a `source` (jira_epic | manual | repo | drive), and a
+`link_health` (unchecked | ok | stale | broken — checking is a follow-up).
+
+### V1. List / add / manage references + coverage
+- **API:** `GET /api/v1/docs?scope_level=&scope_id=&kind=` (open read), `POST /api/v1/docs`
+  (planner; validates the scope exists, no FK), `PATCH/DELETE /api/v1/docs/{id}` (planner),
+  `GET /api/v1/docs/coverage?scope_level=&scope_id=` (which **expected** kinds — prd / design /
+  tech_design / architecture — are present vs **missing**, rolled up so a project includes its
+  tasks and an initiative includes its projects + their tasks; absence of a doc is a signal,
+  not neutral) · **MCP:** `list_doc_references`, `add_doc_reference`, `get_doc_coverage`.
+
+### V2. AI-driven epic→doc field mapping (one-time setup)
+- Teaches canopy which Jira epic field holds which kind of doc, with the AI doing the work.
+  Stored on the **Jira connection's config** (`doc_field_mappings`, same JSON home as
+  `story_point_field`) — `{mappings: [{jira_field, field_name, doc_kind}],
+  parse_description_links, parse_remote_links}`.
+- **Flow (skill `mapping-epic-docs`):** `sample_epic_doc_fields` returns a sample of epics' URL-
+  bearing fields (joined to Jira's field-name registry), description links, and remote links →
+  Claude infers a field→kind mapping from field names + URL domains and **asks the admin to
+  confirm** → `set_epic_doc_field_mapping` saves it.
+- **API:** `GET /api/v1/connectors/jira/{id}/doc-fields/sample?limit=` (read),
+  `GET/POST /api/v1/connectors/jira/{id}/doc-field-mapping` (read / planner-set) · **MCP:**
+  `sample_epic_doc_fields`, `get_epic_doc_field_mapping`, `set_epic_doc_field_mapping`.
+
+### V3. Harvest docs from epics
+- **API:** `POST /api/v1/connectors/jira/{id}/harvest-docs` (planner) — fetches every synced
+  epic, extracts URLs per the mapping (custom fields + optional description links + optional
+  Jira remote links), and attaches a `DocReference` to whatever canopy entity the epic maps to
+  (a **summary task** for a whole-project sync §J3, a **project** for an initiative-linked epic
+  §J9, via `ExternalRef`). Idempotent (dedup per scope+url in the service); re-running updates,
+  never duplicates. Returns created/updated/skipped/epics_scanned · **MCP:** `harvest_epic_docs`.
+- Logic is pure-where-possible in `app/services/doc_graph.py` (URL/ADF extraction, mapping
+  application, coverage roll-up — unit-tested); the Jira connector adds `list_fields`,
+  `fetch_epics`, and `fetch_remote_links`.
+
+### V4. Not built (deliberate limits)
+- **UI:** a **Docs** tab on the project cockpit and a **Documents** panel on the initiative cockpit
+  list references grouped by kind with coverage badges + an add-link form (the AI-driven *setup* /
+  harvest stays conversational). Built.
+- **No link-health checking** (a HEAD/404 sweep to flag broken/stale links — `link_health`
+  exists but stays `unchecked`), **no Jira attachments** harvest (only fields + remote/
+  description links), and **no write-back** of canopy-added links onto the Jira epic
+  (canopy-local for now).
+- **AI doc *generation*** (drafting a tech-design from the PRD + ADRs, syncing the architecture
+  doc to reality via drift) is a separate future slice, not part of this flow.
+
+---
+
+## W. Specs — spec-driven development **[new]**
+
+**Intent is the source of truth.** A `Spec` (`app/models/spec.py`) captures the *problem* and
+explicit, checkable **acceptance criteria** before work begins; tasks implement it
+(`Task.spec_id`); and afterward each criterion is **self-audited** (met | unmet | waived) against
+the implementation. This is the intent end of the spine in
+[`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) (roadmap gap #1) — the artifact that aligns
+humans and agents and the thing an agent struggles without. Source docs (PRD/design) link via the
+document graph (§V) or `source_url`; the governing decision links via `adr_id`. Status:
+`draft → approved → in_progress → verified → archived` (set explicitly; not transition-gated).
+
+### W1. Create / manage a spec
+- **API:** `GET /api/v1/specs?project_id=&status=` (open read), `POST /api/v1/specs` (planner;
+  validates the project exists), `PATCH/DELETE /api/v1/specs/{id}` (planner; delete unlinks its
+  tasks and drops its criteria first — PG/MySQL enforce the FK) · **MCP:** `list_specs`,
+  `create_spec`, `set_spec_status`.
+
+### W2. Acceptance criteria
+- **API:** `POST /api/v1/specs/{id}/criteria` (planner), `PATCH /api/v1/criteria/{id}`
+  (**contributor** — the implementing engineer or the agent records the verdict),
+  `DELETE /api/v1/criteria/{id}` (planner). A criterion carries `text`, `status`
+  (open|met|unmet|waived), an optional `verification` note (how it was checked), and `sort_order`
+  · **MCP:** `add_spec_criterion`, `update_spec_criterion`.
+
+### W3. Link work + self-audit
+- A task implements a spec via `Task.spec_id` (`PATCH /api/v1/tasks/{id}` with `spec_id`; planner,
+  or an engineer on their own task) · **MCP:** `link_task_to_spec`.
+- `GET /api/v1/specs/{id}` returns the **self-audit bundle**: the spec + its criteria + the linked
+  tasks (name/status/percent) + computed **readiness** (`criteria_met` / `criteria_total` excluding
+  waived, `acceptance_ratio`). Readiness is pure in `app/services/specs.py` · **MCP:** `get_spec`.
+- **Skill `spec-driven-development`** scripts the loop: draft the spec from a PRD/ADRs → write
+  checkable criteria → approve → plan + link the work (via `drafting-jira-tickets`) → self-audit
+  each criterion against the implementation → mark `verified` when all are met.
+
+### W4. Not built (deliberate limits)
+- **UI:** a **Specs** tab on the project cockpit lists specs, creates them, and expands each into
+  its problem + acceptance criteria (with a readiness bar and contributor-writable verdicts) +
+  implementing tasks. Built.
+- **No status transition gating** (unlike ADRs §G2) and **no DraftPlan→Spec FK** (link a draft
+  plan's `source` to the spec, then link the synced tasks). **No `Task.implements_adr_id`** yet
+  (decision→task traceability is roadmap gap #5).
+
+---
+
+## X. Delivery metrics (DORA + flow) **[new]**
+
+The quantitative backbone of [`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) (roadmap gap #3):
+DORA + flow metrics computed from canopy's own signal — the §J8 activity substrate (deploys /
+incidents) and `TaskStatusHistory` (throughput / cycle time) + the board (WIP / aging). Logic is
+pure in `app/services/flow_metrics.py` (unit-tested); the endpoint reuses `build_board`,
+`weekly_throughput`, and `is_done_status` so the numbers match the board / forecast / burndown.
+
+- **Team-level by design.** There is deliberately **no per-engineer breakdown** — per-individual
+  delivery metrics are a Goodhart trap (velocity / diffs / tokens as a target). The response says
+  so in its `notes`.
+- **Honest, not falsely precise.** Flow reports `sufficient=false` with a reason under ~3 weeks of
+  throughput (same bar as the forecast); change-fail rate is `null` with no deploys; metrics canopy
+  can't compute from its data (PR-review latency, decision latency) are absent, not faked.
+
+### X1. Read delivery metrics (project + initiative)
+- **API:** `GET /api/v1/projects/{id}/delivery?weeks=` and `GET /api/v1/initiatives/{id}/delivery?weeks=`
+  (default 12, max 52; the initiative variant aggregates across its sub-projects) · **MCP:**
+  `get_delivery_metrics` (pass `project_id` *or* `initiative_id`). Open read.
+- **DORA:** `deploys`, `deploy_frequency_per_week`, `failures` (incidents opened),
+  `change_fail_rate` (≈ failures ÷ deploys), `recovered_incidents` + `mean`/`median_recovery_hours`
+  (incident_open→close paired FIFO — an MTTR proxy).
+- **Flow:** `completed_items`, `throughput_per_week`, `cycle_time_median_days` +
+  `cycle_time_p85_days` (created→done over the window), `wip` (current not-done leaves), `aging_wip`
+  (WIP over the team's cycle-time P85), `sufficient` + `reason`.
+
+### X2. Not built (deliberate limits)
+- **UI:** a **Delivery** tab on the project cockpit and a **Delivery metrics** panel on the
+  initiative cockpit show the DORA + flow stat cards with a window selector and the honesty notes.
+  Built.
+- **No rework rate** (DORA 2025 — needs unplanned/rework tagging canopy doesn't have), **no flow
+  efficiency** (needs an active-vs-wait status classification), and **no PR-review / decision
+  latency** (need GitHub PR metrics §J6 / ADR status history). Surfaced as `notes`, not faked.
+
+---
+
+## Y. Outcomes — outcomes over output **[new]**
+
+A project/initiative is a **bet**, not just a container of tasks (roadmap gap #2;
+[`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) §1/§5). An `Outcome` (`app/models/outcome.py`)
+captures the **hypothesis** ("we believe X will yield Y") + a **success metric**, tracked
+**baseline → target → current** with a verdict — so the team optimizes for *the result*, not
+output. Scope is polymorphic (project | initiative, like the risk register); an entity can carry
+several (key results). The observed `current_value` is recorded by hand (canopy has no product-KPI
+pipeline — an honest manual signal, like the weekly health note). `status`:
+`pending → on_track / at_risk → validated | invalidated`.
+
+### Y1. Define / track / verdict an outcome
+- **API:** `GET /api/v1/outcomes?scope_level=&scope_id=&status=` (open read), `POST /api/v1/outcomes`
+  (planner; validates the project/initiative exists), `GET /api/v1/outcomes/{id}`,
+  `PATCH /api/v1/outcomes/{id}` (planner — record `current_value`, move `status`),
+  `DELETE /api/v1/outcomes/{id}` (planner). `OutcomeRead` carries a computed **`progress_ratio`**
+  ((current − baseline) / (target − baseline); pure in `app/services/outcomes.py`) ·
+  **MCP:** `list_outcomes`, `add_outcome`, `update_outcome`.
+- **UI:** an **Outcomes** panel on the project cockpit (below the delivery meta bar) and the
+  initiative cockpit — list with a progress bar + status badge, an add form (statement · metric ·
+  baseline/target/unit · date), an inline **record-current** input, and a status select.
+
+### Y2. Retros evaluate the bet
+- The retrospective seeder (§P1) now opens with an **"Outcomes — did the bet pay off?"** section
+  listing each project outcome as `statement — current/target unit (status)`, so a retro evaluates
+  the outcome, not just the schedule (`app/services/retro.py`).
+
+### Y3. Not built (deliberate limits)
+- **No automatic metric ingestion** — `current_value` is recorded by hand (no analytics/KPI
+  connector). **No OKR hierarchy** (objectives → key results as a tree) — outcomes are a flat list
+  per entity. **No initiative→project outcome rollup** yet.
+
+---
+
 ## L. Claude plugin (agentic flows)
 
 ### L1. Install & configure the plugin
@@ -985,6 +1206,29 @@ what-if (the Gantt's §C5 covers task durations only).
   confirms; Jira status is never written. This is the agentic surface behind §C1a / §Q3a. (The
   read-only **`risk-analyst`** §L6 still owns assessment of the computed score.)
 
+### L14. Map epic documents into the doc graph (skill) **[new]**
+- The **`mapping-epic-docs`** skill runs the one-time, AI-driven setup behind §V: it samples a
+  Jira connection's epics (`sample_epic_doc_fields`), infers which field holds which kind of doc
+  from field names + URL domains, **confirms the mapping with the admin**, saves it
+  (`set_epic_doc_field_mapping`), harvests (`harvest_epic_docs`), and reports coverage
+  (`get_doc_coverage`). canopy reads only — links are never written back to Jira and documents
+  are never stored.
+
+### L15. Spec-driven development (skill) **[new]**
+- The **`spec-driven-development`** skill runs the spec loop (§W): draft a `Spec` from a PRD/design
+  (doc graph §V) + ADRs (`create_spec`), write explicit checkable acceptance criteria
+  (`add_spec_criterion`), approve it, plan + link the implementing work (`link_task_to_spec`, with
+  `drafting-jira-tickets`), then **self-audit** each criterion against the implementation
+  (`get_spec` → `update_spec_criterion` met/unmet) and mark the spec `verified` when all are met.
+
+### L16. Daily standup / health digest (skill) **[new]**
+- The **`daily-standup`** skill builds a manage-by-exception briefing (§R5): it reads
+  `get_initiative_digest` for the spine (headline + attention list + status + outcomes), drills the
+  exceptions (`list_blockers`, `decision_queue`, `get_drift`, `get_forecast`,
+  `get_initiative_critical_path`, `list_outcomes`), and writes a tight, exception-first update.
+  Composes existing read tools, writes nothing — safe on any cadence (pair with `/loop`). Delivery
+  to Slack/email is a hook over the digest content.
+
 ---
 
 ## M. Engineer workspace (`/me`)
@@ -1015,6 +1259,10 @@ team member via `Engineer.user_id` (§A5).
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
 - **What-if** scheduling (C5).
+- The **epic doc-field mapping / harvest** setup (§V2/§V3) stays conversational (AI-driven via the
+  plugin) — no React wizard (deliberate); the Docs **tab** itself is built (read + add links).
+- The **agent-token** mint (§A6) has no UI button yet — mint via `POST /auth/agent-token` (the
+  Specs/Docs/Delivery **tabs** themselves are now built).
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - *(closed previously: G5 blast radius; Risk (§Q) + portfolio scores (§B1); user/role mgmt (A3) +
   engineer workspace (§M); per-role enforcement (§A3a); drift detection (§N); retros/postmortems

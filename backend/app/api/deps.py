@@ -8,8 +8,8 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.core.db import get_session
-from app.core.security import decode_access_token
-from app.models.base import UserRole
+from app.core.security import decode_access_token, decode_token_scope
+from app.models.base import TokenScope, UserRole
 from app.models.team import Engineer
 from app.models.user import User
 
@@ -40,6 +40,30 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def current_token_scope(token: Annotated[str, Depends(oauth2_scheme)]) -> TokenScope:
+    """The bounded-agency scope of the caller's token."""
+    return TokenScope.agent if decode_token_scope(token) == TokenScope.agent else TokenScope.full
+
+
+TokenScopeDep = Annotated[TokenScope, Depends(current_token_scope)]
+
+
+async def require_human(scope: TokenScopeDep) -> None:
+    """Gate a one-way-door / external-write action: an `agent`-scoped token is rejected (these
+    actions are reserved for a human). Two-way-door actions stay open to agents."""
+    if scope == TokenScope.agent:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This is a one-way-door or external-write action reserved for a human; the "
+                "agent token is bounded to reversible (two-way-door) actions."
+            ),
+        )
+
+
+HumanOnly = Annotated[None, Depends(require_human)]
 
 
 async def require_admin(user: CurrentUser) -> User:

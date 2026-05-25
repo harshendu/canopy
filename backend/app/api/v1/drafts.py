@@ -10,7 +10,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import update as sa_update
 from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, PlannerWriter, SessionDep
+from app.api.deps import CurrentUser, HumanOnly, PlannerWriter, SessionDep
 from app.core.events import publish
 from app.models.draft import DraftPlan, DraftTask
 from app.models.project import Project
@@ -151,7 +151,7 @@ async def delete_draft_task(session: SessionDep, _: PlannerWriter, task_id: int)
 
 @router.post("/draft-plans/{plan_id}/push-to-jira", response_model=DraftPushResult)
 async def push_draft_to_jira(
-    session: SessionDep, _: PlannerWriter, plan_id: int, payload: DraftPushRequest
+    session: SessionDep, _: PlannerWriter, __: HumanOnly, plan_id: int, payload: DraftPushRequest
 ) -> DraftPushResult:
     try:
         return await draft_sync.push_plan_to_jira(session, plan_id, payload.connection_id)

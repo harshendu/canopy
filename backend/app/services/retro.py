@@ -23,6 +23,7 @@ class RetroInputs:
     adr_total: int = 0
     adr_accepted: int = 0
     adr_superseded: int = 0
+    outcomes: list[str] = field(default_factory=list)  # "statement — current/target unit (status)"
 
 
 def _churn_pct(superseded: int, total: int) -> int:
@@ -37,9 +38,17 @@ def generate_project_retro(inputs: RetroInputs) -> str:
         else "- _No milestones marked complete._"
     )
     churn = _churn_pct(inputs.adr_superseded, inputs.adr_total)
+    outcomes = (
+        "\n".join(f"- {o}" for o in inputs.outcomes)
+        if inputs.outcomes
+        else "- _No outcomes defined — what bet was this project? (outcomes over output)_"
+    )
     lines = [
         f"# Retrospective — {inputs.project_name}",
         f"_Generated {inputs.generated_on.isoformat()}._",
+        "",
+        "## Outcomes — did the bet pay off?",
+        outcomes,
         "",
         "## Summary",
         f"{inputs.completed_tasks}/{inputs.total_tasks} tasks complete ({pct_done}%). "

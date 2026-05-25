@@ -140,3 +140,97 @@ class ProjectHealth(StrEnum):
     on_track = "on_track"
     at_risk = "at_risk"
     off_track = "off_track"
+
+
+# --- Document graph (link, don't store) ---
+class DocKind(StrEnum):
+    """The kind of document a reference points at (canopy links it; never stores it)."""
+
+    prd = "prd"
+    design = "design"
+    tech_design = "tech_design"
+    architecture = "architecture"
+    release = "release"
+    qa = "qa"
+    runbook = "runbook"
+    other = "other"
+
+
+class DocScope(StrEnum):
+    """What a document reference hangs off of (polymorphic, like RiskScope)."""
+
+    project = "project"
+    initiative = "initiative"
+    task = "task"
+
+
+class DocSource(StrEnum):
+    """How a document reference entered canopy."""
+
+    jira_epic = "jira_epic"  # harvested from a Jira epic's fields / links
+    manual = "manual"  # added by hand in canopy
+    repo = "repo"  # from a GitHub repo doc
+    drive = "drive"  # from a Google Drive folder
+
+
+class DocLinkHealth(StrEnum):
+    """Liveness of a referenced document (the missing/stale/broken signal)."""
+
+    unchecked = "unchecked"
+    ok = "ok"
+    stale = "stale"
+    broken = "broken"
+
+
+# --- Specs (spec-driven development: intent as the source of truth) ---
+class SpecStatus(StrEnum):
+    draft = "draft"
+    approved = "approved"  # reviewed, ready to build
+    in_progress = "in_progress"  # work linked / under way
+    verified = "verified"  # all acceptance criteria met
+    archived = "archived"
+
+
+class CriterionStatus(StrEnum):
+    """State of one acceptance criterion in the agent self-audit."""
+
+    open = "open"  # not yet verified
+    met = "met"
+    unmet = "unmet"
+    waived = "waived"  # consciously dropped (excluded from readiness)
+
+
+class TokenScope(StrEnum):
+    """Bounded agency for access tokens. A `full` (human) token can do anything its role
+    allows; an `agent` token is restricted from one-way-door / external-write actions — the
+    reversibility distinction *is* the human-in-the-loop policy (AI_NATIVE_EXECUTION.md §3/§8)."""
+
+    full = "full"
+    agent = "agent"
+
+
+# --- Outcomes (outcomes over output: a project/initiative is a bet) ---
+class OutcomeScope(StrEnum):
+    project = "project"
+    initiative = "initiative"
+
+
+class OutcomeStatus(StrEnum):
+    pending = "pending"  # not yet measured
+    on_track = "on_track"
+    at_risk = "at_risk"
+    validated = "validated"  # the bet paid off (terminal)
+    invalidated = "invalidated"  # the bet didn't (terminal)
+
+
+class UserFunction(StrEnum):
+    """A user's cross-functional persona — orthogonal to their access `role`. Drives the default
+    landing surface and digest cadence, not CRUD (reads stay open; writes are gated by `role`).
+    AI_NATIVE_EXECUTION.md §5: PM/UX/staff/director/exec are first-class, not all 'viewer'."""
+
+    engineering = "engineering"
+    product = "product"
+    design = "design"
+    architecture = "architecture"
+    management = "management"  # eng manager / director
+    leadership = "leadership"  # executive

@@ -526,6 +526,69 @@ class JiraConnector(Connector):
                 client, "PUT", f"/rest/api/3/issue/{issue_id_or_key}", json={"fields": fields}
             )
 
+    # --- document harvest: epic fields, the field registry, and remote links ---
+    async def list_fields(self) -> dict[str, str]:
+        """The Jira field registry as {field_id: human_name} — used to label custom fields
+        (e.g. customfield_10042 → "Design Link") when proposing a doc field mapping."""
+        async with await self.open_client() as client:
+            resp = await request_with_retry(client, "GET", "/rest/api/3/field")
+        out: dict[str, str] = {}
+        for entry in resp.json():
+            field_id = entry.get("id")
+            if field_id:
+                out[str(field_id)] = str(entry.get("name") or field_id)
+        return out
+
+    async def fetch_epics(
+        self, *, limit: int | None = None, all_fields: bool = True
+    ) -> list[dict[str, Any]]:
+        """Epics in the configured project (newest first). `all_fields=True` pulls every
+        field (needed to find doc links in custom fields / description)."""
+        epic_types = ", ".join(f'"{name}"' for name in sorted(self._epic_type_names()))
+        jql = (
+            f'project = "{self.jira_project_key}" AND issuetype in ({epic_types}) '
+            "ORDER BY updated DESC"
+        )
+        fields = ["*all"] if all_fields else _FIELDS
+        issues: list[dict[str, Any]] = []
+        next_token: str | None = None
+        async with await self.open_client() as client:
+            while True:
+                page_size = min(limit, 100) if limit else 100
+                body: dict[str, Any] = {"jql": jql, "fields": fields, "maxResults": page_size}
+                if next_token:
+                    body["nextPageToken"] = next_token
+                resp = await request_with_retry(
+                    client, "POST", "/rest/api/3/search/jql", json=body
+                )
+                data: dict[str, Any] = resp.json()
+                issues.extend(data.get("issues", []))
+                next_token = data.get("nextPageToken")
+                if limit is not None and len(issues) >= limit:
+                    return issues[:limit]
+                if data.get("isLast", True) or not next_token:
+                    break
+        return issues
+
+    async def fetch_remote_links(self, issue_key: str) -> list[dict[str, Any]]:
+        """An issue's remote links (Confluence pages, web links). Returns [{url, title}]."""
+        async with await self.open_client() as client:
+            try:
+                resp = await request_with_retry(
+                    client, "GET", f"/rest/api/3/issue/{issue_key}/remotelink"
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == httpx.codes.NOT_FOUND:
+                    return []
+                raise
+        out: list[dict[str, Any]] = []
+        for link in resp.json():
+            obj = link.get("object") or {}
+            url = obj.get("url")
+            if url:
+                out.append({"url": str(url), "title": obj.get("title")})
+        return out
+
     # --- Agile API: boards & sprints ---
     async def list_boards(self) -> list[dict[str, Any]]:
         async with await self.open_client() as client:

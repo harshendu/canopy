@@ -9,8 +9,15 @@ from app.models.base import (
     ADRStatus,
     BlockerCategory,
     BlockerSeverity,
+    CriterionStatus,
     DecisionRule,
     DependencyType,
+    DocKind,
+    DocLinkHealth,
+    DocScope,
+    DocSource,
+    OutcomeScope,
+    OutcomeStatus,
     ProjectHealth,
     Provider,
     RetrospectiveKind,
@@ -19,10 +26,12 @@ from app.models.base import (
     RiskGrade,
     RiskScope,
     RiskStatus,
+    SpecStatus,
     TaskType,
 )
 from app.schemas.auth import UserRead
 from app.services import metadata
+from app.services import outcomes as outcomes_service
 
 _read = ConfigDict(from_attributes=True)
 
@@ -118,6 +127,7 @@ class TaskCreate(BaseModel):
     status: str | None = None
     deadline: date | None = None
     assignee_engineer_id: int | None = None
+    spec_id: int | None = None
     tags: list[str] = []
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
@@ -136,6 +146,7 @@ class TaskUpdate(BaseModel):
     status: str | None = None
     deadline: date | None = None
     assignee_engineer_id: int | None = None
+    spec_id: int | None = None
     tags: list[str] | None = None
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
@@ -162,6 +173,7 @@ class TaskRead(BaseModel):
     sprint: str | None
     deadline: date | None
     assignee_engineer_id: int | None
+    spec_id: int | None = None
     tags: list[str] = []
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
@@ -804,6 +816,25 @@ class InitiativeCriticalPath(BaseModel):
     handoffs: list[CriticalPathHandoff]  # cross-project edges on the critical path
 
 
+class InitiativeDigest(BaseModel):
+    """A manage-by-exception weekly health roll-up for an initiative (leads with what needs
+    attention). Delivery (Slack/email) is a hook over this — see §I."""
+
+    initiative_id: int
+    name: str
+    generated_on: date
+    headline: str
+    on_track: bool | None
+    risk_level: str
+    drift_level: str
+    p85_date: date | None
+    open_blockers: int
+    open_decisions: int
+    attention: list[str]  # the exception list
+    outcomes: list[str]  # "statement (status)"
+    markdown: str
+
+
 class InitiativeRollup(BaseModel):
     """Health rolled up across an initiative's sub-projects."""
 
@@ -1240,3 +1271,258 @@ class MyWorkspaceResponse(BaseModel):
     owned_decisions: list[ADRRead]
     stakeholder_decisions: list[ADRRead]
     blockers: list[BlockerRead] = []  # open blockers on my tasks or raised by me
+
+
+# --- Document graph (link, don't store) ---
+class DocReferenceCreate(BaseModel):
+    scope_level: DocScope
+    scope_id: int
+    url: str
+    kind: DocKind = DocKind.other
+    title: str | None = None
+    owner_engineer_id: int | None = None
+
+
+class DocReferenceUpdate(BaseModel):
+    kind: DocKind | None = None
+    title: str | None = None
+    url: str | None = None
+    owner_engineer_id: int | None = None
+    link_health: DocLinkHealth | None = None
+
+
+class DocReferenceRead(BaseModel):
+    model_config = _read
+    id: int
+    scope_level: DocScope
+    scope_id: int
+    kind: DocKind
+    title: str | None
+    url: str
+    source: DocSource
+    owner_engineer_id: int | None
+    connection_id: int | None
+    external_field: str | None
+    link_health: DocLinkHealth
+    last_checked_at: datetime | None
+    created_at: datetime
+
+
+class DocCoverageRead(BaseModel):
+    scope_level: DocScope
+    scope_id: int
+    total_references: int
+    present: list[DocKind]
+    missing: list[DocKind]  # expected kinds with no reference — a coverage gap
+    by_kind: dict[str, int]
+
+
+# --- Jira epic → doc field mapping (the AI-driven setup) ---
+class DocFieldMappingEntry(BaseModel):
+    jira_field: str  # the Jira field id, e.g. "customfield_10042" or "description"
+    field_name: str | None = None  # the human label, for display
+    doc_kind: DocKind
+
+
+class DocFieldMapping(BaseModel):
+    mappings: list[DocFieldMappingEntry] = []
+    parse_description_links: bool = False  # sweep links in the epic description as `other`
+    parse_remote_links: bool = True  # harvest Jira remote links (Confluence/web) as `other`
+
+
+class FieldUrlCandidate(BaseModel):
+    field_id: str
+    field_name: str | None = None
+    urls: list[str]
+
+
+class EpicDocSample(BaseModel):
+    key: str | None
+    summary: str | None
+    field_candidates: list[FieldUrlCandidate]
+    description_urls: list[str]
+    remote_links: list[dict] = []
+
+
+class EpicDocSampleResponse(BaseModel):
+    """Sample of epics' URL-bearing fields so an agent can propose a field→kind mapping."""
+
+    epics: list[EpicDocSample]
+    distinct_fields: list[FieldUrlCandidate]  # union of candidate fields across the sample
+
+
+class HarvestDocsResult(BaseModel):
+    references_created: int
+    references_updated: int
+    skipped: int
+    epics_scanned: int
+    notes: list[str] = []
+
+
+# --- Specs (spec-driven development) ---
+class SpecCriterionCreate(BaseModel):
+    text: str
+    verification: str | None = None
+    sort_order: int = 0
+
+
+class SpecCriterionUpdate(BaseModel):
+    text: str | None = None
+    status: CriterionStatus | None = None
+    verification: str | None = None
+    sort_order: int | None = None
+
+
+class SpecCriterionRead(BaseModel):
+    model_config = _read
+    id: int
+    spec_id: int
+    text: str
+    status: CriterionStatus
+    verification: str | None
+    sort_order: int
+    created_at: datetime
+
+
+class SpecCreate(BaseModel):
+    project_id: int
+    title: str
+    problem: str
+    context: str | None = None
+    out_of_scope: str | None = None
+    status: SpecStatus = SpecStatus.draft
+    owner_engineer_id: int | None = None
+    adr_id: int | None = None
+    source_url: str | None = None
+
+
+class SpecUpdate(BaseModel):
+    title: str | None = None
+    problem: str | None = None
+    context: str | None = None
+    out_of_scope: str | None = None
+    status: SpecStatus | None = None
+    owner_engineer_id: int | None = None
+    adr_id: int | None = None
+    source_url: str | None = None
+
+
+class SpecRead(BaseModel):
+    model_config = _read
+    id: int
+    project_id: int
+    title: str
+    problem: str
+    context: str | None
+    out_of_scope: str | None
+    status: SpecStatus
+    owner_engineer_id: int | None
+    adr_id: int | None
+    source_url: str | None
+    created_at: datetime
+
+
+class SpecLinkedTask(BaseModel):
+    model_config = _read
+    id: int
+    name: str
+    status: str | None
+    percent_complete: float
+    is_critical: bool
+
+
+class SpecDetail(SpecRead):
+    """The self-audit bundle: the spec, its acceptance criteria, the tasks implementing it,
+    and the computed readiness (met / effective criteria)."""
+
+    criteria: list[SpecCriterionRead] = []
+    linked_tasks: list[SpecLinkedTask] = []
+    criteria_total: int = 0  # excludes waived
+    criteria_met: int = 0
+    acceptance_ratio: float = 0.0  # met / effective total
+
+
+# --- Delivery metrics (DORA + flow; team-level only) ---
+class DoraMetricsRead(BaseModel):
+    model_config = _read
+    window_weeks: float
+    deploys: int
+    deploy_frequency_per_week: float
+    failures: int
+    change_fail_rate: float | None
+    recovered_incidents: int
+    mean_recovery_hours: float | None
+    median_recovery_hours: float | None
+
+
+class FlowMetricsRead(BaseModel):
+    model_config = _read
+    completed_items: int
+    throughput_per_week: float | None
+    cycle_time_median_days: float | None
+    cycle_time_p85_days: int | None
+    wip: int
+    aging_wip: int
+    sufficient: bool
+    reason: str | None = None
+
+
+class DeliveryMetricsRead(BaseModel):
+    scope_level: Literal["project", "initiative"]
+    scope_id: int
+    window_weeks: int
+    dora: DoraMetricsRead
+    flow: FlowMetricsRead
+    notes: list[str] = []
+
+
+# --- Outcomes (outcomes over output) ---
+class OutcomeCreate(BaseModel):
+    scope_level: OutcomeScope
+    scope_id: int
+    statement: str
+    metric: str | None = None
+    unit: str | None = None
+    baseline_value: float | None = None
+    target_value: float | None = None
+    current_value: float | None = None
+    status: OutcomeStatus = OutcomeStatus.pending
+    target_date: date | None = None
+    owner_engineer_id: int | None = None
+
+
+class OutcomeUpdate(BaseModel):
+    statement: str | None = None
+    metric: str | None = None
+    unit: str | None = None
+    baseline_value: float | None = None
+    target_value: float | None = None
+    current_value: float | None = None
+    status: OutcomeStatus | None = None
+    target_date: date | None = None
+    owner_engineer_id: int | None = None
+
+
+class OutcomeRead(BaseModel):
+    model_config = _read
+    id: int
+    scope_level: OutcomeScope
+    scope_id: int
+    statement: str
+    metric: str | None
+    unit: str | None
+    baseline_value: float | None
+    target_value: float | None
+    current_value: float | None
+    status: OutcomeStatus
+    target_date: date | None
+    owner_engineer_id: int | None
+    created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def progress_ratio(self) -> float | None:
+        """How far current sits on the baseline→target scale (None until measurable)."""
+        return outcomes_service.progress(
+            self.baseline_value, self.target_value, self.current_value
+        )

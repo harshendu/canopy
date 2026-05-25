@@ -498,11 +498,20 @@ export type UserRole =
   | "viewer"
   | "member";
 
+export type UserFunction =
+  | "engineering"
+  | "product"
+  | "design"
+  | "architecture"
+  | "management"
+  | "leadership";
+
 export interface User {
   id: number;
   email: string;
   full_name: string | null;
   role: UserRole;
+  function: UserFunction;
   is_active: boolean;
 }
 
@@ -806,4 +815,140 @@ export interface Availability {
   end_date: string;
   capacity_factor: number;
   note: string | null;
+}
+
+// --- Delivery metrics (DORA + flow; team-level only) ---
+export interface DoraMetrics {
+  window_weeks: number;
+  deploys: number;
+  deploy_frequency_per_week: number;
+  failures: number;
+  change_fail_rate: number | null;
+  recovered_incidents: number;
+  mean_recovery_hours: number | null;
+  median_recovery_hours: number | null;
+}
+
+export interface FlowMetrics {
+  completed_items: number;
+  throughput_per_week: number | null;
+  cycle_time_median_days: number | null;
+  cycle_time_p85_days: number | null;
+  wip: number;
+  aging_wip: number;
+  sufficient: boolean;
+  reason: string | null;
+}
+
+export interface DeliveryMetrics {
+  scope_level: "project" | "initiative";
+  scope_id: number;
+  window_weeks: number;
+  dora: DoraMetrics;
+  flow: FlowMetrics;
+  notes: string[];
+}
+
+// --- Outcomes (outcomes over output) ---
+export type OutcomeScope = "project" | "initiative";
+export type OutcomeStatus = "pending" | "on_track" | "at_risk" | "validated" | "invalidated";
+
+export interface Outcome {
+  id: number;
+  scope_level: OutcomeScope;
+  scope_id: number;
+  statement: string;
+  metric: string | null;
+  unit: string | null;
+  baseline_value: number | null;
+  target_value: number | null;
+  current_value: number | null;
+  status: OutcomeStatus;
+  target_date: string | null;
+  owner_engineer_id: number | null;
+  created_at: string;
+  progress_ratio: number | null;
+}
+
+// --- Specs (spec-driven development) ---
+export type SpecStatus = "draft" | "approved" | "in_progress" | "verified" | "archived";
+export type CriterionStatus = "open" | "met" | "unmet" | "waived";
+
+export interface Spec {
+  id: number;
+  project_id: number;
+  title: string;
+  problem: string;
+  context: string | null;
+  out_of_scope: string | null;
+  status: SpecStatus;
+  owner_engineer_id: number | null;
+  adr_id: number | null;
+  source_url: string | null;
+  created_at: string;
+}
+
+export interface SpecCriterion {
+  id: number;
+  spec_id: number;
+  text: string;
+  status: CriterionStatus;
+  verification: string | null;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface SpecLinkedTask {
+  id: number;
+  name: string;
+  status: string | null;
+  percent_complete: number;
+  is_critical: boolean;
+}
+
+export interface SpecDetail extends Spec {
+  criteria: SpecCriterion[];
+  linked_tasks: SpecLinkedTask[];
+  criteria_total: number;
+  criteria_met: number;
+  acceptance_ratio: number;
+}
+
+// --- Document graph (link, don't store) ---
+export type DocKind =
+  | "prd"
+  | "design"
+  | "tech_design"
+  | "architecture"
+  | "release"
+  | "qa"
+  | "runbook"
+  | "other";
+export type DocScope = "project" | "initiative" | "task";
+export type DocSource = "jira_epic" | "manual" | "repo" | "drive";
+export type DocLinkHealth = "unchecked" | "ok" | "stale" | "broken";
+
+export interface DocReference {
+  id: number;
+  scope_level: DocScope;
+  scope_id: number;
+  kind: DocKind;
+  title: string | null;
+  url: string;
+  source: DocSource;
+  owner_engineer_id: number | null;
+  connection_id: number | null;
+  external_field: string | null;
+  link_health: DocLinkHealth;
+  last_checked_at: string | null;
+  created_at: string;
+}
+
+export interface DocCoverage {
+  scope_level: DocScope;
+  scope_id: number;
+  total_references: number;
+  present: DocKind[];
+  missing: DocKind[];
+  by_kind: Record<string, number>;
 }

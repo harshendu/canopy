@@ -83,6 +83,16 @@ def register(mcp, client) -> None:
         return await client.get(f"/initiatives/{initiative_id}/rollup")
 
     @mcp.tool
+    async def get_initiative_digest(initiative_id: int) -> dict:
+        """A manage-by-exception weekly digest for an initiative: a `headline`, the `attention`
+        list (what's off-track / blocked / awaiting a decision), status (progress, forecast P85,
+        risk, drift, open blockers/decisions), outcomes, and a ready-to-send `markdown` rendering.
+
+        Use this as the spine of the `daily-standup` skill / a weekly leadership update — it leads
+        with exceptions (green is silent). Delivery to Slack/email is a hook over this output."""
+        return await client.get(f"/initiatives/{initiative_id}/digest")
+
+    @mcp.tool
     async def set_project_initiative(project_id: int, initiative_id: int | None = None) -> dict:
         """Link a project to an initiative (pass initiative_id=null to unlink)."""
         return await client.patch(f"/projects/{project_id}", {"initiative_id": initiative_id})

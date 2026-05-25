@@ -135,6 +135,51 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   Delivered as a download (`GET …/export?fmt=pdf|csv`) or saved to Drive
   (`POST …/export/to-drive` → `GoogleDriveConnector.upload_file`). UI: a reusable `ExportMenu`
   in the project / initiative / portfolio headers. USER_FLOWS §S.
+- **Document graph (link, don't store):** `DocReference` (`app/models/doc.py`) holds typed *links*
+  to docs that live elsewhere (Jira epic fields/remote-links, Drive, Figma, repo) — canopy never
+  stores the bytes. Scope is polymorphic (project/initiative/task, like the risk register); dedup
+  is in the service (no DB unique on the `url` TEXT column — not portable to MySQL). The AI-driven
+  one-time setup samples a Jira connection's epics, an agent proposes a field→kind mapping (stored
+  in the connection's `config["doc_field_mappings"]`), and `app/services/doc_graph.py` (pure
+  URL/ADF extraction + harvest + coverage roll-up) attaches references to the entity each epic maps
+  to. MCP: `sample_epic_doc_fields`/`set_epic_doc_field_mapping`/`harvest_epic_docs`/`get_doc_coverage`
+  (skill: `mapping-epic-docs`). USER_FLOWS §V.
+- **Specs (spec-driven development):** `Spec` + `SpecCriterion` (`app/models/spec.py`) capture
+  *intent as the source of truth* — a problem statement + explicit, checkable **acceptance
+  criteria** — before work begins. Tasks implement a spec via `Task.spec_id`; an agent self-audits
+  each criterion (met|unmet|waived) against the implementation. `GET /specs/{id}` returns the
+  audit bundle (criteria + linked tasks + readiness from pure `app/services/specs.py`). Criterion
+  verdicts are contributor-writable (the engineer/agent records them); spec CRUD is planner-gated.
+  MCP: `create_spec`/`add_spec_criterion`/`get_spec`/`update_spec_criterion`/`link_task_to_spec`
+  (skill: `spec-driven-development`). Vision + roadmap in `docs/AI_NATIVE_EXECUTION.md`; USER_FLOWS §W.
+- **Delivery metrics (DORA + flow):** `GET /projects|initiatives/{id}/delivery` computes DORA
+  (deploy freq, change-fail rate, recovery time from the §J8 activity feed) + flow (throughput,
+  cycle time, WIP, aging from `TaskStatusHistory` + the board) — pure in
+  `app/services/flow_metrics.py`, reusing `build_board`/`weekly_throughput`/`is_done_status`.
+  **Team-level only — never per-engineer** (Goodhart); reports `sufficient=false`/`null` instead of
+  faking thin data. MCP: `get_delivery_metrics`. USER_FLOWS §X; roadmap gap #3 in AI_NATIVE_EXECUTION.md.
+- **Outcomes (outcomes over output):** `Outcome` (`app/models/outcome.py`) makes a project/
+  initiative a measurable **bet** — a hypothesis + success metric tracked baseline→target→current
+  with a verdict (pending|on_track|at_risk|validated|invalidated). Polymorphic scope
+  (project|initiative, like the risk register); `current_value` is a manual signal (no KPI
+  pipeline). `progress_ratio` is computed (pure `app/services/outcomes.py`); the retro seeder opens
+  with an outcomes section so retros evaluate the bet. MCP: `list_outcomes`/`add_outcome`/
+  `update_outcome`. USER_FLOWS §Y; roadmap gap #2 in AI_NATIVE_EXECUTION.md.
+- **Cross-functional persona + initiative digest:** `User.function` (engineering | product |
+  design | architecture | management | leadership) is **orthogonal to `role`** — it makes
+  PM/UX/staff/director/exec first-class and drives the **default landing** (`frontend/src/lib/persona.ts`),
+  not CRUD (reads stay open; writes gated by `role`). `GET /initiatives/{id}/digest` synthesizes a
+  **manage-by-exception** weekly roll-up (pure `app/services/digest.py`, reusing the rollup +
+  forecast + blockers + outcomes; leads with the `attention` exception list) — MCP
+  `get_initiative_digest`, skill `daily-standup`. Slack/email **delivery is a hook** over the digest
+  (not built, like the alerts digest §I). USER_FLOWS §A7/§R5; roadmap gap #6 in AI_NATIVE_EXECUTION.md.
+- **Bounded agency (scoped tokens):** access tokens carry a `scope` claim — `full` (human) or
+  `agent`. An `agent` token (minted via `POST /auth/agent-token`, planner-gated) acts as its issuer
+  but is blocked (403) from **one-way-door / external-write** actions: accepting a `one_way` ADR,
+  `push-to-jira`, `apply_scenario`. Two-way-door actions stay open — the reversibility distinction
+  is the human-in-the-loop policy. Enforced via `require_human`/`HumanOnly` in `app/api/deps.py`
+  (scope in `app/core/security.py`). USER_FLOWS §A6; roadmap gap #4 in AI_NATIVE_EXECUTION.md (the
+  webhook that auto-runs guardrails on agent PRs stays agent-driven — the server can't crawl code, §N).
 - Connectors implement the ABC in `app/connectors/base.py` and self-register via `@register`. Sync is
   idempotent through the `ExternalRef` table (`app/services/mapping.py`). Connector tokens are
   encrypted at rest with Fernet (`app/core/crypto.py`). All outbound HTTP goes through

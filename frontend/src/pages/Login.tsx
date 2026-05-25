@@ -11,7 +11,7 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (isAuthenticated) return <Navigate to="/projects" replace />;
+  if (isAuthenticated) return <Navigate to="/" replace />;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -19,7 +19,7 @@ export default function Login() {
     setError(null);
     try {
       await login(email, password);
-      navigate("/projects");
+      navigate("/");
     } catch {
       setError("Invalid email or password");
     } finally {

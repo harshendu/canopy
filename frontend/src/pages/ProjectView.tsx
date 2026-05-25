@@ -16,8 +16,12 @@ import type {
 import GanttChart from "../components/GanttChart";
 import CapacityView from "../components/CapacityView";
 import RoadmapView from "../components/RoadmapView";
+import DeliveryView from "../components/DeliveryView";
+import SpecsView from "../components/SpecsView";
+import DocsView from "../components/DocsView";
 import ExportMenu from "../components/ExportMenu";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
+import OutcomesPanel from "../components/OutcomesPanel";
 import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
 import TaskDetailPanel from "../components/TaskDetailPanel";
@@ -39,15 +43,18 @@ const DraftPlanView = lazy(() => import("../components/DraftPlanView"));
 type Tab =
   | "gantt"
   | "board"
+  | "specs"
   | "deps"
   | "capacity"
   | "decisions"
+  | "docs"
   | "architecture"
   | "drift"
   | "roadmap"
   | "drafts"
   | "jiralinks"
   | "burndown"
+  | "delivery"
   | "risk"
   | "retros"
   | "activity";
@@ -55,15 +62,18 @@ type Tab =
 const TABS: Tab[] = [
   "gantt",
   "board",
+  "specs",
   "deps",
   "capacity",
   "decisions",
+  "docs",
   "architecture",
   "drift",
   "roadmap",
   "drafts",
   "jiralinks",
   "burndown",
+  "delivery",
   "risk",
   "retros",
   "activity",
@@ -266,6 +276,10 @@ export default function ProjectView() {
         />
       )}
 
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <OutcomesPanel scope="project" scopeId={id} mayWrite={mayPlan} />
+      </div>
+
       {lastReplan && (
         <div className="space-y-1">
           <div className="rounded border border-canopy-500/30 bg-canopy-50 px-4 py-2 text-sm text-canopy-700">
@@ -286,15 +300,18 @@ export default function ProjectView() {
         {([
           ["gantt", "Gantt"],
           ["board", "Board"],
+          ["specs", "Specs"],
           ["deps", "Dependencies"],
           ["capacity", "Capacity"],
           ["decisions", "Decisions"],
+          ["docs", "Docs"],
           ["architecture", "Architecture"],
           ["drift", "Drift"],
           ["roadmap", "Roadmap"],
           ["drafts", "Plan → Jira"],
           ["jiralinks", "Jira Links"],
           ["burndown", "Burndown"],
+          ["delivery", "Delivery"],
           ["risk", "Risk"],
           ["retros", "Retros"],
           ["activity", "Activity"],
@@ -399,6 +416,14 @@ export default function ProjectView() {
         ) : (
           <p className="text-sm text-slate-500">No tasks to graph yet.</p>
         ))}
+
+      {tab === "specs" && (
+        <SpecsView projectId={id} mayPlan={mayPlan} mayContribute={mayContribute} />
+      )}
+
+      {tab === "docs" && <DocsView scope="project" scopeId={id} mayWrite={mayPlan} />}
+
+      {tab === "delivery" && <DeliveryView scope="project" id={id} />}
 
       {tab === "capacity" && <CapacityView projectId={id} />}
 

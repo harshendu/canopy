@@ -9,6 +9,9 @@ import type {
 } from "../api/types";
 import { riskTone } from "../lib/risk";
 import ExportMenu from "../components/ExportMenu";
+import DeliveryView from "../components/DeliveryView";
+import DocsView from "../components/DocsView";
+import OutcomesPanel from "../components/OutcomesPanel";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
 import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
@@ -176,7 +179,19 @@ export default function InitiativeView() {
       )}
 
       <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <OutcomesPanel scope="initiative" scopeId={id} mayWrite={mayPlan} />
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <DeliveryView scope="initiative" id={id} />
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
         <RiskRegister scope="initiative" scopeId={id} mayWrite={mayPlan} />
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <DocsView scope="initiative" scopeId={id} mayWrite={mayPlan} />
       </div>
 
       <div>

@@ -15,6 +15,7 @@ from app.models.architecture import (
     DriftScan,
     DriftSuppression,
 )
+from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import (
     Connection,
@@ -22,6 +23,7 @@ from app.models.integration import (
     JiraLink,
     PullRequest,
 )
+from app.models.outcome import Outcome
 from app.models.project import (
     Baseline,
     Blocker,
@@ -46,6 +48,7 @@ from app.models.scenario import (
     ScenarioProject,
     ScenarioTask,
 )
+from app.models.spec import Spec, SpecCriterion
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
 
@@ -64,6 +67,7 @@ __all__ = [
     "ComponentLink",
     "Connection",
     "Dependency",
+    "DocReference",
     "DraftPlan",
     "DraftTask",
     "DriftEvent",
@@ -76,6 +80,7 @@ __all__ = [
     "Initiative",
     "JiraLink",
     "Milestone",
+    "Outcome",
     "Project",
     "PullRequest",
     "Retrospective",
@@ -91,6 +96,8 @@ __all__ = [
     "ScenarioMilestone",
     "ScenarioProject",
     "ScenarioTask",
+    "Spec",
+    "SpecCriterion",
     "Task",
     "TaskStatusHistory",
     "User",

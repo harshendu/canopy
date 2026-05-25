@@ -3,6 +3,7 @@ import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom"
 
 import { useAuth } from "./lib/auth";
 import { useCurrentUser } from "./lib/useCurrentUser";
+import { personaHome } from "./lib/persona";
 import { useEventStream } from "./lib/useEventStream";
 import Login from "./pages/Login";
 import Projects from "./pages/Projects";
@@ -80,6 +81,13 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
   );
 }
 
+/** Land each persona on their default surface (a lens, not a wall — see lib/persona). */
+function PersonaHome() {
+  const { data: me, isLoading } = useCurrentUser();
+  if (isLoading) return <Loading />;
+  return <Navigate to={personaHome(me?.function)} replace />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -88,7 +96,7 @@ export default function App() {
         path="/"
         element={
           <ProtectedLayout>
-            <Navigate to="/projects" replace />
+            <PersonaHome />
           </ProtectedLayout>
         }
       />

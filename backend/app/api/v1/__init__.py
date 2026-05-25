@@ -7,7 +7,9 @@ from app.api.v1 import (
     blockers,
     connectors,
     decisions,
+    delivery,
     dependencies,
+    docs,
     drafts,
     drift,
     events,
@@ -17,11 +19,13 @@ from app.api.v1 import (
     jira_links,
     me,
     milestones,
+    outcomes,
     projects,
     retros,
     risk,
     risk_register,
     scenarios,
+    specs,
     tasks,
     team,
 )
@@ -39,6 +43,10 @@ api_router.include_router(architecture.router, prefix="/architecture", tags=["ar
 api_router.include_router(decisions.router, prefix="/decisions", tags=["decisions"])
 api_router.include_router(connectors.router, prefix="/connectors", tags=["connectors"])
 api_router.include_router(jira_links.router, tags=["jira-links"])
+api_router.include_router(docs.router, tags=["docs"])
+api_router.include_router(specs.router, tags=["specs"])
+api_router.include_router(delivery.router, tags=["delivery"])
+api_router.include_router(outcomes.router, tags=["outcomes"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])
 api_router.include_router(drafts.router, tags=["drafts"])

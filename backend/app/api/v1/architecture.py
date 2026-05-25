@@ -7,6 +7,7 @@ from app.api.deps import (
     CurrentUser,
     PlannerWriter,
     SessionDep,
+    TokenScopeDep,
     is_planner,
 )
 from app.connectors import get_connector
@@ -22,7 +23,7 @@ from app.models.architecture import (
     ComponentCodeBinding,
     ComponentLink,
 )
-from app.models.base import ADRCommentKind, ADRStatus, DecisionRule
+from app.models.base import ADRCommentKind, ADRStatus, DecisionRule, Reversibility, TokenScope
 from app.models.integration import Connection
 from app.models.project import Project
 from app.schemas.entities import (
@@ -495,7 +496,8 @@ async def add_adr_comment(
 
 @router.patch("/adrs/{adr_id}", response_model=ADRRead)
 async def update_adr(
-    session: SessionDep, user: ContributorWriter, adr_id: int, payload: ADRUpdate
+    session: SessionDep, user: ContributorWriter, scope: TokenScopeDep, adr_id: int,
+    payload: ADRUpdate,
 ) -> ADRRead:
     adr = await session.get(ArchitectureDecision, adr_id)
     if adr is None:
@@ -510,6 +512,19 @@ async def update_adr(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only architects / engineering managers can change a decision's status",
+            )
+        # Bounded agency: accepting a one-way (irreversible) door is reserved for a human.
+        if (
+            scope == TokenScope.agent
+            and new_status == ADRStatus.accepted
+            and adr.reversibility == Reversibility.one_way
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Accepting a one-way-door (irreversible) decision requires a human; the "
+                    "agent token is bounded to reversible decisions."
+                ),
             )
         if not valid_transition(adr.status, new_status):
             raise HTTPException(
