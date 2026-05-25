@@ -9,8 +9,10 @@ Stdlib only, so it runs on a freshly checked-out machine with just `python3`.
 The run step additionally needs Docker (for the compose path) or the project's
 node/npm + the backend venv created by scripts/setup.sh (for the local path).
 
-    python3 scripts/init.py            # full wizard, then choose what to start
-    python3 scripts/init.py --no-start # just (re)generate .env
+    python3 scripts/init.py                      # full wizard, then choose what to start
+    python3 scripts/init.py --no-start           # interactive, just (re)generate .env
+    python3 scripts/init.py --defaults           # non-interactive: SQLite + generated secrets
+    python3 scripts/init.py --defaults --start docker   # non-interactive, then bring up Docker
 """
 
 from __future__ import annotations
@@ -145,6 +147,13 @@ def defaults() -> dict[str, str]:
         "GOOGLE_OAUTH_CLIENT_ID": "",
         "GOOGLE_OAUTH_CLIENT_SECRET": "",
     }
+
+
+def collect_defaults() -> dict[str, str]:
+    """Non-interactive config: stock defaults + a generated admin password."""
+    env = defaults()
+    env["FIRST_SUPERUSER_PASSWORD"] = secrets.token_urlsafe(18)
+    return env
 
 
 def collect() -> dict[str, str]:
@@ -417,7 +426,17 @@ def main() -> int:
         description="Interactive setup for canopy: generate .env and start services."
     )
     parser.add_argument(
-        "--no-start", action="store_true", help="Write .env but don't start any services."
+        "--defaults",
+        action="store_true",
+        help="Run non-interactively with default values (SQLite, generated secrets + admin password).",
+    )
+    parser.add_argument(
+        "--start",
+        choices=["docker", "local", "none"],
+        help="What to start after writing .env (skips the prompt).",
+    )
+    parser.add_argument(
+        "--no-start", action="store_true", help="Alias for --start none."
     )
     args = parser.parse_args()
 
@@ -425,25 +444,39 @@ def main() -> int:
     info(f"Repo: {REPO_ROOT}")
 
     regenerate = True
-    if ENV_PATH.exists():
+    if ENV_PATH.exists() and not args.defaults:
         warn(f"An .env already exists at {ENV_PATH}")
         regenerate = ask_yes_no("Regenerate it? (the current one is backed up first)", default=False)
     if regenerate:
-        write_env(render_env(collect()))
+        if args.defaults:
+            env = collect_defaults()
+            header("Using defaults (non-interactive)")
+            info(f"Database: {env['DATABASE_URL']}")
+            info(f"Admin:    {env['FIRST_SUPERUSER_EMAIL']}")
+            success(f"Generated admin password: {env['FIRST_SUPERUSER_PASSWORD']}")
+            warn("Saved to .env — capture it now (won't be shown again).")
+        else:
+            env = collect()
+        write_env(render_env(env))
     else:
         info("Keeping the existing .env.")
 
-    if args.no_start:
-        return 0
+    # Resolve the start target without prompting when a flag (or --defaults) decides it.
+    target = args.start
+    if target is None and args.no_start:
+        target = "none"
+    if target is None and args.defaults:
+        target = "none"
+    if target is None:
+        target = ask_choice(
+            "What would you like to start now?",
+            [
+                ("docker", "Docker stack — postgres, redis, backend, worker, frontend (recommended)"),
+                ("local", "Local dev servers — backend (uvicorn) + frontend (Vite)"),
+                ("none", "Nothing — I'll start it myself later"),
+            ],
+        )
 
-    target = ask_choice(
-        "What would you like to start now?",
-        [
-            ("docker", "Docker stack — postgres, redis, backend, worker, frontend (recommended)"),
-            ("local", "Local dev servers — backend (uvicorn) + frontend (Vite)"),
-            ("none", "Nothing — I'll start it myself later"),
-        ],
-    )
     if target == "docker":
         start_docker()
     elif target == "local":

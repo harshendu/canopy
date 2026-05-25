@@ -36,7 +36,9 @@ An interactive wizard that collects the inputs it needs (database, admin
 account, integrations), generates `.env` for you — auto-creating a random
 `SECRET_KEY`, a Fernet `TOKEN_ENCRYPTION_KEY`, and a strong admin password —
 then offers to start either the Docker stack or local dev servers. It backs up
-any existing `.env` first; pass `--no-start` to only (re)generate the file.
+any existing `.env` first; pass `--no-start` to only (re)generate the file. For
+scripted/CI setup, `--defaults` runs non-interactively (SQLite + generated
+secrets and admin password) — add `--start docker` to also launch the stack.
 
 ## Run the whole stack (Docker)
 
