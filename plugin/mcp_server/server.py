@@ -32,6 +32,7 @@ from client import CanopyClient  # noqa: E402
 from tools import (  # noqa: E402
     architecture,
     connectors,
+    docs,
     drafts,
     metadata,
     planning,
@@ -51,6 +52,7 @@ architecture.register(mcp, client)
 drafts.register(mcp, client)
 scenarios.register(mcp, client)
 metadata.register(mcp, client)
+docs.register(mcp, client)
 
 
 def main() -> None:

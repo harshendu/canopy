@@ -11,6 +11,10 @@ from app.models.base import (
     BlockerSeverity,
     DecisionRule,
     DependencyType,
+    DocKind,
+    DocLinkHealth,
+    DocScope,
+    DocSource,
     ProjectHealth,
     Provider,
     RetrospectiveKind,
@@ -1240,3 +1244,89 @@ class MyWorkspaceResponse(BaseModel):
     owned_decisions: list[ADRRead]
     stakeholder_decisions: list[ADRRead]
     blockers: list[BlockerRead] = []  # open blockers on my tasks or raised by me
+
+
+# --- Document graph (link, don't store) ---
+class DocReferenceCreate(BaseModel):
+    scope_level: DocScope
+    scope_id: int
+    url: str
+    kind: DocKind = DocKind.other
+    title: str | None = None
+    owner_engineer_id: int | None = None
+
+
+class DocReferenceUpdate(BaseModel):
+    kind: DocKind | None = None
+    title: str | None = None
+    url: str | None = None
+    owner_engineer_id: int | None = None
+    link_health: DocLinkHealth | None = None
+
+
+class DocReferenceRead(BaseModel):
+    model_config = _read
+    id: int
+    scope_level: DocScope
+    scope_id: int
+    kind: DocKind
+    title: str | None
+    url: str
+    source: DocSource
+    owner_engineer_id: int | None
+    connection_id: int | None
+    external_field: str | None
+    link_health: DocLinkHealth
+    last_checked_at: datetime | None
+    created_at: datetime
+
+
+class DocCoverageRead(BaseModel):
+    scope_level: DocScope
+    scope_id: int
+    total_references: int
+    present: list[DocKind]
+    missing: list[DocKind]  # expected kinds with no reference — a coverage gap
+    by_kind: dict[str, int]
+
+
+# --- Jira epic → doc field mapping (the AI-driven setup) ---
+class DocFieldMappingEntry(BaseModel):
+    jira_field: str  # the Jira field id, e.g. "customfield_10042" or "description"
+    field_name: str | None = None  # the human label, for display
+    doc_kind: DocKind
+
+
+class DocFieldMapping(BaseModel):
+    mappings: list[DocFieldMappingEntry] = []
+    parse_description_links: bool = False  # sweep links in the epic description as `other`
+    parse_remote_links: bool = True  # harvest Jira remote links (Confluence/web) as `other`
+
+
+class FieldUrlCandidate(BaseModel):
+    field_id: str
+    field_name: str | None = None
+    urls: list[str]
+
+
+class EpicDocSample(BaseModel):
+    key: str | None
+    summary: str | None
+    field_candidates: list[FieldUrlCandidate]
+    description_urls: list[str]
+    remote_links: list[dict] = []
+
+
+class EpicDocSampleResponse(BaseModel):
+    """Sample of epics' URL-bearing fields so an agent can propose a field→kind mapping."""
+
+    epics: list[EpicDocSample]
+    distinct_fields: list[FieldUrlCandidate]  # union of candidate fields across the sample
+
+
+class HarvestDocsResult(BaseModel):
+    references_created: int
+    references_updated: int
+    skipped: int
+    epics_scanned: int
+    notes: list[str] = []

@@ -140,3 +140,43 @@ class ProjectHealth(StrEnum):
     on_track = "on_track"
     at_risk = "at_risk"
     off_track = "off_track"
+
+
+# --- Document graph (link, don't store) ---
+class DocKind(StrEnum):
+    """The kind of document a reference points at (canopy links it; never stores it)."""
+
+    prd = "prd"
+    design = "design"
+    tech_design = "tech_design"
+    architecture = "architecture"
+    release = "release"
+    qa = "qa"
+    runbook = "runbook"
+    other = "other"
+
+
+class DocScope(StrEnum):
+    """What a document reference hangs off of (polymorphic, like RiskScope)."""
+
+    project = "project"
+    initiative = "initiative"
+    task = "task"
+
+
+class DocSource(StrEnum):
+    """How a document reference entered canopy."""
+
+    jira_epic = "jira_epic"  # harvested from a Jira epic's fields / links
+    manual = "manual"  # added by hand in canopy
+    repo = "repo"  # from a GitHub repo doc
+    drive = "drive"  # from a Google Drive folder
+
+
+class DocLinkHealth(StrEnum):
+    """Liveness of a referenced document (the missing/stale/broken signal)."""
+
+    unchecked = "unchecked"
+    ok = "ok"
+    stale = "stale"
+    broken = "broken"

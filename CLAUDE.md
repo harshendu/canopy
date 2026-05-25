@@ -135,6 +135,15 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   Delivered as a download (`GET …/export?fmt=pdf|csv`) or saved to Drive
   (`POST …/export/to-drive` → `GoogleDriveConnector.upload_file`). UI: a reusable `ExportMenu`
   in the project / initiative / portfolio headers. USER_FLOWS §S.
+- **Document graph (link, don't store):** `DocReference` (`app/models/doc.py`) holds typed *links*
+  to docs that live elsewhere (Jira epic fields/remote-links, Drive, Figma, repo) — canopy never
+  stores the bytes. Scope is polymorphic (project/initiative/task, like the risk register); dedup
+  is in the service (no DB unique on the `url` TEXT column — not portable to MySQL). The AI-driven
+  one-time setup samples a Jira connection's epics, an agent proposes a field→kind mapping (stored
+  in the connection's `config["doc_field_mappings"]`), and `app/services/doc_graph.py` (pure
+  URL/ADF extraction + harvest + coverage roll-up) attaches references to the entity each epic maps
+  to. MCP: `sample_epic_doc_fields`/`set_epic_doc_field_mapping`/`harvest_epic_docs`/`get_doc_coverage`
+  (skill: `mapping-epic-docs`). USER_FLOWS §V.
 - Connectors implement the ABC in `app/connectors/base.py` and self-register via `@register`. Sync is
   idempotent through the `ExternalRef` table (`app/services/mapping.py`). Connector tokens are
   encrypted at rest with Fernet (`app/core/crypto.py`). All outbound HTTP goes through

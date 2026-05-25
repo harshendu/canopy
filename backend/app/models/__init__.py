@@ -15,6 +15,7 @@ from app.models.architecture import (
     DriftScan,
     DriftSuppression,
 )
+from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import (
     Connection,
@@ -64,6 +65,7 @@ __all__ = [
     "ComponentLink",
     "Connection",
     "Dependency",
+    "DocReference",
     "DraftPlan",
     "DraftTask",
     "DriftEvent",

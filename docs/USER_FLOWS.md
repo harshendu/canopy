@@ -895,6 +895,62 @@ what-if (the Gantt's §C5 covers task durations only).
 
 ---
 
+## V. Document graph & coverage (link, don't store) **[new]**
+
+Canopy is a document **graph**, not a document store. PRDs, Figma designs, tech-design docs,
+architecture docs, release notes, and QA plans live where they already are (most often
+attached to a **Jira epic**, plus Confluence/Drive/Figma URLs); canopy holds typed **links**
+to them, deduplicated and attached to the right entity, so the same docs are discoverable for
+everyone in context. It never copies the bytes (Source-of-truth boundaries hold). The
+`DocReference` model (`app/models/doc.py`) is polymorphic by scope (project / initiative /
+task, mirroring the risk register) with a `kind` (prd | design | tech_design | architecture |
+release | qa | runbook | other), a `source` (jira_epic | manual | repo | drive), and a
+`link_health` (unchecked | ok | stale | broken — checking is a follow-up).
+
+### V1. List / add / manage references + coverage
+- **API:** `GET /api/v1/docs?scope_level=&scope_id=&kind=` (open read), `POST /api/v1/docs`
+  (planner; validates the scope exists, no FK), `PATCH/DELETE /api/v1/docs/{id}` (planner),
+  `GET /api/v1/docs/coverage?scope_level=&scope_id=` (which **expected** kinds — prd / design /
+  tech_design / architecture — are present vs **missing**, rolled up so a project includes its
+  tasks and an initiative includes its projects + their tasks; absence of a doc is a signal,
+  not neutral) · **MCP:** `list_doc_references`, `add_doc_reference`, `get_doc_coverage`.
+
+### V2. AI-driven epic→doc field mapping (one-time setup)
+- Teaches canopy which Jira epic field holds which kind of doc, with the AI doing the work.
+  Stored on the **Jira connection's config** (`doc_field_mappings`, same JSON home as
+  `story_point_field`) — `{mappings: [{jira_field, field_name, doc_kind}],
+  parse_description_links, parse_remote_links}`.
+- **Flow (skill `mapping-epic-docs`):** `sample_epic_doc_fields` returns a sample of epics' URL-
+  bearing fields (joined to Jira's field-name registry), description links, and remote links →
+  Claude infers a field→kind mapping from field names + URL domains and **asks the admin to
+  confirm** → `set_epic_doc_field_mapping` saves it.
+- **API:** `GET /api/v1/connectors/jira/{id}/doc-fields/sample?limit=` (read),
+  `GET/POST /api/v1/connectors/jira/{id}/doc-field-mapping` (read / planner-set) · **MCP:**
+  `sample_epic_doc_fields`, `get_epic_doc_field_mapping`, `set_epic_doc_field_mapping`.
+
+### V3. Harvest docs from epics
+- **API:** `POST /api/v1/connectors/jira/{id}/harvest-docs` (planner) — fetches every synced
+  epic, extracts URLs per the mapping (custom fields + optional description links + optional
+  Jira remote links), and attaches a `DocReference` to whatever canopy entity the epic maps to
+  (a **summary task** for a whole-project sync §J3, a **project** for an initiative-linked epic
+  §J9, via `ExternalRef`). Idempotent (dedup per scope+url in the service); re-running updates,
+  never duplicates. Returns created/updated/skipped/epics_scanned · **MCP:** `harvest_epic_docs`.
+- Logic is pure-where-possible in `app/services/doc_graph.py` (URL/ADF extraction, mapping
+  application, coverage roll-up — unit-tested); the Jira connector adds `list_fields`,
+  `fetch_epics`, and `fetch_remote_links`.
+
+### V4. Not built (deliberate limits)
+- **No React UI yet** — references + coverage are API/MCP-only (the setup is conversational by
+  design); a Docs panel on the project/initiative cockpit is the fast-follow.
+- **No link-health checking** (a HEAD/404 sweep to flag broken/stale links — `link_health`
+  exists but stays `unchecked`), **no Jira attachments** harvest (only fields + remote/
+  description links), and **no write-back** of canopy-added links onto the Jira epic
+  (canopy-local for now).
+- **AI doc *generation*** (drafting a tech-design from the PRD + ADRs, syncing the architecture
+  doc to reality via drift) is a separate future slice, not part of this flow.
+
+---
+
 ## L. Claude plugin (agentic flows)
 
 ### L1. Install & configure the plugin
@@ -985,6 +1041,14 @@ what-if (the Gantt's §C5 covers task durations only).
   confirms; Jira status is never written. This is the agentic surface behind §C1a / §Q3a. (The
   read-only **`risk-analyst`** §L6 still owns assessment of the computed score.)
 
+### L14. Map epic documents into the doc graph (skill) **[new]**
+- The **`mapping-epic-docs`** skill runs the one-time, AI-driven setup behind §V: it samples a
+  Jira connection's epics (`sample_epic_doc_fields`), infers which field holds which kind of doc
+  from field names + URL domains, **confirms the mapping with the admin**, saves it
+  (`set_epic_doc_field_mapping`), harvests (`harvest_epic_docs`), and reports coverage
+  (`get_doc_coverage`). canopy reads only — links are never written back to Jira and documents
+  are never stored.
+
 ---
 
 ## M. Engineer workspace (`/me`)
@@ -1015,6 +1079,8 @@ team member via `Engineer.user_id` (§A5).
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
 - **What-if** scheduling (C5).
+- **Document graph** (§V): references + coverage + the epic doc-field mapping/harvest are
+  API/MCP-only — no Docs panel on the cockpit yet.
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - *(closed previously: G5 blast radius; Risk (§Q) + portfolio scores (§B1); user/role mgmt (A3) +
   engineer workspace (§M); per-role enforcement (§A3a); drift detection (§N); retros/postmortems

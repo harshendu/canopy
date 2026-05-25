@@ -8,6 +8,7 @@ from app.api.v1 import (
     connectors,
     decisions,
     dependencies,
+    docs,
     drafts,
     drift,
     events,
@@ -39,6 +40,7 @@ api_router.include_router(architecture.router, prefix="/architecture", tags=["ar
 api_router.include_router(decisions.router, prefix="/decisions", tags=["decisions"])
 api_router.include_router(connectors.router, prefix="/connectors", tags=["connectors"])
 api_router.include_router(jira_links.router, tags=["jira-links"])
+api_router.include_router(docs.router, tags=["docs"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])
 api_router.include_router(drafts.router, tags=["drafts"])

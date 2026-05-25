@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.connectors import get_connector, oauth
 from app.connectors.gdrive import GoogleDriveConnector
 from app.connectors.github import GitHubConnector
@@ -16,7 +16,15 @@ from app.core.config import settings
 from app.core.crypto import encrypt_token
 from app.models.base import Provider, utcnow
 from app.models.integration import Connection, PullRequest
-from app.schemas.entities import ConnectionCreate, ConnectionRead, PullRequestRead
+from app.schemas.entities import (
+    ConnectionCreate,
+    ConnectionRead,
+    DocFieldMapping,
+    EpicDocSampleResponse,
+    HarvestDocsResult,
+    PullRequestRead,
+)
+from app.services import doc_graph
 from app.services import sync as sync_service
 
 router = APIRouter()
@@ -149,6 +157,64 @@ async def jira_sync_history(
     connection = await _get_connection(session, connection_id)
     added = await _jira(connection, session).sync_status_history(issue_key)
     return {"added": added}
+
+
+# --- Jira epic → document field mapping (the AI-driven, one-time setup) ---
+@router.get("/jira/{connection_id}/doc-fields/sample", response_model=EpicDocSampleResponse)
+async def jira_doc_field_sample(
+    session: SessionDep, _: CurrentUser, connection_id: int, limit: int = 5
+) -> dict:
+    """Fetch a sample of epics' URL-bearing fields + remote links so an agent can propose a
+    field→kind mapping (which Jira field holds the PRD, the design, the tech-design, etc.)."""
+    try:
+        return await doc_graph.analyze_epic_doc_fields(session, connection_id, limit=limit)
+    except doc_graph.DocGraphError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/jira/{connection_id}/doc-field-mapping", response_model=DocFieldMapping)
+async def jira_get_doc_field_mapping(
+    session: SessionDep, _: CurrentUser, connection_id: int
+) -> dict:
+    """The doc field mapping currently configured on this Jira connection."""
+    connection = await _get_connection(session, connection_id)
+    return doc_graph.get_mapping(connection)
+
+
+@router.post("/jira/{connection_id}/doc-field-mapping", response_model=DocFieldMapping)
+async def jira_set_doc_field_mapping(
+    session: SessionDep, _: PlannerWriter, connection_id: int, payload: DocFieldMapping
+) -> dict:
+    """Save the confirmed field→kind mapping on the connection (a one-time admin step)."""
+    try:
+        return await doc_graph.set_mapping(
+            session,
+            connection_id,
+            mappings=[m.model_dump() for m in payload.mappings],
+            parse_description_links=payload.parse_description_links,
+            parse_remote_links=payload.parse_remote_links,
+        )
+    except doc_graph.DocGraphError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/jira/{connection_id}/harvest-docs", response_model=HarvestDocsResult)
+async def jira_harvest_docs(
+    session: SessionDep, _: PlannerWriter, connection_id: int
+) -> HarvestDocsResult:
+    """Harvest doc links from every synced epic and attach them to the canopy entity each
+    epic maps to (a summary task or a project)."""
+    try:
+        result = await doc_graph.harvest(session, connection_id)
+    except doc_graph.DocGraphError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return HarvestDocsResult(
+        references_created=result.references_created,
+        references_updated=result.references_updated,
+        skipped=result.skipped,
+        epics_scanned=result.epics_scanned,
+        notes=result.notes,
+    )
 
 
 # --- GitHub on-demand reads ---
