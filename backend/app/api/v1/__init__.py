@@ -7,6 +7,7 @@ from app.api.v1 import (
     blockers,
     connectors,
     decisions,
+    delivery,
     dependencies,
     docs,
     drafts,
@@ -43,6 +44,7 @@ api_router.include_router(connectors.router, prefix="/connectors", tags=["connec
 api_router.include_router(jira_links.router, tags=["jira-links"])
 api_router.include_router(docs.router, tags=["docs"])
 api_router.include_router(specs.router, tags=["specs"])
+api_router.include_router(delivery.router, tags=["delivery"])
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])
 api_router.include_router(drafts.router, tags=["drafts"])

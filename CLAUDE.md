@@ -152,6 +152,12 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   verdicts are contributor-writable (the engineer/agent records them); spec CRUD is planner-gated.
   MCP: `create_spec`/`add_spec_criterion`/`get_spec`/`update_spec_criterion`/`link_task_to_spec`
   (skill: `spec-driven-development`). Vision + roadmap in `docs/AI_NATIVE_EXECUTION.md`; USER_FLOWS §W.
+- **Delivery metrics (DORA + flow):** `GET /projects|initiatives/{id}/delivery` computes DORA
+  (deploy freq, change-fail rate, recovery time from the §J8 activity feed) + flow (throughput,
+  cycle time, WIP, aging from `TaskStatusHistory` + the board) — pure in
+  `app/services/flow_metrics.py`, reusing `build_board`/`weekly_throughput`/`is_done_status`.
+  **Team-level only — never per-engineer** (Goodhart); reports `sufficient=false`/`null` instead of
+  faking thin data. MCP: `get_delivery_metrics`. USER_FLOWS §X; roadmap gap #3 in AI_NATIVE_EXECUTION.md.
 - Connectors implement the ABC in `app/connectors/base.py` and self-register via `@register`. Sync is
   idempotent through the `ExternalRef` table (`app/services/mapping.py`). Connector tokens are
   encrypted at rest with Fernet (`app/core/crypto.py`). All outbound HTTP goes through

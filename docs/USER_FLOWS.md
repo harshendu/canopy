@@ -994,6 +994,41 @@ document graph (§V) or `source_url`; the governing decision links via `adr_id`.
 
 ---
 
+## X. Delivery metrics (DORA + flow) **[new]**
+
+The quantitative backbone of [`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) (roadmap gap #3):
+DORA + flow metrics computed from canopy's own signal — the §J8 activity substrate (deploys /
+incidents) and `TaskStatusHistory` (throughput / cycle time) + the board (WIP / aging). Logic is
+pure in `app/services/flow_metrics.py` (unit-tested); the endpoint reuses `build_board`,
+`weekly_throughput`, and `is_done_status` so the numbers match the board / forecast / burndown.
+
+- **Team-level by design.** There is deliberately **no per-engineer breakdown** — per-individual
+  delivery metrics are a Goodhart trap (velocity / diffs / tokens as a target). The response says
+  so in its `notes`.
+- **Honest, not falsely precise.** Flow reports `sufficient=false` with a reason under ~3 weeks of
+  throughput (same bar as the forecast); change-fail rate is `null` with no deploys; metrics canopy
+  can't compute from its data (PR-review latency, decision latency) are absent, not faked.
+
+### X1. Read delivery metrics (project + initiative)
+- **API:** `GET /api/v1/projects/{id}/delivery?weeks=` and `GET /api/v1/initiatives/{id}/delivery?weeks=`
+  (default 12, max 52; the initiative variant aggregates across its sub-projects) · **MCP:**
+  `get_delivery_metrics` (pass `project_id` *or* `initiative_id`). Open read.
+- **DORA:** `deploys`, `deploy_frequency_per_week`, `failures` (incidents opened),
+  `change_fail_rate` (≈ failures ÷ deploys), `recovered_incidents` + `mean`/`median_recovery_hours`
+  (incident_open→close paired FIFO — an MTTR proxy).
+- **Flow:** `completed_items`, `throughput_per_week`, `cycle_time_median_days` +
+  `cycle_time_p85_days` (created→done over the window), `wip` (current not-done leaves), `aging_wip`
+  (WIP over the team's cycle-time P85), `sufficient` + `reason`.
+
+### X2. Not built (deliberate limits)
+- **No React Delivery tab yet** — metrics are API/MCP-only; the initiative-level dashboard is the
+  fast-follow.
+- **No rework rate** (DORA 2025 — needs unplanned/rework tagging canopy doesn't have), **no flow
+  efficiency** (needs an active-vs-wait status classification), and **no PR-review / decision
+  latency** (need GitHub PR metrics §J6 / ADR status history). Surfaced as `notes`, not faked.
+
+---
+
 ## L. Claude plugin (agentic flows)
 
 ### L1. Install & configure the plugin
@@ -1133,6 +1168,7 @@ backlog:
   API/MCP-only — no Docs panel on the cockpit yet.
 - **Specs** (§W): spec CRUD + acceptance criteria + self-audit are API/MCP-only — no Specs panel
   on the project cockpit yet.
+- **Delivery metrics** (§X): DORA + flow are API/MCP-only — no Delivery tab on the cockpit yet.
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - *(closed previously: G5 blast radius; Risk (§Q) + portfolio scores (§B1); user/role mgmt (A3) +
   engineer workspace (§M); per-role enforcement (§A3a); drift detection (§N); retros/postmortems

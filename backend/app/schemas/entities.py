@@ -1418,3 +1418,37 @@ class SpecDetail(SpecRead):
     criteria_total: int = 0  # excludes waived
     criteria_met: int = 0
     acceptance_ratio: float = 0.0  # met / effective total
+
+
+# --- Delivery metrics (DORA + flow; team-level only) ---
+class DoraMetricsRead(BaseModel):
+    model_config = _read
+    window_weeks: float
+    deploys: int
+    deploy_frequency_per_week: float
+    failures: int
+    change_fail_rate: float | None
+    recovered_incidents: int
+    mean_recovery_hours: float | None
+    median_recovery_hours: float | None
+
+
+class FlowMetricsRead(BaseModel):
+    model_config = _read
+    completed_items: int
+    throughput_per_week: float | None
+    cycle_time_median_days: float | None
+    cycle_time_p85_days: int | None
+    wip: int
+    aging_wip: int
+    sufficient: bool
+    reason: str | None = None
+
+
+class DeliveryMetricsRead(BaseModel):
+    scope_level: Literal["project", "initiative"]
+    scope_id: int
+    window_weeks: int
+    dora: DoraMetricsRead
+    flow: FlowMetricsRead
+    notes: list[str] = []
