@@ -1055,6 +1055,40 @@ pure in `app/services/flow_metrics.py` (unit-tested); the endpoint reuses `build
 
 ---
 
+## Y. Outcomes — outcomes over output **[new]**
+
+A project/initiative is a **bet**, not just a container of tasks (roadmap gap #2;
+[`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) §1/§5). An `Outcome` (`app/models/outcome.py`)
+captures the **hypothesis** ("we believe X will yield Y") + a **success metric**, tracked
+**baseline → target → current** with a verdict — so the team optimizes for *the result*, not
+output. Scope is polymorphic (project | initiative, like the risk register); an entity can carry
+several (key results). The observed `current_value` is recorded by hand (canopy has no product-KPI
+pipeline — an honest manual signal, like the weekly health note). `status`:
+`pending → on_track / at_risk → validated | invalidated`.
+
+### Y1. Define / track / verdict an outcome
+- **API:** `GET /api/v1/outcomes?scope_level=&scope_id=&status=` (open read), `POST /api/v1/outcomes`
+  (planner; validates the project/initiative exists), `GET /api/v1/outcomes/{id}`,
+  `PATCH /api/v1/outcomes/{id}` (planner — record `current_value`, move `status`),
+  `DELETE /api/v1/outcomes/{id}` (planner). `OutcomeRead` carries a computed **`progress_ratio`**
+  ((current − baseline) / (target − baseline); pure in `app/services/outcomes.py`) ·
+  **MCP:** `list_outcomes`, `add_outcome`, `update_outcome`.
+- **UI:** an **Outcomes** panel on the project cockpit (below the delivery meta bar) and the
+  initiative cockpit — list with a progress bar + status badge, an add form (statement · metric ·
+  baseline/target/unit · date), an inline **record-current** input, and a status select.
+
+### Y2. Retros evaluate the bet
+- The retrospective seeder (§P1) now opens with an **"Outcomes — did the bet pay off?"** section
+  listing each project outcome as `statement — current/target unit (status)`, so a retro evaluates
+  the outcome, not just the schedule (`app/services/retro.py`).
+
+### Y3. Not built (deliberate limits)
+- **No automatic metric ingestion** — `current_value` is recorded by hand (no analytics/KPI
+  connector). **No OKR hierarchy** (objectives → key results as a tree) — outcomes are a flat list
+  per entity. **No initiative→project outcome rollup** yet.
+
+---
+
 ## L. Claude plugin (agentic flows)
 
 ### L1. Install & configure the plugin

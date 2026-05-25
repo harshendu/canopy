@@ -207,3 +207,17 @@ class TokenScope(StrEnum):
 
     full = "full"
     agent = "agent"
+
+
+# --- Outcomes (outcomes over output: a project/initiative is a bet) ---
+class OutcomeScope(StrEnum):
+    project = "project"
+    initiative = "initiative"
+
+
+class OutcomeStatus(StrEnum):
+    pending = "pending"  # not yet measured
+    on_track = "on_track"
+    at_risk = "at_risk"
+    validated = "validated"  # the bet paid off (terminal)
+    invalidated = "invalidated"  # the bet didn't (terminal)

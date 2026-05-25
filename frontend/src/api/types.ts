@@ -840,6 +840,27 @@ export interface DeliveryMetrics {
   notes: string[];
 }
 
+// --- Outcomes (outcomes over output) ---
+export type OutcomeScope = "project" | "initiative";
+export type OutcomeStatus = "pending" | "on_track" | "at_risk" | "validated" | "invalidated";
+
+export interface Outcome {
+  id: number;
+  scope_level: OutcomeScope;
+  scope_id: number;
+  statement: string;
+  metric: string | null;
+  unit: string | null;
+  baseline_value: number | null;
+  target_value: number | null;
+  current_value: number | null;
+  status: OutcomeStatus;
+  target_date: string | null;
+  owner_engineer_id: number | null;
+  created_at: string;
+  progress_ratio: number | null;
+}
+
 // --- Specs (spec-driven development) ---
 export type SpecStatus = "draft" | "approved" | "in_progress" | "verified" | "archived";
 export type CriterionStatus = "open" | "met" | "unmet" | "waived";

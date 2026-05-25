@@ -16,6 +16,8 @@ from app.models.base import (
     DocLinkHealth,
     DocScope,
     DocSource,
+    OutcomeScope,
+    OutcomeStatus,
     ProjectHealth,
     Provider,
     RetrospectiveKind,
@@ -29,6 +31,7 @@ from app.models.base import (
 )
 from app.schemas.auth import UserRead
 from app.services import metadata
+from app.services import outcomes as outcomes_service
 
 _read = ConfigDict(from_attributes=True)
 
@@ -1452,3 +1455,55 @@ class DeliveryMetricsRead(BaseModel):
     dora: DoraMetricsRead
     flow: FlowMetricsRead
     notes: list[str] = []
+
+
+# --- Outcomes (outcomes over output) ---
+class OutcomeCreate(BaseModel):
+    scope_level: OutcomeScope
+    scope_id: int
+    statement: str
+    metric: str | None = None
+    unit: str | None = None
+    baseline_value: float | None = None
+    target_value: float | None = None
+    current_value: float | None = None
+    status: OutcomeStatus = OutcomeStatus.pending
+    target_date: date | None = None
+    owner_engineer_id: int | None = None
+
+
+class OutcomeUpdate(BaseModel):
+    statement: str | None = None
+    metric: str | None = None
+    unit: str | None = None
+    baseline_value: float | None = None
+    target_value: float | None = None
+    current_value: float | None = None
+    status: OutcomeStatus | None = None
+    target_date: date | None = None
+    owner_engineer_id: int | None = None
+
+
+class OutcomeRead(BaseModel):
+    model_config = _read
+    id: int
+    scope_level: OutcomeScope
+    scope_id: int
+    statement: str
+    metric: str | None
+    unit: str | None
+    baseline_value: float | None
+    target_value: float | None
+    current_value: float | None
+    status: OutcomeStatus
+    target_date: date | None
+    owner_engineer_id: int | None
+    created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def progress_ratio(self) -> float | None:
+        """How far current sits on the baseline→target scale (None until measurable)."""
+        return outcomes_service.progress(
+            self.baseline_value, self.target_value, self.current_value
+        )

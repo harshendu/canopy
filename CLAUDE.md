@@ -158,6 +158,13 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   `app/services/flow_metrics.py`, reusing `build_board`/`weekly_throughput`/`is_done_status`.
   **Team-level only — never per-engineer** (Goodhart); reports `sufficient=false`/`null` instead of
   faking thin data. MCP: `get_delivery_metrics`. USER_FLOWS §X; roadmap gap #3 in AI_NATIVE_EXECUTION.md.
+- **Outcomes (outcomes over output):** `Outcome` (`app/models/outcome.py`) makes a project/
+  initiative a measurable **bet** — a hypothesis + success metric tracked baseline→target→current
+  with a verdict (pending|on_track|at_risk|validated|invalidated). Polymorphic scope
+  (project|initiative, like the risk register); `current_value` is a manual signal (no KPI
+  pipeline). `progress_ratio` is computed (pure `app/services/outcomes.py`); the retro seeder opens
+  with an outcomes section so retros evaluate the bet. MCP: `list_outcomes`/`add_outcome`/
+  `update_outcome`. USER_FLOWS §Y; roadmap gap #2 in AI_NATIVE_EXECUTION.md.
 - **Bounded agency (scoped tokens):** access tokens carry a `scope` claim — `full` (human) or
   `agent`. An `agent` token (minted via `POST /auth/agent-token`, planner-gated) acts as its issuer
   but is blocked (403) from **one-way-door / external-write** actions: accepting a `one_way` ADR,

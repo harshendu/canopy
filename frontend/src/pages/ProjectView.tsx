@@ -21,6 +21,7 @@ import SpecsView from "../components/SpecsView";
 import DocsView from "../components/DocsView";
 import ExportMenu from "../components/ExportMenu";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
+import OutcomesPanel from "../components/OutcomesPanel";
 import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
 import TaskDetailPanel from "../components/TaskDetailPanel";
@@ -274,6 +275,10 @@ export default function ProjectView() {
           }}
         />
       )}
+
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <OutcomesPanel scope="project" scopeId={id} mayWrite={mayPlan} />
+      </div>
 
       {lastReplan && (
         <div className="space-y-1">

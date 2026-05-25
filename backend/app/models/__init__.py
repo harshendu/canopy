@@ -23,6 +23,7 @@ from app.models.integration import (
     JiraLink,
     PullRequest,
 )
+from app.models.outcome import Outcome
 from app.models.project import (
     Baseline,
     Blocker,
@@ -79,6 +80,7 @@ __all__ = [
     "Initiative",
     "JiraLink",
     "Milestone",
+    "Outcome",
     "Project",
     "PullRequest",
     "Retrospective",

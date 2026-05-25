@@ -77,9 +77,28 @@ async def _seed_project_retro(session: SessionDep, project: Project) -> str:
             )
         ).scalars().all()
     )
+    from app.models.outcome import Outcome  # local import keeps the module graph flat
+
+    outcomes = list(
+        (
+            await session.execute(
+                select(Outcome).where(
+                    Outcome.scope_level == "project", Outcome.scope_id == project.id
+                )
+            )
+        ).scalars().all()
+    )
+
+    def _fmt_outcome(o: Outcome) -> str:
+        cur = "—" if o.current_value is None else f"{o.current_value:g}"
+        tgt = "—" if o.target_value is None else f"{o.target_value:g}"
+        unit = f" {o.unit}" if o.unit else ""
+        return f"{o.statement} — {cur}/{tgt}{unit} ({o.status})"
+
     inputs = RetroInputs(
         project_name=project.name,
         generated_on=date.today(),
+        outcomes=[_fmt_outcome(o) for o in outcomes],
         completed_milestones=[
             f"{m.name} ({m.target_date})" if m.target_date else m.name
             for m in milestones
