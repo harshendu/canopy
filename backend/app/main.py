@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -18,6 +19,7 @@ from app.models.user import User
 from app.webhooks import webhook_router
 
 configure_logging()
+logger = logging.getLogger(__name__)
 
 
 async def _seed_superuser() -> None:
@@ -38,8 +40,13 @@ async def _seed_superuser() -> None:
                     )
                 )
                 await session.commit()
-    except Exception:  # pragma: no cover - migrations may not have run yet
-        pass
+                logger.info("Seeded first superuser email=%s", settings.FIRST_SUPERUSER_EMAIL)
+    except Exception:  # pragma: no cover - DB may be unreachable/unmigrated at startup
+        logger.warning(
+            "Skipped first-superuser seeding: the database could not be accessed. "
+            "If you cannot log in, ensure migrations have run (`alembic upgrade head`).",
+            exc_info=True,
+        )
 
 
 @asynccontextmanager
