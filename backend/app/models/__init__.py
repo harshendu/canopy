@@ -23,6 +23,7 @@ from app.models.integration import (
     IntegrationSetting,
     JiraLink,
     PullRequest,
+    UserConnection,
 )
 from app.models.outcome import Outcome
 from app.models.project import (
@@ -103,4 +104,5 @@ __all__ = [
     "Task",
     "TaskStatusHistory",
     "User",
+    "UserConnection",
 ]

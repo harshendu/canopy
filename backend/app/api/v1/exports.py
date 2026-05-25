@@ -152,7 +152,12 @@ def _render_portfolio(snap: PortfolioSnapshot, fmt: str) -> tuple[bytes, str, st
 
 
 async def _upload_to_drive(
-    session: SessionDep, connection_id: int, content: bytes, media_type: str, filename: str
+    session: SessionDep,
+    user_id: int | None,
+    connection_id: int,
+    content: bytes,
+    media_type: str,
+    filename: str,
 ) -> ExportToDriveResult:
     connection = await session.get(Connection, connection_id)
     if connection is None:
@@ -161,14 +166,16 @@ async def _upload_to_drive(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Not a Google Drive connection"
         )
-    if not connection.authorized:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Drive connection is not authorized"
-        )
     write = await integration_policy.resolve_write(session, Provider.gdrive)
     if not write.allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=write.reason)
-    connector = get_connector(connection, session)
+    # Upload as the caller when they've connected their own Drive (attribution); else shared.
+    credential, reason = await integration_policy.resolve_write_credential(
+        session, connection, user_id
+    )
+    if credential is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason)
+    connector = get_connector(credential, session)
     if not isinstance(connector, GoogleDriveConnector):  # pragma: no cover - defensive
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Not a Drive connection"
@@ -193,12 +200,14 @@ async def export_project(
 
 @router.post("/projects/{project_id}/export/to-drive", response_model=ExportToDriveResult)
 async def export_project_to_drive(
-    session: SessionDep, _: CurrentUser, project_id: int, payload: ExportToDriveRequest
+    session: SessionDep, user: CurrentUser, project_id: int, payload: ExportToDriveRequest
 ) -> ExportToDriveResult:
     _validate_fmt(payload.fmt)
     snap = await _project_snapshot(session, project_id)
     content, media_type, filename = _render_project(snap, payload.fmt)
-    return await _upload_to_drive(session, payload.connection_id, content, media_type, filename)
+    return await _upload_to_drive(
+        session, user.id, payload.connection_id, content, media_type, filename
+    )
 
 
 # --- initiative ---
@@ -218,7 +227,9 @@ async def export_initiative_to_drive(
     _validate_fmt(payload.fmt)
     snap = await _initiative_snapshot(session, user, initiative_id)
     content, media_type, filename = _render_initiative(snap, payload.fmt)
-    return await _upload_to_drive(session, payload.connection_id, content, media_type, filename)
+    return await _upload_to_drive(
+        session, user.id, payload.connection_id, content, media_type, filename
+    )
 
 
 # --- portfolio ---
@@ -236,4 +247,6 @@ async def export_portfolio_to_drive(
     _validate_fmt(payload.fmt)
     snap = await _portfolio_snapshot(session, user)
     content, media_type, filename = _render_portfolio(snap, payload.fmt)
-    return await _upload_to_drive(session, payload.connection_id, content, media_type, filename)
+    return await _upload_to_drive(
+        session, user.id, payload.connection_id, content, media_type, filename
+    )

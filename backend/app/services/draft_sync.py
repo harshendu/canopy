@@ -19,6 +19,7 @@ from app.models.base import Provider, utcnow
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import Connection
 from app.schemas.entities import DraftPushResult, DraftPushTaskResult
+from app.services import integration_policy
 
 
 class DraftPushError(Exception):
@@ -67,18 +68,26 @@ def _ordered_tasks(tasks: list[DraftTask]) -> list[DraftTask]:
 
 
 async def push_plan_to_jira(
-    session: AsyncSession, plan_id: int, connection_id: int | None = None
+    session: AsyncSession,
+    plan_id: int,
+    connection_id: int | None = None,
+    user_id: int | None = None,
 ) -> DraftPushResult:
     plan = await session.get(DraftPlan, plan_id)
     if plan is None:
         raise DraftPushError("Draft plan not found")
 
     connection = await _resolve_jira_connection(session, plan.project_id, connection_id)
-    if not connection.authorized:
-        raise DraftPushError("Jira connection is not authorized yet")
     assert connection.id is not None
 
-    connector = get_connector(connection, session)
+    # Write as the caller when they've connected their own account (attribution); else shared.
+    credential, reason = await integration_policy.resolve_write_credential(
+        session, connection, user_id
+    )
+    if credential is None:
+        raise DraftPushError(reason)
+
+    connector = get_connector(credential, session)
     if not isinstance(connector, JiraConnector):  # pragma: no cover - defensive
         raise DraftPushError("Connection is not a Jira connection")
 

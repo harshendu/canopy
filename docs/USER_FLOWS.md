@@ -156,8 +156,9 @@ ingest, and file-drop ingest are later phases.)
   (`app/workers/worker.py`) and webhook intake (`app/webhooks/jira.py`, `github.py`) stand down when
   reads ≠ `direct`; the direct write paths — draft **push-to-Jira** (§C10) and **export-to-Drive**
   (§S) — return `403` when writes ≠ `direct`. Orthogonal to the bounded-agency gate (§A6).
-- **Not built (later phases):** per-user SSO connections, MCP ingest tools + admin-scheduled Claude
-  sync jobs, and the file-drop ingest pipeline (the `mcp`/`file` read strategies are inert until then).
+- **Built in Phase 2:** per-user SSO connections (`allow_user_connect` + per-user OAuth, §J2a).
+- **Not built (later phases):** MCP ingest tools + admin-scheduled Claude sync jobs, and the
+  file-drop ingest pipeline (the `mcp`/`file` read strategies are inert until then).
 
 ---
 
@@ -773,14 +774,35 @@ component map + ADRs and maintains the queue.
 - **API:** `POST /api/v1/connectors/connections` (token is encrypted at rest) · **MCP:**
   `list_connections`.
 
-### J2. Connect via OAuth
+### J2. Connect via OAuth (shared service connection)
 - **UI:** on a connection row → **Connect** (or **Reconnect**). The browser is redirected to the
   provider's consent screen; after approval the provider redirects back and the connection shows
   **authorized**.
 - **API:** `GET /api/v1/connectors/oauth/{connection_id}/authorize` → provider URL (CSRF `state` is a
   signed JWT); provider redirects to `GET /api/v1/connectors/oauth/callback`, which exchanges the
   code, stores encrypted access + refresh tokens, and (for Jira) resolves the cloud id.
+- **Scopes:** Jira `read:jira-work write:jira-work read:jira-user offline_access`; Google Drive
+  `drive.readonly` + `drive.file` (`drive.readonly` is the CASA-restricted one — an **Internal
+  Workspace** app avoids Google verification); GitHub `repo read:org`.
 - **Setup:** requires registered OAuth apps + `*_OAUTH_CLIENT_ID/SECRET` env vars.
+
+### J2a. Per-user SSO — connect your own account **[new — Phase 2]**
+When the admin enables `allow_user_connect` for a provider (§A8), a `Connection` is the
+**integration definition** (target config + an *optional* shared service token) and each user can
+attach their **own** OAuth credential to it — canopy then reads/writes **as that user**.
+- **UI:** `/connectors` shows "per-user SSO available" on eligible connections with a **Connect my
+  account** button (and "your account connected" once done).
+- **API:** `POST /api/v1/connectors/oauth/{connection_id}/connect-me` (any authenticated user; 403 if
+  the provider's `allow_user_connect` is off). The signed `state` carries the user id so the
+  (unauthenticated) callback binds the tokens to a **`UserConnection`** (the user's personal
+  credential, with **its own watermark**). `GET /connectors/connections` reports `allow_user_connect`
+  + `user_connected` per row.
+- **Resolution:** background reads (the reconciliation poll) use the shared service token; a
+  **user-triggered** read (Sync now) uses the caller's own credential when present (else shared);
+  **writes** (push-to-Jira §C10, export-to-Drive §S) use the caller's own credential for attribution,
+  falling back to the shared token. A narrow-access user's pull is **non-destructive** — sync is
+  upsert-only and each `UserConnection` keeps its own watermark, so it can't remove what the service
+  token populated or disturb the service cursor (`app/services/integration_policy.py`).
 
 ### J3. Sync from Jira
 - **UI:** on a Jira connection → **Sync now** (full sync). Imports epics→summary tasks and

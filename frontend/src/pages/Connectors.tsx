@@ -34,6 +34,14 @@ export default function Connectors() {
     window.location.href = authorize_url;
   }
 
+  // Per-user SSO: authorize the current user's own account against this integration.
+  async function connectMe(connectionId: number) {
+    const { authorize_url } = await api.post<{ authorize_url: string }>(
+      `/connectors/oauth/${connectionId}/connect-me`,
+    );
+    window.location.href = authorize_url;
+  }
+
   const create = useMutation({
     mutationFn: () => {
       let parsed: Record<string, unknown>;
@@ -153,6 +161,17 @@ export default function Connectors() {
               {c.watermark && (
                 <span className="ml-2 text-xs text-slate-400">synced ≥ {c.watermark}</span>
               )}
+              {c.allow_user_connect && (
+                <span
+                  className={`ml-2 rounded px-2 py-0.5 text-xs ${
+                    c.user_connected
+                      ? "bg-green-100 text-green-700"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  {c.user_connected ? "your account connected" : "per-user SSO available"}
+                </span>
+              )}
             </span>
             <span className="flex gap-2">
               <button
@@ -161,6 +180,14 @@ export default function Connectors() {
               >
                 {c.authorized ? "Reconnect" : "Connect"}
               </button>
+              {c.allow_user_connect && (
+                <button
+                  onClick={() => connectMe(c.id)}
+                  className="rounded border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  {c.user_connected ? "Reconnect my account" : "Connect my account"}
+                </button>
+              )}
               <button
                 onClick={() => sync.mutate(c.id)}
                 disabled={sync.isPending}

@@ -244,6 +244,10 @@ export interface Connection {
   watermark: string | null;
   active: boolean;
   authorized: boolean;
+  // Per-user SSO (Phase 2): whether this provider permits per-user connect (admin policy),
+  // and whether the current user has connected their own account to this connection.
+  allow_user_connect: boolean;
+  user_connected: boolean;
 }
 
 // Per-provider integration policy (admin-chosen). See backend app/services/integration_policy.py.

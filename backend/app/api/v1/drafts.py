@@ -152,12 +152,18 @@ async def delete_draft_task(session: SessionDep, _: PlannerWriter, task_id: int)
 
 @router.post("/draft-plans/{plan_id}/push-to-jira", response_model=DraftPushResult)
 async def push_draft_to_jira(
-    session: SessionDep, _: PlannerWriter, __: HumanOnly, plan_id: int, payload: DraftPushRequest
+    session: SessionDep,
+    user: PlannerWriter,
+    __: HumanOnly,
+    plan_id: int,
+    payload: DraftPushRequest,
 ) -> DraftPushResult:
     write = await integration_policy.resolve_write(session, Provider.jira)
     if not write.allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=write.reason)
     try:
-        return await draft_sync.push_plan_to_jira(session, plan_id, payload.connection_id)
+        return await draft_sync.push_plan_to_jira(
+            session, plan_id, payload.connection_id, user.id
+        )
     except draft_sync.DraftPushError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

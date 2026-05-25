@@ -14,7 +14,17 @@ from app.models.integration import Connection
 
 def test_state_roundtrip():
     state = oauth.create_state(42)
-    assert oauth.verify_state(state) == 42
+    decoded = oauth.verify_state(state)
+    assert decoded is not None
+    assert decoded.connection_id == 42
+    assert decoded.user_id is None
+
+
+def test_state_roundtrip_with_user():
+    decoded = oauth.verify_state(oauth.create_state(42, user_id=7))
+    assert decoded is not None
+    assert decoded.connection_id == 42
+    assert decoded.user_id == 7
 
 
 def test_state_rejects_tampered_token():

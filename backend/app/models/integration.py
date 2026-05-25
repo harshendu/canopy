@@ -46,6 +46,32 @@ class Connection(TimestampMixin, table=True):
         return self.encrypted_token is not None
 
 
+class UserConnection(TimestampMixin, table=True):
+    """A user's personal OAuth credential attached to a shared `Connection` (the integration
+    definition). canopy acts **as the user** with this token; the target config (Jira site/
+    project, repo, Drive) comes from the parent `Connection`. Each user has at most one
+    credential per connection, with **its own watermark** so a narrow-access pull can't disturb
+    the service connection's incremental cursor or remove what the service token populated.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("connection_id", "user_id", name="uq_user_connection"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    connection_id: int = Field(foreign_key="connection.id", index=True)
+    user_id: int = Field(foreign_key="app_user.id", index=True)
+    encrypted_token: str | None = None
+    encrypted_refresh_token: str | None = None
+    token_expires_at: datetime | None = None
+    watermark: str | None = None
+    active: bool = True
+
+    @property
+    def authorized(self) -> bool:
+        return self.encrypted_token is not None
+
+
 class ExternalRef(TimestampMixin, table=True):
     """Maps an external object (Jira issue, GitHub PR, Drive file) to a canopy entity.
 

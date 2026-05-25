@@ -528,6 +528,10 @@ class ConnectionRead(BaseModel):
     watermark: str | None
     active: bool
     authorized: bool
+    # Per-user SSO (Phase 2): whether this provider permits per-user connect (admin policy),
+    # and whether the current caller has connected their own account to this connection.
+    allow_user_connect: bool = False
+    user_connected: bool = False
 
 
 class PullRequestRead(BaseModel):
