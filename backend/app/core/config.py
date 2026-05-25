@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER_EMAIL: str | None = None
     FIRST_SUPERUSER_PASSWORD: str | None = None
 
+    # Demo / seeded-data mode (local & dev only — never enable in production). When true,
+    # the admin "Demo data" controls and seed/reset endpoints are unlocked, and connectors
+    # whose config carries `demo: true` are served by an in-process HTTP mock so the whole
+    # UI — including "Sync from Jira" / GitHub / Drive reads — works fully offline.
+    DEMO_MODE: bool = False
+
     # NoDecode: pydantic-settings JSON-decodes list/dict fields from env *before* validators
     # run; this keeps the raw string so _split_origins can parse the comma-separated form
     # shipped in .env.example.

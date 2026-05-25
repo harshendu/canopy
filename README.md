@@ -54,6 +54,15 @@ docker compose up --build
 - Web: http://localhost:5173
 - Migrations (`alembic upgrade head`) and superuser seeding run automatically on start.
 
+### Demo mode (explore everything with one click)
+
+Set `DEMO_MODE=true` in `.env` (local/dev only — never in production) and restart. Then sign in as
+the admin and open **Demo data** in the sidebar (`/admin/demo`) to **load a full seeded dataset** —
+users across every role, multiple initiatives → projects → scheduled tasks, a cross-functional team,
+architecture/ADRs, risk, specs, outcomes, and more — or reset back to empty. The login screen also
+lists clickable demo accounts (shared password `canopy-demo`), and Jira/GitHub/Drive connectors are
+served by an offline mock so every flow works without real credentials. See `docs/USER_FLOWS.md` §Z.
+
 ## Production deployment
 
 In production the backend runs against **PostgreSQL** or **MySQL/MariaDB** (SQLite is for

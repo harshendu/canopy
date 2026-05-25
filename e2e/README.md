@@ -23,10 +23,16 @@ e2e/
     test_navigation.py   sidebar routes to every page (§A,B,F,G,J,M)
     test_projects.py     create a project, open the tabbed cockpit (§B2, §B3)
     test_planning.py     add tasks, run CPM, tab rendering (§C1, §C3, §B3)
+    test_demo_seed.py    load the demo dataset + browse it (§Z; opt-in, E2E_DEMO=1)
 ```
 
 `.venv/`, `.drivers/`, and the throwaway `.e2e.db` are git-ignored — they're
 local machine state, not source.
+
+`run_e2e.sh` boots the stack with `DEMO_MODE=true`, so the demo seed/reset endpoints and the
+offline-mocked connectors are available. `test_demo_seed.py` is **opt-in** (`E2E_DEMO=1`) because
+it reseeds — wiping the data other specs rely on — so run it on its own:
+`E2E_DEMO=1 e2e/run_e2e.sh tests/test_demo_seed.py`.
 
 ## Running
 

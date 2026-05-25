@@ -179,6 +179,11 @@ def api_create_adr(base_url: str, token: str, project_id: int, title: str, **ext
     return api_post(base_url, token, "/architecture/adrs", {"project_id": project_id, "title": title, **extra})
 
 
+def api_reseed_demo(base_url: str, token: str) -> dict[str, Any]:
+    """Wipe + reload the full demo dataset (requires DEMO_MODE and an admin token)."""
+    return api_post(base_url, token, "/admin/demo/reseed", {})
+
+
 def open_project_tab(driver: WebDriver, base_url: str, project_id: int, tab_label: str) -> None:
     """Open a project's cockpit and click a tab."""
     driver.get(f"{base_url}/projects/{project_id}")

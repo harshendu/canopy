@@ -75,6 +75,19 @@ async def require_admin(user: CurrentUser) -> User:
 AdminUser = Annotated[User, Depends(require_admin)]
 
 
+async def require_demo_mode() -> None:
+    """Gate the destructive demo seed/reset actions: they only exist when ``DEMO_MODE`` is on
+    (a local/dev-only flag), so they can never wipe a production database."""
+    if not settings.DEMO_MODE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Demo mode is disabled (set DEMO_MODE=true to enable seed/reset).",
+        )
+
+
+DemoModeGuard = Annotated[None, Depends(require_demo_mode)]
+
+
 def _effective_role(role: UserRole) -> UserRole:
     """Legacy `member` accounts predate the role split; treat them as `architect`."""
     return UserRole.architect if role == UserRole.member else role
