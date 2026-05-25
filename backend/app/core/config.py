@@ -1,12 +1,26 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+# config.py lives at backend/app/core/, so parents[2] is backend/ and its parent is the
+# repo root (where .env.example lives). Anchoring to these absolute paths means the
+# backend finds .env whether it's launched from the repo root or from backend/.
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+_REPO_ROOT = _BACKEND_DIR.parent
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        # Look for .env in both the repo root and backend/ (later wins). Real environment
+        # variables still take precedence over both, so Docker's env_file injection and
+        # explicit `export`s are unaffected.
+        env_file=(_REPO_ROOT / ".env", _BACKEND_DIR / ".env"),
+        extra="ignore",
+        case_sensitive=False,
+    )
 
     PROJECT_NAME: str = "Canopy"
     API_V1_PREFIX: str = "/api/v1"
