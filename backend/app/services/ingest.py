@@ -140,6 +140,45 @@ async def ingest_issues(
     return result
 
 
+async def upsert_pull_request(
+    session: AsyncSession,
+    *,
+    repo: str,
+    number: int,
+    title: str,
+    state: str,
+    url: str | None = None,
+    author: str | None = None,
+    updated: str | None = None,
+) -> str:
+    """Idempotently upsert one PR cache row (keyed on repo+number); returns created|updated.
+    Shared by the GitHub webhook and MCP/file ingest so the cache write can't drift."""
+    existing = (
+        await session.execute(
+            select(PullRequest).where(PullRequest.repo == repo, PullRequest.number == number)
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        session.add(
+            PullRequest(
+                repo=repo,
+                number=number,
+                title=title,
+                state=state,
+                url=url,
+                author=author,
+                remote_updated=updated,
+            )
+        )
+        return "created"
+    existing.title = title
+    existing.state = state
+    existing.url = url
+    existing.author = author
+    existing.remote_updated = updated
+    return "updated"
+
+
 async def ingest_pull_requests(
     session: AsyncSession, connection: Connection, prs: list[IngestPullRequest]
 ) -> SyncResult:
@@ -153,32 +192,16 @@ async def ingest_pull_requests(
 
     result = SyncResult(provider="github")
     for pr in prs:
-        existing = (
-            await session.execute(
-                select(PullRequest).where(
-                    PullRequest.repo == full_name, PullRequest.number == pr.number
-                )
-            )
-        ).scalar_one_or_none()
-        if existing is None:
-            session.add(
-                PullRequest(
-                    repo=full_name,
-                    number=pr.number,
-                    title=pr.title,
-                    state=pr.state,
-                    url=pr.url,
-                    author=pr.author,
-                    remote_updated=pr.updated,
-                )
-            )
-            result.created += 1
-        else:
-            existing.title = pr.title
-            existing.state = pr.state
-            existing.url = pr.url
-            existing.author = pr.author
-            existing.remote_updated = pr.updated
-            result.updated += 1
+        action = await upsert_pull_request(
+            session,
+            repo=full_name,
+            number=pr.number,
+            title=pr.title,
+            state=pr.state,
+            url=pr.url,
+            author=pr.author,
+            updated=pr.updated,
+        )
+        setattr(result, action, getattr(result, action) + 1)
     await session.commit()
     return result
