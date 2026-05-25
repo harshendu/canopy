@@ -1366,18 +1366,28 @@ the substrate for browser e2e tests (the seed is extended as features grow). See
 `backend/app/services/seed/` (`catalog.py` = declarative data, `loader.py` = the build/reset engine).
 
 ### Z1. What the seed contains
-Users across **every role** (admin / architect / engineering_manager / engineer / viewer / member)
-and **every persona/function** (engineering / product / design / architecture / management /
-leadership); a cross-functional **team** with skill tags, timezones, committed hours and
-**availability** (PTO / ramp-up / on-call); **2 initiatives** with **5 projects** (one standalone),
-each a scheduled **WBS** (phases → tasks, dependencies, milestones, holidays) run through the real
-CPM planner, with a **cross-project hand-off** inside one initiative, a **baseline + variance** on the
-flagship, and **back-dated status history / activity / risk snapshots** so the time-series views
-(burndown, Monte-Carlo forecast, DORA + flow, risk timeline) show real trends. The flagship project
-also carries an architecture map + **ADRs** (accepted / in-discussion with a review thread / deferred
-/ proposed) + a **fitness function** + **drift** events, **specs** + criteria, **risks** (RAID) +
-mitigations, **blockers**, **outcomes**, **doc references**, a **retro**, a **draft plan**, a
-**scenario**, and three demo **connections**.
+A single, recognizable narrative — **Helix**, an enterprise hybrid-platform vendor whose product
+splits into a vendor-owned **control plane** (multi-tenant SaaS) and a customer-deployed **data
+plane** (the intelligence suite that keeps customer data in the customer's own VPC), plus a
+**field/solutions** org that does the complex customer deployments. Three initiatives mirror that
+org (**Control Plane Scale-Out**, **Data Plane v2 — BYOC**, **Field Delivery & Onboarding**) over
+**8 fully-populated projects**.
+
+It includes users across **every role** (admin / architect / engineering_manager / engineer /
+viewer / member) and **every persona/function** (engineering / product / design / architecture /
+management / leadership); a cross-functional **team** (~13 members) with skill tags, timezones,
+committed hours and **availability** (PTO / ramp-up / on-call / on-site). Each project is a scheduled
+**WBS** (phases → tasks, dependencies, milestones, holidays) run through the real CPM planner, with
+**cross-project hand-offs** inside initiatives (so the cross-project critical path is real), a
+**baseline + variance** on the flagship, and **back-dated status history / activity / risk
+snapshots** so every time-series view (burndown, Monte-Carlo forecast, DORA + flow, risk timeline)
+shows real trends. **Rich content is on every project**: an architecture map, **ADRs** (accepted /
+in-discussion with a review thread / proposed / deferred — populating all four **decision-queue**
+buckets, including an overdue one), **fitness functions** + **drift** events, **specs** + criteria,
+**risks** (RAID, project + initiative scope), **blockers**, **outcomes**, **doc references**, **retros**
+(including an **incident postmortem**), **draft plans**, two **scenarios**, three demo **connections**,
+and project state that makes the **alerts** digest fire (deadline miss, overdue milestone,
+over-allocation, overdue risk, open blocker).
 
 ### Z2. Reset / reload from the UI *(admin, demo mode)*
 - **UI:** sidebar **"Demo data"** (admin only) → **`/admin/demo`**. Shows current row counts + the

@@ -38,7 +38,7 @@ def is_demo_connection(connector: Connector) -> bool:
 # --------------------------------------------------------------------------- #
 # Jira fixtures + handler
 # --------------------------------------------------------------------------- #
-_JIRA_PROJECT_KEY = "PLAT"
+_JIRA_PROJECT_KEY = "HELIX"
 
 
 def _jira_issue(
@@ -50,7 +50,7 @@ def _jira_issue(
         "issuetype": {"name": issuetype},
         "updated": _UPDATED,
         "customfield_10016": 5,
-        "customfield_10042": "https://demo.atlassian.net/wiki/spaces/PLAT/design",
+        "customfield_10042": "https://helix.atlassian.net/wiki/spaces/DP/design",
     }
     if parent_id is not None:
         fields["parent"] = {"id": parent_id, "key": f"{_JIRA_PROJECT_KEY}-100"}
@@ -58,13 +58,13 @@ def _jira_issue(
 
 
 _JIRA_EPIC = _jira_issue(
-    "910000", "PLAT-100", "Observability & SLOs", "Epic", "In Progress", None
+    "910000", "HELIX-100", "Data-plane telemetry & SLOs", "Epic", "In Progress", None
 )
 _JIRA_STORIES = [
-    _jira_issue("910001", "PLAT-101", "Emit structured request logs", "Story", "Done", "910000"),
-    _jira_issue("910002", "PLAT-102", "Dashboards for the golden signals", "Story",
+    _jira_issue("910001", "HELIX-101", "Emit enclave audit logs", "Story", "Done", "910000"),
+    _jira_issue("910002", "HELIX-102", "Egress metering dashboards", "Story",
                 "In Progress", "910000"),
-    _jira_issue("910003", "PLAT-103", "Define and wire SLO alerts", "Story", "To Do", "910000"),
+    _jira_issue("910003", "HELIX-103", "Define and wire SLO alerts", "Story", "To Do", "910000"),
 ]
 _JIRA_ISSUES = [_JIRA_EPIC, *_JIRA_STORIES]
 _JIRA_BY_KEY = {i["key"]: i for i in _JIRA_ISSUES}
@@ -123,7 +123,7 @@ def _handle_jira(request: httpx.Request) -> httpx.Response:
         if rest.endswith("/changelog"):
             return httpx.Response(200, json=_JIRA_CHANGELOG, request=request)
         if rest.endswith("/remotelink"):
-            link = {"object": {"url": "https://demo.atlassian.net/runbook", "title": "Runbook"}}
+            link = {"object": {"url": "https://helix.atlassian.net/runbook", "title": "Runbook"}}
             return httpx.Response(200, json=[link], request=request)
         issue = _JIRA_BY_KEY.get(key)
         if issue is None:
@@ -150,31 +150,31 @@ def _handle_jira(request: httpx.Request) -> httpx.Response:
 # --------------------------------------------------------------------------- #
 # GitHub fixtures + handler
 # --------------------------------------------------------------------------- #
-_GH_ADR_MARKDOWN = """# ADR-0007: Adopt OpenTelemetry for tracing
+_GH_ADR_MARKDOWN = """# ADR-0007: Process data only inside the customer VPC
 
 ## Status
 accepted
 
 ## Context
-We need vendor-neutral distributed tracing across the gateway and downstream services.
+Customers require that raw data never leaves their environment (BYOC data residency).
 
 ## Decision
-Standardize on OpenTelemetry SDKs with an OTLP collector.
+Processing runs in-VPC in the data plane; only enclave-approved aggregates leave the tenant.
 
 ## Consequences
-All services emit OTLP; dashboards read from a single backend.
+Strong data-residency guarantees; harder deploys and debugging.
 """
 
 _GH_PULLS = [
-    {"number": 128, "title": "Add OTLP exporter to gateway", "html_url":
-     "https://github.com/canopy-co/platform/pull/128", "state": "open", "user": {"login":
-     "sofiagarcia"}, "updated_at": "2026-05-02T10:00:00Z"},
-    {"number": 126, "title": "Golden-signal dashboards", "html_url":
-     "https://github.com/canopy-co/platform/pull/126", "state": "open", "user": {"login":
-     "tombecker"}, "updated_at": "2026-05-01T09:00:00Z"},
-    {"number": 120, "title": "Structured request logging", "html_url":
-     "https://github.com/canopy-co/platform/pull/120", "state": "closed", "user": {"login":
-     "sofiagarcia"}, "updated_at": "2026-04-22T16:00:00Z"},
+    {"number": 318, "title": "Wire secure gateway into engine", "html_url":
+     "https://github.com/helix-io/data-plane/pull/318", "state": "open", "user": {"login":
+     "tombecker"}, "updated_at": "2026-05-02T10:00:00Z"},
+    {"number": 316, "title": "Egress allow-list enforcement", "html_url":
+     "https://github.com/helix-io/data-plane/pull/316", "state": "open", "user": {"login":
+     "yukitanaka"}, "updated_at": "2026-05-01T09:00:00Z"},
+    {"number": 309, "title": "Streaming pipeline core", "html_url":
+     "https://github.com/helix-io/data-plane/pull/309", "state": "closed", "user": {"login":
+     "tombecker"}, "updated_at": "2026-04-22T16:00:00Z"},
 ]
 
 
@@ -199,7 +199,7 @@ def _handle_github(request: httpx.Request) -> httpx.Response:
     # GET /repos/{owner}/{repo} — connectivity check for full_sync.
     return httpx.Response(
         200,
-        json={"full_name": "canopy-co/platform", "default_branch": "main", "private": False},
+        json={"full_name": "helix-io/data-plane", "default_branch": "main", "private": False},
         request=request,
     )
 
@@ -208,12 +208,12 @@ def _handle_github(request: httpx.Request) -> httpx.Response:
 # Google Drive fixtures + handler
 # --------------------------------------------------------------------------- #
 _DRIVE_FILES = [
-    {"id": "doc-prd-001", "name": "Platform 2026 — PRD", "modifiedTime":
+    {"id": "doc-prd-001", "name": "Helix BYOC — PRD", "modifiedTime":
      "2026-03-01T12:00:00Z"},
-    {"id": "doc-design-002", "name": "Observability — Design", "modifiedTime":
+    {"id": "doc-arch-002", "name": "Data Plane — Reference Architecture", "modifiedTime":
      "2026-03-15T12:00:00Z"},
 ]
-_DRIVE_DOC = "# Observability — Design\n\nGoals, golden signals, and the SLO alerting plan.\n"
+_DRIVE_DOC = "# Data Plane — Design\n\nBYOC architecture, the enclave, and the zero-egress plan.\n"
 
 
 def _handle_gdrive(request: httpx.Request) -> httpx.Response:

@@ -32,18 +32,18 @@ def _hdr(token: str) -> dict:
 async def test_seed_loader_builds_a_full_coherent_dataset(db_session):
     counts = await seed.load_seed_data(db_session, set())
 
-    assert counts["projects"] >= 5
-    assert counts["initiatives"] == 2
+    assert counts["projects"] >= 8
+    assert counts["initiatives"] == 3
     assert counts["users"] >= 6  # one login per role, spanning every persona
-    assert counts["tasks"] > 20
+    assert counts["tasks"] > 40
     assert counts["dependencies"] > 0
-    assert counts["decisions"] >= 5
-    assert counts["components"] >= 5
-    assert counts["risks"] >= 3
-    assert counts["specs"] >= 1
-    assert counts["outcomes"] >= 3
-    assert counts["blockers"] >= 1
-    assert counts["scenarios"] == 1
+    assert counts["decisions"] >= 10  # ADRs spread across every project
+    assert counts["components"] >= 15
+    assert counts["risks"] >= 8  # project + initiative scope
+    assert counts["specs"] >= 8  # every project has a spec
+    assert counts["outcomes"] >= 8
+    assert counts["blockers"] >= 2
+    assert counts["scenarios"] >= 2
     assert counts["status_history"] > 0
     assert counts["connections"] == 3
 

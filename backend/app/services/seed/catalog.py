@@ -1,8 +1,18 @@
 """Declarative demo dataset (lives in the repo; extend it as features grow).
 
-Pure data + small frozen dataclasses — no DB, no imports from the loader — so it is trivial to
-review and to reuse (e.g. e2e tests asserting on the seeded fixtures). The loader
-(`app/services/seed/loader.py`) turns this into rows.
+The narrative — **Helix**, an enterprise hybrid platform vendor. Helix sells a *data
+intelligence* product with a deliberately split architecture:
+
+  * a vendor-owned, multi-tenant **control plane** (orchestration, a model/policy registry,
+    an admin console) that Helix runs as SaaS, and
+  * a customer-deployed **data plane** — the "intelligence suite" that runs inside the
+    customer's own cloud/VPC so their data never leaves their environment — plus the
+    **field/solutions** org that does the (complex) customer deployments and the domain
+    implementation Helix sells alongside the software.
+
+Three initiatives mirror that org (Control Plane / Data Plane / Field Delivery), each with
+fully-populated projects so every UI surface has real content. Pure data + frozen dataclasses
+(no DB, no logic) so it's trivial to review and extend; the loader turns it into rows.
 """
 
 from __future__ import annotations
@@ -15,6 +25,9 @@ from app.models.base import UserFunction, UserRole
 DEMO_PASSWORD = "canopy-demo"
 
 
+# --------------------------------------------------------------------------- #
+# People
+# --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class DemoUser:
     email: str
@@ -44,6 +57,9 @@ class DemoAvailability:
     note: str
 
 
+# --------------------------------------------------------------------------- #
+# Work breakdown
+# --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class TaskSpec:
     name: str
@@ -54,7 +70,7 @@ class TaskSpec:
     tags: tuple[str, ...] = ()
     estimate: tuple[int, int, int] | None = None  # PERT optimistic/likely/pessimistic
     milestone: bool = False
-    deadline_weeks: int | None = None
+    deadline_weeks: int | None = None  # a hard deadline (weeks from today; < end = a miss)
 
 
 @dataclass(frozen=True)
@@ -66,10 +82,203 @@ class PhaseSpec:
 @dataclass(frozen=True)
 class MilestoneSpec:
     name: str
-    target_weeks: int
-    status: str = "planned"
+    target_weeks: int  # weeks from today (negative = already due → overdue alert)
+    status: str = "planned"  # planned | at_risk | hit | missed
 
 
+# --------------------------------------------------------------------------- #
+# Architecture + decisions
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class ComponentSpec:
+    name: str
+    kind: str  # service | module | datastore | external | ui
+    tier: str  # presentation | business | data | infra
+    criticality: str  # low | med | high
+    owner: str | None = None
+
+
+@dataclass(frozen=True)
+class LinkSpec:
+    source: str
+    target: str
+    kind: str = "depends_on"  # depends_on | calls | publishes_to | reads_from
+
+
+@dataclass(frozen=True)
+class BindingSpec:
+    component: str
+    path_glob: str
+    module_prefix: str | None = None
+
+
+@dataclass(frozen=True)
+class FitnessSpec:
+    kind: str  # forbid | require
+    source: str
+    target: str
+    description: str
+
+
+@dataclass(frozen=True)
+class ADRCommentSpec:
+    author: str
+    body: str
+    kind: str = "comment"  # comment | approve | request_changes | reject
+
+
+@dataclass(frozen=True)
+class ADRSpec:
+    title: str
+    status: str  # proposed | under_discussion | accepted | rejected | superseded | deferred
+    reversibility: str | None = None  # one_way | two_way
+    owner: str | None = None
+    proposer: str | None = None
+    context: str | None = None
+    decision: str | None = None
+    consequences: str | None = None
+    alternatives: tuple[str, ...] = ()
+    components: tuple[str, ...] = ()
+    stakeholders: tuple[str, ...] = ()
+    comments: tuple[ADRCommentSpec, ...] = ()
+    fitness: FitnessSpec | None = None
+    created_days_ago: int = 2
+    decide_by_weeks: int | None = None  # for `deferred` (negative = overdue in the queue)
+
+
+@dataclass(frozen=True)
+class DriftSpec:
+    kind: str  # unexpected_dependency | dead_dependency | unimplemented_adr | implicit_decision
+    summary: str
+    components: tuple[str, ...] = ()
+    detail: str | None = None
+    suspected_cause: str | None = None
+    status: str = "open"  # open | accepted | rejected | false_positive
+
+
+# --------------------------------------------------------------------------- #
+# Specs / risk / outcomes / docs / blockers / retro / draft / activity
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class CriterionSpec:
+    text: str
+    status: str = "open"  # open | met | unmet | waived
+    verification: str | None = None
+
+
+@dataclass(frozen=True)
+class SpecSpec:
+    title: str
+    problem: str
+    status: str  # draft | approved | in_progress | verified | archived
+    owner: str | None = None
+    context: str | None = None
+    out_of_scope: str | None = None
+    adr_title: str | None = None  # link to an ADR in the same project
+    source_url: str | None = None
+    criteria: tuple[CriterionSpec, ...] = ()
+    task_names: tuple[str, ...] = ()  # tasks that implement the spec
+
+
+@dataclass(frozen=True)
+class RiskSpec:
+    title: str
+    category: str  # schedule | scope | technical | resource | external | quality | security
+    probability: str  # low | medium | high
+    impact: str
+    status: str  # open | mitigating | accepted | resolved | occurred
+    owner: str | None = None
+    mitigation: str | None = None
+    contingency: str | None = None
+    target_weeks: int | None = None  # negative = overdue resolution (fires an alert)
+
+
+@dataclass(frozen=True)
+class MitigationSpec:
+    indicator_key: str
+    note: str
+    owner: str | None = None
+    resolved: bool = False
+    check_in_weeks: int | None = None
+
+
+@dataclass(frozen=True)
+class OutcomeSpec:
+    statement: str
+    metric: str
+    unit: str
+    baseline: float
+    target: float
+    current: float
+    status: str  # pending | on_track | at_risk | validated | invalidated
+    owner: str | None = None
+    target_weeks: int = 12
+
+
+@dataclass(frozen=True)
+class DocSpec:
+    kind: str  # prd | design | tech_design | architecture | release | qa | runbook | other
+    title: str
+    url: str
+    source: str = "manual"  # jira_epic | manual | repo | drive
+    task_name: str | None = None  # if set, attach at task scope (else project/initiative)
+
+
+@dataclass(frozen=True)
+class BlockerSpec:
+    task_name: str
+    reason: str
+    category: str  # dependency | resource | decision | external | technical
+    severity: str  # low | medium | high | critical
+    owner: str | None = None
+    raised_by: str | None = None
+    resolved: bool = False
+    created_days_ago: int = 6
+    needed_weeks: int | None = None
+
+
+@dataclass(frozen=True)
+class RetroCommentSpec:
+    author: str
+    body: str
+
+
+@dataclass(frozen=True)
+class RetroSpec:
+    title: str
+    kind: str = "project_retro"  # project_retro | incident_postmortem
+    body: str = ""
+    components: tuple[str, ...] = ()
+    comments: tuple[RetroCommentSpec, ...] = ()
+
+
+@dataclass(frozen=True)
+class DraftTaskSpec:
+    name: str
+    type: str = "task"  # task | summary | milestone
+    estimate_days: int = 1
+    story_points: float | None = None
+
+
+@dataclass(frozen=True)
+class DraftSpec:
+    title: str
+    description: str
+    epic: str
+    tasks: tuple[DraftTaskSpec, ...] = ()
+
+
+@dataclass(frozen=True)
+class IncidentSpec:
+    summary: str
+    opened_days_ago: int
+    recovered_hours: int = 6
+    component: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Projects + initiatives + scenarios
+# --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class ProjectSpec:
     key: str
@@ -84,6 +293,21 @@ class ProjectSpec:
     tags: tuple[str, ...]
     phases: tuple[PhaseSpec, ...]
     milestones: tuple[MilestoneSpec, ...] = ()
+    components: tuple[ComponentSpec, ...] = ()
+    component_links: tuple[LinkSpec, ...] = ()
+    bindings: tuple[BindingSpec, ...] = ()
+    adrs: tuple[ADRSpec, ...] = ()
+    drift: tuple[DriftSpec, ...] = ()
+    specs: tuple[SpecSpec, ...] = ()
+    risks: tuple[RiskSpec, ...] = ()
+    mitigations: tuple[MitigationSpec, ...] = ()
+    outcomes: tuple[OutcomeSpec, ...] = ()
+    docs: tuple[DocSpec, ...] = ()
+    blockers: tuple[BlockerSpec, ...] = ()
+    retro: RetroSpec | None = None
+    draft: DraftSpec | None = None
+    incidents: tuple[IncidentSpec, ...] = ()
+    deploy_weeks: int = 8  # weekly deploy events (DORA + activity feed)
 
 
 @dataclass(frozen=True)
@@ -96,195 +320,19 @@ class InitiativeSpec:
     tags: tuple[str, ...]
     health: str | None
     status_note: str
+    outcomes: tuple[OutcomeSpec, ...] = ()
+    risks: tuple[RiskSpec, ...] = ()
+    docs: tuple[DocSpec, ...] = ()
 
 
-# --------------------------------------------------------------------------- #
-# People — one user per role, spanning every cross-functional persona.
-# --------------------------------------------------------------------------- #
-USERS: tuple[DemoUser, ...] = (
-    DemoUser("admin@canopy.dev", "Dana Reed", UserRole.admin, UserFunction.management),
-    DemoUser("architect@canopy.dev", "Aanya Sharma", UserRole.architect,
-             UserFunction.architecture),
-    DemoUser("em@canopy.dev", "Marcus Lee", UserRole.engineering_manager,
-             UserFunction.management),
-    DemoUser("staff@canopy.dev", "Ravi Iyer", UserRole.architect, UserFunction.engineering),
-    DemoUser("sofia@canopy.dev", "Sofia Garcia", UserRole.engineer, UserFunction.engineering),
-    DemoUser("tom@canopy.dev", "Tom Becker", UserRole.engineer, UserFunction.engineering),
-    DemoUser("yuki@canopy.dev", "Yuki Tanaka", UserRole.engineer, UserFunction.engineering),
-    DemoUser("pm@canopy.dev", "Priya Nair", UserRole.viewer, UserFunction.product),
-    DemoUser("design@canopy.dev", "Lena Brooks", UserRole.viewer, UserFunction.design),
-    DemoUser("exec@canopy.dev", "Olivia Chen", UserRole.viewer, UserFunction.leadership),
-    DemoUser("member@canopy.dev", "Sam Carter", UserRole.member, UserFunction.engineering),
-)
-
-TEAM_ROLES: tuple[str, ...] = (
-    "Architecture", "Management", "Backend", "Frontend", "Platform", "QA", "Data"
-)
-
-ENGINEERS: tuple[DemoEngineer, ...] = (
-    DemoEngineer("Aanya Sharma", "Principal Architect", ("architecture", "backend", "security"),
-                 "America/New_York", 32, "aanyasharma", "Architecture", "architect@canopy.dev"),
-    DemoEngineer("Marcus Lee", "Engineering Manager", ("management", "backend"),
-                 "America/Los_Angeles", 20, "marcuslee", "Management", "em@canopy.dev"),
-    DemoEngineer("Ravi Iyer", "Staff Engineer", ("backend", "distributed-systems", "security"),
-                 "Asia/Kolkata", 36, "raviiyer", "Architecture", "staff@canopy.dev"),
-    DemoEngineer("Sofia Garcia", "Senior Backend Engineer", ("backend", "python", "infra"),
-                 "Europe/Madrid", 40, "sofiagarcia", "Backend", "sofia@canopy.dev"),
-    DemoEngineer("Tom Becker", "Frontend Engineer", ("frontend", "react", "typescript"),
-                 "Europe/Berlin", 40, "tombecker", "Frontend", "tom@canopy.dev"),
-    DemoEngineer("Yuki Tanaka", "Full-stack Engineer", ("backend", "frontend", "data"),
-                 "Asia/Tokyo", 40, "yukitanaka", "Backend", "yuki@canopy.dev"),
-    DemoEngineer("Noah Williams", "Site Reliability Engineer",
-                 ("infra", "kubernetes", "observability"), "America/Chicago", 40, "noahwilliams",
-                 "Platform", None),
-    DemoEngineer("Mei Lin", "QA Engineer", ("qa", "automation", "e2e"), "Asia/Singapore", 30,
-                 "meilin", "QA", None),
-    DemoEngineer("Diego Santos", "Data Engineer", ("data", "etl", "python"),
-                 "America/Sao_Paulo", 40, "diegosantos", "Data", None),
-)
-
-AVAILABILITY: tuple[DemoAvailability, ...] = (
-    DemoAvailability("Sofia Garcia", 2, 4, 0.0, "Vacation"),
-    DemoAvailability("Tom Becker", -1, 1, 0.5, "Ramping up on the codebase"),
-    DemoAvailability("Yuki Tanaka", 1, 2, 0.5, "Conference"),
-    DemoAvailability("Marcus Lee", -4, 12, 0.5, "Split between management and delivery"),
-    DemoAvailability("Noah Williams", 3, 4, 0.7, "On-call rotation"),
-)
-
-
-# --------------------------------------------------------------------------- #
-# Initiatives + projects (a scheduled WBS each).
-# --------------------------------------------------------------------------- #
-INITIATIVES: tuple[InitiativeSpec, ...] = (
-    InitiativeSpec(
-        "PLATFORM-2026", "Platform Modernization 2026",
-        "Cut p99 latency 40% and halve incident MTTR by GA.", 24, "Aanya Sharma",
-        ("platform", "reliability"), "on_track",
-        "Gateway and auth tracking to plan; observability work is the current focus.",
-    ),
-    InitiativeSpec(
-        "GROWTH-2026", "Growth & Activation",
-        "Lift new-user activation from 38% to 55% within two quarters.", 16, "Marcus Lee",
-        ("growth", "activation"), "at_risk",
-        "Onboarding redesign is slipping on frontend capacity; billing is on track.",
-    ),
-)
-
-PROJECTS: tuple[ProjectSpec, ...] = (
-    ProjectSpec(
-        "APIGW", "API Gateway", "A unified, observable edge gateway for all services.",
-        "PLATFORM-2026", 8, 10, True, "on_track",
-        "Routing shipped; auth integration is the critical path.",
-        ("backend", "edge", "reliability"),
-        (
-            PhaseSpec("Discovery & Design", (
-                TaskSpec("Gateway requirements", 3, "Done", 49, "Aanya Sharma", ("design",)),
-                TaskSpec("Choose proxy tech (ADR)", 2, "Done", 45, "Ravi Iyer",
-                         ("architecture",)),
-                TaskSpec("API contract spec", 4, "Done", 38, "Sofia Garcia", ("design",),
-                         (3, 4, 7)),
-            )),
-            PhaseSpec("Build", (
-                TaskSpec("Routing & middleware", 6, "Done", 28, "Sofia Garcia", ("backend",),
-                         (4, 6, 9)),
-                TaskSpec("AuthN/AuthZ integration", 5, "In Progress", 35, "Ravi Iyer",
-                         ("backend", "security"), (3, 5, 9)),
-                TaskSpec("Rate limiting", 4, "In Progress", 9, "Yuki Tanaka", ("backend",)),
-                TaskSpec("Observability hooks", 3, "To Do", 0, "Noah Williams",
-                         ("observability",)),
-            )),
-            PhaseSpec("Harden & Launch", (
-                TaskSpec("Load & soak testing", 5, "To Do", 0, "Mei Lin", ("qa",)),
-                TaskSpec("Runbook & dashboards", 3, "To Do", 0, "Noah Williams", ("infra",)),
-                TaskSpec("GA cutover", 0, "To Do", 0, None, (), None, True, 10),
-            )),
-        ),
-        (
-            MilestoneSpec("Design sign-off", 1, "hit"),
-            MilestoneSpec("Feature complete", 6),
-            MilestoneSpec("GA", 10),
-        ),
-    ),
-    ProjectSpec(
-        "AUTH", "Auth Service", "OIDC identity, sessions, MFA and recovery.",
-        "PLATFORM-2026", 6, 8, True, "on_track",
-        "OIDC integration underway; MFA and recovery queued.",
-        ("backend", "security"),
-        (
-            PhaseSpec("Design", (
-                TaskSpec("Token model ADR", 2, "Done", 30, "Ravi Iyer", ("architecture",)),
-                TaskSpec("Session storage spike", 3, "Done", 21, "Sofia Garcia", ("backend",)),
-            )),
-            PhaseSpec("Build", (
-                TaskSpec("OIDC provider integration", 5, "In Progress", 12, "Sofia Garcia",
-                         ("backend", "security"), (4, 5, 8)),
-                TaskSpec("MFA enrollment", 4, "To Do", 0, "Yuki Tanaka", ("backend",)),
-                TaskSpec("Account recovery", 3, "To Do", 0, "Tom Becker", ("frontend",)),
-            )),
-        ),
-        (MilestoneSpec("Auth beta", 6),),
-    ),
-    ProjectSpec(
-        "ONB", "Onboarding Revamp", "A guided, progressive onboarding flow.",
-        "GROWTH-2026", 5, 9, False, "at_risk",
-        "Welcome flow is aging in review; frontend capacity is the constraint.",
-        ("frontend", "growth"),
-        (
-            PhaseSpec("Research", (
-                TaskSpec("Funnel analysis", 3, "Done", 28, "Yuki Tanaka", ("data",)),
-                TaskSpec("Onboarding redesign", 4, "Done", 18, "Tom Becker", ("design",)),
-            )),
-            PhaseSpec("Build", (
-                TaskSpec("New welcome flow", 6, "In Progress", 22, "Tom Becker", ("frontend",),
-                         (4, 6, 10)),
-                TaskSpec("Progressive profiling", 4, "To Do", 0, "Yuki Tanaka", ("frontend",)),
-                TaskSpec("Email nudges", 3, "To Do", 0, "Diego Santos", ("data",)),
-            )),
-        ),
-        (MilestoneSpec("Beta launch", 7),),
-    ),
-    ProjectSpec(
-        "BILL", "Billing v2", "Usage metering and invoicing.",
-        "GROWTH-2026", 3, 12, False, "on_track",
-        "Design complete; metering pipeline is next.",
-        ("backend", "billing"),
-        (
-            PhaseSpec("Design", (
-                TaskSpec("Billing model ADR", 3, "Done", 12, "Ravi Iyer", ("architecture",)),
-                TaskSpec("Pricing tiers spec", 2, "In Progress", 6, "Sofia Garcia", ("design",)),
-            )),
-            PhaseSpec("Build", (
-                TaskSpec("Metering pipeline", 6, "To Do", 0, "Diego Santos", ("data",),
-                         (5, 6, 10)),
-                TaskSpec("Invoice generation", 5, "To Do", 0, "Sofia Garcia", ("backend",)),
-            )),
-        ),
-        (MilestoneSpec("Billing GA", 12),),
-    ),
-    ProjectSpec(
-        "TOOLS", "Internal Tools", "Admin console and operational tooling.",
-        None, 4, 6, False, "on_track",
-        "Admin console in progress; standalone (no initiative).",
-        ("internal", "frontend"),
-        (
-            PhaseSpec("Build", (
-                TaskSpec("Audit log viewer", 3, "Done", 14, "Yuki Tanaka", ("frontend",)),
-                TaskSpec("Admin console", 5, "In Progress", 8, "Tom Becker", ("frontend",)),
-                TaskSpec("Feature flag UI", 3, "To Do", 0, "Tom Becker", ("frontend",)),
-            )),
-        ),
-        (MilestoneSpec("v1", 6),),
-    ),
-)
-
-# The flagship project that receives the rich architecture / risk / spec / scenario content.
-FLAGSHIP_KEY = "APIGW"
-
-# A cross-project hand-off inside one initiative (Platform): gateway → auth.
-CROSS_PROJECT_HANDOFF = (
-    (FLAGSHIP_KEY, "Observability hooks"),
-    ("AUTH", "OIDC provider integration"),
-)
+@dataclass(frozen=True)
+class ScenarioSpec:
+    initiative_key: str
+    title: str
+    description: str
+    project_key: str  # the project whose tasks are cloned into the scenario
+    added_task: str
+    added_task_assignee: str | None = None
 
 
 @dataclass(frozen=True)
@@ -295,16 +343,6 @@ class DemoAccount:
     function: str
 
 
-def demo_accounts() -> list[DemoAccount]:
-    """The demo logins (for the login screen + admin panel + e2e). Password is shared."""
-    return [
-        DemoAccount(u.email, u.full_name, u.role.value, u.function.value) for u in USERS
-    ]
-
-
-# --------------------------------------------------------------------------- #
-# Connector demo configs (served by the offline HTTP mock, see connectors/demo.py).
-# --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class DemoConnection:
     provider: str
@@ -312,23 +350,202 @@ class DemoConnection:
     config: dict[str, object] = field(default_factory=dict)
 
 
+# --------------------------------------------------------------------------- #
+# DATA — people
+# --------------------------------------------------------------------------- #
+USERS: tuple[DemoUser, ...] = (
+    DemoUser("admin@helix.dev", "Dana Okafor", UserRole.admin, UserFunction.management),
+    DemoUser("cto@helix.dev", "Olivia Chen", UserRole.viewer, UserFunction.leadership),
+    DemoUser("architect@helix.dev", "Aanya Sharma", UserRole.architect,
+             UserFunction.architecture),
+    DemoUser("staff@helix.dev", "Ravi Iyer", UserRole.architect, UserFunction.engineering),
+    DemoUser("em@helix.dev", "Marcus Lee", UserRole.engineering_manager,
+             UserFunction.management),
+    DemoUser("sofia@helix.dev", "Sofia Garcia", UserRole.engineer, UserFunction.engineering),
+    DemoUser("tom@helix.dev", "Tom Becker", UserRole.engineer, UserFunction.engineering),
+    DemoUser("yuki@helix.dev", "Yuki Tanaka", UserRole.engineer, UserFunction.engineering),
+    DemoUser("noah@helix.dev", "Noah Williams", UserRole.engineer, UserFunction.engineering),
+    DemoUser("pm@helix.dev", "Priya Nair", UserRole.viewer, UserFunction.product),
+    DemoUser("design@helix.dev", "Lena Brooks", UserRole.viewer, UserFunction.design),
+    DemoUser("field@helix.dev", "Diego Santos", UserRole.member, UserFunction.engineering),
+)
+
+TEAM_ROLES: tuple[str, ...] = (
+    "Architecture", "Management", "Control Plane", "Data Plane", "Security",
+    "Platform / SRE", "Field Engineering", "Frontend", "QA", "Data",
+)
+
+ENGINEERS: tuple[DemoEngineer, ...] = (
+    DemoEngineer("Aanya Sharma", "Chief Architect",
+                 ("architecture", "security", "distributed-systems"), "America/New_York", 30,
+                 "aanyasharma", "Architecture", "architect@helix.dev"),
+    DemoEngineer("Ravi Iyer", "Staff Engineer, Control Plane",
+                 ("backend", "go", "kubernetes"), "Asia/Kolkata", 36, "raviiyer",
+                 "Control Plane", "staff@helix.dev"),
+    DemoEngineer("Marcus Lee", "Engineering Manager, Data Plane",
+                 ("management", "backend"), "America/Los_Angeles", 20, "marcuslee",
+                 "Management", "em@helix.dev"),
+    DemoEngineer("Sofia Garcia", "Senior Backend Engineer",
+                 ("backend", "python", "postgres"), "Europe/Madrid", 40, "sofiagarcia",
+                 "Control Plane", "sofia@helix.dev"),
+    DemoEngineer("Tom Becker", "Data Plane Engineer",
+                 ("backend", "rust", "streaming"), "Europe/Berlin", 40, "tombecker",
+                 "Data Plane", "tom@helix.dev"),
+    DemoEngineer("Yuki Tanaka", "Security Engineer",
+                 ("security", "cryptography", "networking"), "Asia/Tokyo", 40, "yukitanaka",
+                 "Security", "yuki@helix.dev"),
+    DemoEngineer("Noah Williams", "Site Reliability Engineer",
+                 ("infra", "kubernetes", "observability"), "America/Chicago", 40,
+                 "noahwilliams", "Platform / SRE", "noah@helix.dev"),
+    DemoEngineer("Diego Santos", "Solutions Architect (Field)",
+                 ("solutions", "deployment", "customer"), "America/Sao_Paulo", 40,
+                 "diegosantos", "Field Engineering", "field@helix.dev"),
+    DemoEngineer("Hannah Schmidt", "Frontend Engineer",
+                 ("frontend", "react", "typescript"), "Europe/Berlin", 40, "hannahschmidt",
+                 "Frontend", None),
+    DemoEngineer("Omar Haddad", "Deployment Engineer (Field)",
+                 ("deployment", "terraform", "customer"), "Asia/Dubai", 40, "omarhaddad",
+                 "Field Engineering", None),
+    DemoEngineer("Grace Liu", "Data Engineer",
+                 ("data", "etl", "python"), "America/New_York", 40, "graceliu", "Data", None),
+    DemoEngineer("Ivan Petrov", "Platform Engineer",
+                 ("infra", "networking", "go"), "Europe/Kyiv", 40, "ivanpetrov",
+                 "Platform / SRE", None),
+    DemoEngineer("Mei Lin", "QA / Release Engineer",
+                 ("qa", "automation", "e2e"), "Asia/Singapore", 32, "meilin", "QA", None),
+)
+
+AVAILABILITY: tuple[DemoAvailability, ...] = (
+    DemoAvailability("Sofia Garcia", 2, 4, 0.0, "Vacation"),
+    DemoAvailability("Tom Becker", -1, 1, 0.5, "Ramping up on the data-plane codebase"),
+    DemoAvailability("Yuki Tanaka", 1, 2, 0.5, "Security conference"),
+    DemoAvailability("Marcus Lee", -4, 16, 0.5, "Split between management and delivery"),
+    DemoAvailability("Noah Williams", 3, 4, 0.7, "On-call rotation"),
+    DemoAvailability("Diego Santos", 0, 6, 0.5, "On-site customer deployment"),
+    DemoAvailability("Omar Haddad", 2, 3, 0.0, "Parental leave"),
+)
+
+# Engineer-to-project allocations (Sofia spans two projects → a cross-project over-allocation).
+ALLOCATIONS: tuple[tuple[str, str, float], ...] = (
+    ("Ravi Iyer", "CPORCH", 60), ("Sofia Garcia", "CPORCH", 60),
+    ("Sofia Garcia", "REGISTRY", 60), ("Grace Liu", "REGISTRY", 50),
+    ("Hannah Schmidt", "CONSOLE", 70), ("Lena Brooks", "CONSOLE", 20),
+    ("Tom Becker", "ENGINE", 70), ("Marcus Lee", "ENGINE", 30),
+    ("Mei Lin", "ENGINE", 40), ("Grace Liu", "ENGINE", 30),
+    ("Yuki Tanaka", "GATEWAY", 70), ("Aanya Sharma", "GATEWAY", 25),
+    ("Ivan Petrov", "OPERATOR", 60), ("Noah Williams", "OPERATOR", 40),
+    ("Diego Santos", "PLAYBOOKS", 60), ("Omar Haddad", "FIELDCON", 70),
+    ("Diego Santos", "FIELDCON", 30), ("Hannah Schmidt", "FIELDCON", 30),
+)
+
+
+# --------------------------------------------------------------------------- #
+# DATA — initiatives
+# --------------------------------------------------------------------------- #
+INITIATIVES: tuple[InitiativeSpec, ...] = (
+    InitiativeSpec(
+        "CONTROL-PLANE", "Control Plane Scale-Out",
+        "Run the multi-tenant control plane at 99.95% and onboard a tenant in under a day.",
+        20, "Aanya Sharma", ("control-plane", "multi-tenant", "saas"), "on_track",
+        "Orchestrator and registry on track; the console is the long pole.",
+        outcomes=(
+            OutcomeSpec("Cut tenant onboarding time", "time to first tenant", "hours",
+                        72.0, 24.0, 40.0, "on_track", "Aanya Sharma"),
+            OutcomeSpec("Hold control-plane availability", "uptime", "%",
+                        99.5, 99.95, 99.9, "on_track", "Noah Williams"),
+        ),
+        risks=(
+            RiskSpec("Noisy-neighbour tenants degrade shared services", "technical",
+                     "medium", "high", "mitigating", "Ravi Iyer",
+                     "Per-tenant quotas + isolation in the orchestrator."),
+        ),
+        docs=(
+            DocSpec("prd", "Control Plane PRD",
+                    "https://drive.google.com/file/d/doc-prd-001/view", "drive"),
+        ),
+    ),
+    InitiativeSpec(
+        "DATA-PLANE", "Data Plane v2 — BYOC",
+        "Ship a customer-deployed data plane with zero data egress and a one-hour install.",
+        24, "Ravi Iyer", ("data-plane", "byoc", "security"), "at_risk",
+        "Engine and gateway progressing; the gateway egress review is the critical risk.",
+        outcomes=(
+            OutcomeSpec("Eliminate customer data egress", "bytes egressed per tenant", "MB/day",
+                        120.0, 0.0, 12.0, "on_track", "Yuki Tanaka"),
+            OutcomeSpec("Cut data-plane install time", "install time", "min",
+                        240.0, 60.0, 110.0, "at_risk", "Ivan Petrov"),
+        ),
+        risks=(
+            RiskSpec("Customer environments vary too widely to support", "external",
+                     "high", "high", "open", "Diego Santos",
+                     "Constrain to three reference architectures.", target_weeks=-1),
+        ),
+        docs=(
+            DocSpec("architecture", "BYOC reference architecture",
+                    "https://drive.google.com/file/d/doc-arch-002/view", "drive"),
+        ),
+    ),
+    InitiativeSpec(
+        "FIELD-DELIVERY", "Field Delivery & Onboarding",
+        "Make customer deployments repeatable: 90% first-time install success, value in a week.",
+        16, "Marcus Lee", ("field", "delivery", "customer-success"), "on_track",
+        "Playbooks landing; the customer-facing deployment console is in build.",
+        outcomes=(
+            OutcomeSpec("Raise first-time install success", "install success rate", "%",
+                        55.0, 90.0, 72.0, "on_track", "Diego Santos"),
+            OutcomeSpec("Cut time-to-first-value", "days to first value", "days",
+                        21.0, 7.0, 12.0, "on_track", "Marcus Lee"),
+        ),
+    ),
+)
+
+
+# --------------------------------------------------------------------------- #
+# DATA — projects (defined in app/services/seed/projects.py to keep files readable)
+# --------------------------------------------------------------------------- #
+from app.services.seed.projects import PROJECTS  # noqa: E402, F401  (re-exported)
+
+FLAGSHIP_KEY = "ENGINE"
+
+# Cross-project hand-offs inside one initiative (drive the cross-project critical path).
+CROSS_PROJECT_HANDOFFS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
+    (("GATEWAY", "Control-plane handshake protocol"), ("ENGINE", "Wire secure gateway in")),
+    (("ENGINE", "Package engine artifact"), ("OPERATOR", "Bundle engine + gateway")),
+    (("REGISTRY", "Policy bundle publish API"), ("CPORCH", "Consume policy bundles")),
+)
+
+SCENARIOS: tuple[ScenarioSpec, ...] = (
+    ScenarioSpec("DATA-PLANE", "Add a security engineer to pull GA forward",
+                 "What if a second security engineer joins the gateway work in Q3?",
+                 "ENGINE", "Parallelize enclave hardening", "Yuki Tanaka"),
+    ScenarioSpec("CONTROL-PLANE", "Defer multi-region to cut Q3 scope",
+                 "What if multi-region is deferred and that capacity goes to onboarding?",
+                 "CPORCH", "Harden single-region autoscaling", "Ravi Iyer"),
+)
+
+
+def demo_accounts() -> list[DemoAccount]:
+    """The demo logins (for the login screen + admin panel + e2e). Password is shared."""
+    return [DemoAccount(u.email, u.full_name, u.role.value, u.function.value) for u in USERS]
+
+
 def demo_connections(flagship_project_id: int) -> list[DemoConnection]:
     return [
-        DemoConnection("jira", "Jira — demo.atlassian.net", {
+        DemoConnection("jira", "Jira — helix.atlassian.net", {
             "demo": True,
-            "base_url": "https://demo.atlassian.net",
+            "base_url": "https://helix.atlassian.net",
             "project_id": flagship_project_id,
-            "jira_project_key": "PLAT",
-            "email": "demo@canopy.dev",
+            "jira_project_key": "HELIX",
+            "email": "demo@helix.dev",
             "board_id": 1,
             "story_point_field": "customfield_10016",
             "epic_issue_type": "Epic",
             "story_issue_type": "Story",
         }),
-        DemoConnection("github", "GitHub — canopy-co/platform", {
-            "demo": True, "owner": "canopy-co", "repo": "platform",
+        DemoConnection("github", "GitHub — helix-io/data-plane", {
+            "demo": True, "owner": "helix-io", "repo": "data-plane",
         }),
-        DemoConnection("gdrive", "Google Drive — Platform docs", {
+        DemoConnection("gdrive", "Google Drive — Helix docs", {
             "demo": True, "folder_id": "demo-folder",
         }),
     ]

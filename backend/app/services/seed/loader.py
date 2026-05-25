@@ -4,6 +4,9 @@ Everything routes through the ORM session so the data is identical across SQLite
 MySQL. Projects are scheduled with the real CPM planner so the Gantt, critical path, baselines
 and variance are genuine; status history / activity / risk snapshots are back-dated so the
 time-series views (burndown, forecast, delivery metrics, risk timeline) have real trends.
+
+Builders are generic — they read the per-project spec fields — so every project is fully
+populated (architecture, ADRs, specs, risks, outcomes, docs, blockers, retros, activity).
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ from app.models.base import (
     OutcomeStatus,
     ProjectHealth,
     Provider,
+    RetrospectiveKind,
     Reversibility,
     RiskCategory,
     RiskGrade,
@@ -85,12 +89,14 @@ from app.models.user import User
 from app.services.planner import reschedule_project
 from app.services.seed import catalog
 from app.services.seed.catalog import (
+    ALLOCATIONS,
     AVAILABILITY,
-    CROSS_PROJECT_HANDOFF,
+    CROSS_PROJECT_HANDOFFS,
     ENGINEERS,
     FLAGSHIP_KEY,
     INITIATIVES,
     PROJECTS,
+    SCENARIOS,
     TEAM_ROLES,
     USERS,
     ProjectSpec,
@@ -111,12 +117,27 @@ async def _add(session: AsyncSession, obj: M) -> M:
     return obj
 
 
+def _req(value: int | None) -> int:
+    assert value is not None
+    return value
+
+
 def _today() -> date:
     return date.today()
 
 
 def _weeks(base: date, n: int) -> date:
     return base + timedelta(weeks=n)
+
+
+def _risk_level(score: int) -> str:
+    if score >= 75:
+        return "critical"
+    if score >= 50:
+        return "high"
+    if score >= 30:
+        return "moderate"
+    return "low"
 
 
 def _lifecycle(status: str, entered_days_ago: int) -> tuple[int, list[tuple[str | None, str, int]]]:
@@ -143,8 +164,6 @@ def _lifecycle(status: str, entered_days_ago: int) -> tuple[int, list[tuple[str 
 async def clear_all_data(session: AsyncSession, keep_user_ids: set[int]) -> None:
     """Wipe every domain table. Users are removed too (full reset) except `keep_user_ids`
     (the acting admin + the configured superuser) so the operator stays logged in."""
-    # Null self-referential FKs first: a single bulk DELETE of a self-referencing table would
-    # otherwise violate the constraint on Postgres/MySQL (CLAUDE.md portability rule).
     for stmt in (
         update(Task).values(parent_id=None),
         update(DraftTask).values(parent_id=None),
@@ -163,7 +182,7 @@ async def clear_all_data(session: AsyncSession, keep_user_ids: set[int]) -> None
 
 
 # --------------------------------------------------------------------------- #
-# Build — references threaded through a context object
+# References threaded through the build
 # --------------------------------------------------------------------------- #
 @dataclass
 class _Refs:
@@ -174,38 +193,27 @@ class _Refs:
     projects: dict[str, Project] = field(default_factory=dict)
     tasks: dict[str, dict[str, Task]] = field(default_factory=dict)  # project_key -> name -> Task
     leaf_order: dict[str, list[Task]] = field(default_factory=dict)  # project_key -> leaves
-    components: dict[str, ArchitectureComponent] = field(default_factory=dict)
-    adrs: dict[int, ArchitectureDecision] = field(default_factory=dict)  # number -> ADR
 
     def eng(self, name: str | None) -> int | None:
         if name is None:
             return None
-        return self.engineers[name].id
+        engineer = self.engineers.get(name)
+        return engineer.id if engineer else None
 
 
-def _comp_id(refs: _Refs, name: str) -> int:
-    cid = refs.components[name].id
-    assert cid is not None
-    return cid
-
-
+# --------------------------------------------------------------------------- #
+# People + initiatives
+# --------------------------------------------------------------------------- #
 async def _build_users(session: AsyncSession, refs: _Refs) -> None:
-    existing = {
-        u.email: u
-        for u in (await session.execute(select(User))).scalars().all()
-    }
+    existing = {u.email: u for u in (await session.execute(select(User))).scalars().all()}
     for spec in USERS:
         if spec.email in existing:
             refs.users[spec.email] = existing[spec.email]
             continue
-        user = await _add(session, User(
-            email=spec.email,
-            hashed_password=hash_password(catalog.DEMO_PASSWORD),
-            full_name=spec.full_name,
-            role=spec.role,
-            function=spec.function,
+        refs.users[spec.email] = await _add(session, User(
+            email=spec.email, hashed_password=hash_password(catalog.DEMO_PASSWORD),
+            full_name=spec.full_name, role=spec.role, function=spec.function,
         ))
-        refs.users[spec.email] = user
 
 
 async def _build_team(session: AsyncSession, refs: _Refs) -> None:
@@ -213,29 +221,20 @@ async def _build_team(session: AsyncSession, refs: _Refs) -> None:
         refs.roles[name] = await _add(session, Role(name=name))
     for spec in ENGINEERS:
         user = refs.users.get(spec.user_email) if spec.user_email else None
-        engineer = await _add(session, Engineer(
-            name=spec.name,
-            email=spec.user_email,
-            title=spec.title,
-            role_id=refs.roles[spec.role_name].id,
-            user_id=user.id if user else None,
-            skill_tags=list(spec.skill_tags),
-            github_login=spec.github_login,
-            timezone=spec.timezone,
-            committed_hours_per_week=spec.committed_hours_per_week,
+        refs.engineers[spec.name] = await _add(session, Engineer(
+            name=spec.name, email=spec.user_email, title=spec.title,
+            role_id=refs.roles[spec.role_name].id, user_id=user.id if user else None,
+            skill_tags=list(spec.skill_tags), github_login=spec.github_login,
+            timezone=spec.timezone, committed_hours_per_week=spec.committed_hours_per_week,
         ))
-        refs.engineers[spec.name] = engineer
-
     today = _today()
     for av in AVAILABILITY:
         eng_id = refs.eng(av.engineer)
         if eng_id is None:
             continue
         await _add(session, EngineerAvailability(
-            engineer_id=eng_id,
-            start_date=_weeks(today, av.start_weeks),
-            end_date=_weeks(today, av.end_weeks),
-            capacity_factor=av.capacity_factor,
+            engineer_id=eng_id, start_date=_weeks(today, av.start_weeks),
+            end_date=_weeks(today, av.end_weeks), capacity_factor=av.capacity_factor,
             note=av.note,
         ))
 
@@ -244,54 +243,86 @@ async def _build_initiatives(session: AsyncSession, refs: _Refs) -> None:
     today = _today()
     for spec in INITIATIVES:
         init = await _add(session, Initiative(
-            key=spec.key,
-            name=spec.name,
-            outcome_statement=spec.outcome_statement,
-            start_date=_weeks(today, -8),
-            target_date=_weeks(today, spec.target_weeks_ahead),
-            owner_engineer_id=refs.eng(spec.owner_engineer),
-            tags=list(spec.tags),
+            key=spec.key, name=spec.name, outcome_statement=spec.outcome_statement,
+            start_date=_weeks(today, -10), target_date=_weeks(today, spec.target_weeks_ahead),
+            owner_engineer_id=refs.eng(spec.owner_engineer), tags=list(spec.tags),
             health=ProjectHealth(spec.health) if spec.health else None,
-            status_note=spec.status_note,
-            status_updated_at=utcnow(),
+            status_note=spec.status_note, status_updated_at=utcnow(),
         ))
         refs.initiatives[spec.key] = init
+    await _build_initiative_extras(session, refs)
+
+
+async def _build_initiative_extras(session: AsyncSession, refs: _Refs) -> None:
+    today = _today()
+    for spec in INITIATIVES:
+        init = refs.initiatives[spec.key]
+        iid = _req(init.id)
+        for o in spec.outcomes:
+            await _add(session, Outcome(
+                scope_level=OutcomeScope.initiative, scope_id=iid, statement=o.statement,
+                metric=o.metric, unit=o.unit, baseline_value=o.baseline, target_value=o.target,
+                current_value=o.current, status=OutcomeStatus(o.status),
+                target_date=_weeks(today, o.target_weeks), owner_engineer_id=refs.eng(o.owner),
+            ))
+        for r in spec.risks:
+            await _add(session, RiskItem(
+                scope_level=RiskScope.initiative, scope_id=iid, title=r.title,
+                category=RiskCategory(r.category), probability=RiskGrade(r.probability),
+                impact=RiskGrade(r.impact), status=RiskStatus(r.status),
+                owner_engineer_id=refs.eng(r.owner), mitigation=r.mitigation,
+                contingency=r.contingency,
+                target_resolution_date=_weeks(today, r.target_weeks) if r.target_weeks else None,
+            ))
+        for d in spec.docs:
+            await _add(session, DocReference(
+                scope_level=DocScope.initiative, scope_id=iid, kind=DocKind(d.kind),
+                title=d.title, url=d.url, source=DocSource(d.source),
+            ))
+
+
+# --------------------------------------------------------------------------- #
+# Projects — schedule + per-project rich content
+# --------------------------------------------------------------------------- #
+async def _build_projects(session: AsyncSession, refs: _Refs) -> None:
+    for spec in PROJECTS:
+        await _build_one_project(session, refs, spec)
+
+    # Cross-project hand-offs within an initiative (drive the cross-project critical path).
+    for (pk_pred, t_pred), (pk_succ, t_succ) in CROSS_PROJECT_HANDOFFS:
+        pred = refs.tasks[pk_pred].get(t_pred)
+        succ = refs.tasks[pk_succ].get(t_succ)
+        if pred is not None and succ is not None:
+            await _add(session, Dependency(
+                predecessor_id=_req(pred.id), successor_id=_req(succ.id)))
+
+    await _baseline_flagship(session, refs)
 
 
 async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSpec) -> None:
     today = _today()
     init = refs.initiatives.get(spec.initiative_key) if spec.initiative_key else None
     project = await _add(session, Project(
-        key=spec.key,
-        name=spec.name,
-        description=spec.description,
+        key=spec.key, name=spec.name, description=spec.description,
         initiative_id=init.id if init else None,
         start_date=_weeks(today, -spec.start_weeks_ago),
-        target_date=_weeks(today, spec.target_weeks_ahead),
-        skip_weekends=spec.skip_weekends,
-        tags=list(spec.tags),
-        health=ProjectHealth(spec.health) if spec.health else None,
-        status_note=spec.status_note,
-        status_updated_at=utcnow(),
+        target_date=_weeks(today, spec.target_weeks_ahead), skip_weekends=spec.skip_weekends,
+        tags=list(spec.tags), health=ProjectHealth(spec.health) if spec.health else None,
+        status_note=spec.status_note, status_updated_at=utcnow(),
     ))
-    assert project.id is not None
+    pid = _req(project.id)
     refs.projects[spec.key] = project
     refs.tasks[spec.key] = {}
     leaves: list[Task] = []
 
     for phase in spec.phases:
         summary = await _add(session, Task(
-            project_id=project.id, name=phase.name, type=TaskType.summary, duration=0,
-        ))
+            project_id=pid, name=phase.name, type=TaskType.summary, duration=0))
         for ts in phase.tasks:
             task = await _add(session, Task(
-                project_id=project.id,
-                parent_id=summary.id,
-                name=ts.name,
-                type=TaskType.milestone if ts.milestone else TaskType.task,
-                duration=ts.duration,
-                tags=list(ts.tags),
-                assignee_engineer_id=refs.eng(ts.assignee),
+                project_id=pid, parent_id=summary.id, name=ts.name,
+                type=TaskType.milestone if ts.milestone else TaskType.task, duration=ts.duration,
+                tags=list(ts.tags), assignee_engineer_id=refs.eng(ts.assignee),
                 estimate_optimistic=ts.estimate[0] if ts.estimate else None,
                 estimate_likely=ts.estimate[1] if ts.estimate else None,
                 estimate_pessimistic=ts.estimate[2] if ts.estimate else None,
@@ -300,35 +331,41 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
             refs.tasks[spec.key][ts.name] = task
             leaves.append(task)
 
-    # Chain the leaves into a finish-to-start critical path.
     for prev, nxt in pairwise(leaves):
-        assert prev.id is not None and nxt.id is not None
-        await _add(session, Dependency(predecessor_id=prev.id, successor_id=nxt.id))
+        await _add(session, Dependency(
+            predecessor_id=_req(prev.id), successor_id=_req(nxt.id)))
     refs.leaf_order[spec.key] = leaves
 
-    # Project milestones (roadmap markers) + a couple of holidays for a 5-day calendar.
     for ms in spec.milestones:
         await _add(session, Milestone(
-            project_id=project.id, name=ms.name,
-            target_date=_weeks(today, ms.target_weeks), status=ms.status,
-        ))
+            project_id=pid, name=ms.name, target_date=_weeks(today, ms.target_weeks),
+            status=ms.status))
     if spec.skip_weekends:
-        await _add(session, Holiday(
-            project_id=project.id, day=_weeks(today, 3), name="Company holiday",
-        ))
+        await _add(session, Holiday(project_id=pid, day=_weeks(today, 3), name="Company holiday"))
 
-    await reschedule_project(session, project.id)
+    await reschedule_project(session, pid)
     await _apply_lifecycle(session, refs, spec)
+
+    comps = await _build_project_arch(session, refs, spec, pid)
+    adrs = await _build_project_adrs(session, refs, spec, pid, comps)
+    await _build_project_drift(session, spec, pid, comps)
+    await _build_project_specs(session, refs, spec, pid, adrs)
+    await _build_project_risk(session, refs, spec, pid)
+    await _build_project_outcomes(session, refs, spec, pid)
+    await _build_project_docs(session, refs, spec, pid)
+    await _build_project_blockers(session, refs, spec)
+    await _build_project_retro(session, refs, spec, pid, comps)
+    await _build_project_draft(session, spec, pid)
+    await _build_project_activity(session, spec, pid, comps)
 
 
 async def _apply_lifecycle(session: AsyncSession, refs: _Refs, spec: ProjectSpec) -> None:
-    """Back-date status history + set status/percent so the time-series views have trends."""
     base = utcnow()
     for phase in spec.phases:
         for ts in phase.tasks:
-            task = refs.tasks[spec.key][ts.name]
             if ts.milestone:
                 continue
+            task = refs.tasks[spec.key][ts.name]
             created_days, transitions = _lifecycle(ts.status, ts.entered_days_ago)
             task.created_at = base - timedelta(days=created_days)
             task.status = ts.status
@@ -336,530 +373,339 @@ async def _apply_lifecycle(session: AsyncSession, refs: _Refs, spec: ProjectSpec
             author = ts.assignee or "Jira Sync"
             for from_status, to_status, days_ago in transitions:
                 await _add(session, TaskStatusHistory(
-                    task_id=task.id,
-                    from_status=from_status,
-                    to_status=to_status,
-                    changed_at=base - timedelta(days=days_ago),
-                    author=author,
+                    task_id=task.id, from_status=from_status, to_status=to_status,
+                    changed_at=base - timedelta(days=days_ago), author=author,
                 ))
 
 
-async def _build_projects(session: AsyncSession, refs: _Refs) -> None:
-    for spec in PROJECTS:
-        await _build_one_project(session, refs, spec)
+async def _build_project_arch(
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec, pid: int
+) -> dict[str, ArchitectureComponent]:
+    comps: dict[str, ArchitectureComponent] = {}
+    for c in spec.components:
+        comps[c.name] = await _add(session, ArchitectureComponent(
+            project_id=pid, name=c.name, kind=c.kind, tier=c.tier, criticality=c.criticality,
+            owner_engineer_id=refs.eng(c.owner),
+            description=f"The {c.name} component.",
+        ))
+    for link in spec.component_links:
+        if link.source in comps and link.target in comps:
+            await _add(session, ComponentLink(
+                source_id=_req(comps[link.source].id), target_id=_req(comps[link.target].id),
+                kind=link.kind))
+    for b in spec.bindings:
+        if b.component in comps:
+            await _add(session, ComponentCodeBinding(
+                component_id=_req(comps[b.component].id), path_glob=b.path_glob,
+                module_prefix=b.module_prefix))
+    return comps
 
-    # Cross-project hand-off within one initiative (gateway → auth).
-    (pk_pred, t_pred), (pk_succ, t_succ) = CROSS_PROJECT_HANDOFF
-    pred = refs.tasks[pk_pred][t_pred]
-    succ = refs.tasks[pk_succ][t_succ]
-    assert pred.id is not None and succ.id is not None
-    await _add(session, Dependency(predecessor_id=pred.id, successor_id=succ.id))
 
-    # Baseline + a small variance on the flagship so the Gantt overlay has something to show.
-    await _baseline_flagship(session, refs)
+async def _build_project_adrs(
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec, pid: int,
+    comps: dict[str, ArchitectureComponent],
+) -> dict[str, ArchitectureDecision]:
+    base = utcnow()
+    today = _today()
+    adrs: dict[str, ArchitectureDecision] = {}
+    for i, a in enumerate(spec.adrs, start=1):
+        adr = await _add(session, ArchitectureDecision(
+            project_id=pid, number=i, title=a.title, status=ADRStatus(a.status),
+            reversibility=Reversibility(a.reversibility) if a.reversibility else None,
+            context=a.context, decision=a.decision, consequences=a.consequences,
+            alternatives=list(a.alternatives), decision_owner_id=refs.eng(a.owner),
+            proposed_by_id=refs.eng(a.proposer),
+            decide_by=_weeks(today, a.decide_by_weeks) if a.decide_by_weeks is not None else None,
+            created_at=base - timedelta(days=a.created_days_ago),
+        ))
+        adrs[a.title] = adr
+        for comp_name in a.components:
+            if comp_name in comps:
+                await _add(session, ADRComponentLink(
+                    adr_id=_req(adr.id), component_id=_req(comps[comp_name].id)))
+        for sh in a.stakeholders:
+            eng_id = refs.eng(sh)
+            if eng_id is not None:
+                await _add(session, ADRStakeholder(adr_id=_req(adr.id), engineer_id=eng_id))
+        for c in a.comments:
+            await _add(session, ADRComment(
+                adr_id=_req(adr.id), engineer_id=refs.eng(c.author), author_name=c.author,
+                body=c.body, kind=ADRCommentKind(c.kind)))
+        if a.fitness and a.fitness.source in comps and a.fitness.target in comps:
+            await _add(session, ADRFitnessFunction(
+                adr_id=_req(adr.id), kind=a.fitness.kind,
+                source_component_id=_req(comps[a.fitness.source].id),
+                target_component_id=_req(comps[a.fitness.target].id),
+                description=a.fitness.description))
+    return adrs
+
+
+async def _build_project_drift(
+    session: AsyncSession, spec: ProjectSpec, pid: int, comps: dict[str, ArchitectureComponent]
+) -> None:
+    if not spec.drift:
+        return
+    for n, d in enumerate(spec.drift):
+        ids = [_req(comps[c].id) for c in d.components if c in comps]
+        await _add(session, DriftEvent(
+            project_id=pid, kind=d.kind, rule_key=f"{spec.key.lower()}:{d.kind}:{n}",
+            summary=d.summary, detail=d.detail, suspected_cause=d.suspected_cause,
+            affected_component_ids=ids, status=d.status))
+    await _add(session, DriftScan(project_id=pid, finding_count=len(spec.drift)))
+
+
+async def _build_project_specs(
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec, pid: int,
+    adrs: dict[str, ArchitectureDecision],
+) -> None:
+    for s in spec.specs:
+        adr = adrs.get(s.adr_title) if s.adr_title else None
+        spec_row = await _add(session, Spec(
+            project_id=pid, title=s.title, problem=s.problem, context=s.context,
+            out_of_scope=s.out_of_scope, status=SpecStatus(s.status),
+            owner_engineer_id=refs.eng(s.owner), adr_id=adr.id if adr else None,
+            source_url=s.source_url))
+        for i, c in enumerate(s.criteria):
+            await _add(session, SpecCriterion(
+                spec_id=spec_row.id, text=c.text, status=CriterionStatus(c.status),
+                verification=c.verification, sort_order=i))
+        for tname in s.task_names:
+            task = refs.tasks[spec.key].get(tname)
+            if task is not None:
+                task.spec_id = spec_row.id
+        await session.flush()
+
+
+async def _build_project_risk(
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec, pid: int
+) -> None:
+    today = _today()
+    for r in spec.risks:
+        await _add(session, RiskItem(
+            scope_level=RiskScope.project, scope_id=pid, title=r.title,
+            category=RiskCategory(r.category), probability=RiskGrade(r.probability),
+            impact=RiskGrade(r.impact), status=RiskStatus(r.status),
+            owner_engineer_id=refs.eng(r.owner), mitigation=r.mitigation,
+            contingency=r.contingency,
+            target_resolution_date=_weeks(today, r.target_weeks) if r.target_weeks else None,
+        ))
+    for m in spec.mitigations:
+        await _add(session, RiskMitigation(
+            project_id=pid, indicator_key=m.indicator_key, note=m.note,
+            owner_engineer_id=refs.eng(m.owner), resolved=m.resolved,
+            check_in=_weeks(today, m.check_in_weeks) if m.check_in_weeks is not None else None,
+        ))
+    # Weekly risk snapshots so the timeline trends (higher band for at-risk projects).
+    base = utcnow()
+    high = spec.health == "at_risk"
+    scores = [70, 66, 62, 59, 56, 53] if high else [52, 49, 46, 44, 41, 38]
+    for weeks_ago, score in enumerate(reversed(scores)):
+        await _add(session, RiskSnapshot(
+            project_id=pid, score=score, level=_risk_level(score),
+            created_at=base - timedelta(weeks=weeks_ago)))
+
+
+async def _build_project_outcomes(
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec, pid: int
+) -> None:
+    today = _today()
+    for o in spec.outcomes:
+        await _add(session, Outcome(
+            scope_level=OutcomeScope.project, scope_id=pid, statement=o.statement,
+            metric=o.metric, unit=o.unit, baseline_value=o.baseline, target_value=o.target,
+            current_value=o.current, status=OutcomeStatus(o.status),
+            target_date=_weeks(today, o.target_weeks), owner_engineer_id=refs.eng(o.owner)))
+
+
+async def _build_project_docs(
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec, pid: int
+) -> None:
+    for d in spec.docs:
+        scope_level = DocScope.project
+        scope_id = pid
+        if d.task_name:
+            task = refs.tasks[spec.key].get(d.task_name)
+            if task is not None:
+                scope_level, scope_id = DocScope.task, _req(task.id)
+        await _add(session, DocReference(
+            scope_level=scope_level, scope_id=scope_id, kind=DocKind(d.kind), title=d.title,
+            url=d.url, source=DocSource(d.source)))
+
+
+async def _build_project_blockers(
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec
+) -> None:
+    base = utcnow()
+    today = _today()
+    for b in spec.blockers:
+        task = refs.tasks[spec.key].get(b.task_name)
+        if task is None:
+            continue
+        await _add(session, Blocker(
+            task_id=_req(task.id), reason=b.reason, category=BlockerCategory(b.category),
+            severity=BlockerSeverity(b.severity), owner_engineer_id=refs.eng(b.owner),
+            raised_by_engineer_id=refs.eng(b.raised_by),
+            needed_by=_weeks(today, b.needed_weeks) if b.needed_weeks is not None else None,
+            created_at=base - timedelta(days=b.created_days_ago),
+            resolved_at=(base - timedelta(days=max(b.created_days_ago - 6, 1)))
+            if b.resolved else None,
+        ))
+
+
+async def _build_project_retro(
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec, pid: int,
+    comps: dict[str, ArchitectureComponent],
+) -> None:
+    if spec.retro is None:
+        return
+    r = spec.retro
+    ids = [_req(comps[c].id) for c in r.components if c in comps]
+    retro = await _add(session, Retrospective(
+        project_id=pid, title=r.title, kind=RetrospectiveKind(r.kind), body=r.body,
+        status="open", affected_component_ids=ids))
+    for c in r.comments:
+        await _add(session, RetrospectiveComment(
+            retrospective_id=retro.id, engineer_id=refs.eng(c.author), author_name=c.author,
+            body=c.body))
+
+
+async def _build_project_draft(session: AsyncSession, spec: ProjectSpec, pid: int) -> None:
+    if spec.draft is None:
+        return
+    d = spec.draft
+    plan = await _add(session, DraftPlan(
+        project_id=pid, title=d.title, description=d.description, status="draft",
+        source="Planning doc / PRD"))
+    epic = await _add(session, DraftTask(
+        plan_id=plan.id, name=d.epic, type=TaskType.summary, estimate_days=0, sort_order=0))
+    for i, t in enumerate(d.tasks, start=1):
+        await _add(session, DraftTask(
+            plan_id=plan.id, parent_id=epic.id, name=t.name, type=TaskType(t.type),
+            estimate_days=t.estimate_days, story_points=t.story_points, sort_order=i))
+
+
+async def _build_project_activity(
+    session: AsyncSession, spec: ProjectSpec, pid: int, comps: dict[str, ArchitectureComponent]
+) -> None:
+    base = utcnow()
+    component_id = next((_req(c.id) for c in comps.values()), None)
+    for w in range(spec.deploy_weeks):
+        await _add(session, ActivityEvent(
+            project_id=pid, kind="deploy", summary=f"Deployed {spec.key.lower()} build #{120 + w}",
+            source="ci", component_id=component_id, reference=f"deploy-{spec.key}-{120 + w}",
+            created_at=base - timedelta(weeks=w, hours=2)))
+    for inc in spec.incidents:
+        comp_id = (
+            _req(comps[inc.component].id) if inc.component and inc.component in comps else None
+        )
+        await _add(session, ActivityEvent(
+            project_id=pid, kind="incident_open", summary=inc.summary, source="ci",
+            component_id=comp_id, created_at=base - timedelta(days=inc.opened_days_ago)))
+        await _add(session, ActivityEvent(
+            project_id=pid, kind="incident_close", summary=f"Resolved: {inc.summary}",
+            source="ci", component_id=comp_id,
+            created_at=base - timedelta(days=inc.opened_days_ago, hours=-inc.recovered_hours)))
+    if spec.incidents:
+        await _add(session, ActivityEvent(
+            project_id=pid, kind="build_failure", summary="CI failed on a flaky integration test",
+            source="ci", created_at=base - timedelta(days=8)))
 
 
 async def _baseline_flagship(session: AsyncSession, refs: _Refs) -> None:
     project = refs.projects[FLAGSHIP_KEY]
-    assert project.id is not None
+    pid = _req(project.id)
     tasks = refs.leaf_order[FLAGSHIP_KEY]
     for t in tasks:
         t.baseline_start = t.start
         t.baseline_end = t.end
     await session.flush()
     await _add(session, Baseline(
-        project_id=project.id,
-        note="Plan-of-record committed at design sign-off.",
-        task_count=len(tasks),
-        project_end=max((t.end for t in tasks if t.end), default=None),
-    ))
-    # Bump one in-flight task so current schedule drifts from the baseline (visible variance).
-    in_flight = refs.tasks[FLAGSHIP_KEY].get("AuthN/AuthZ integration")
+        project_id=pid, note="Plan-of-record committed at architecture sign-off.",
+        task_count=len(tasks), project_end=max((t.end for t in tasks if t.end), default=None)))
+    in_flight = refs.tasks[FLAGSHIP_KEY].get("In-VPC model execution")
     if in_flight is not None:
-        in_flight.duration += 3
+        in_flight.duration += 4
         await session.flush()
-        await reschedule_project(session, project.id)
+        await reschedule_project(session, pid)
 
 
 async def _build_allocations(session: AsyncSession, refs: _Refs) -> None:
-    """Allocate engineers across projects, including one cross-project over-allocation."""
-    plan: list[tuple[str, str, float]] = [
-        ("Sofia Garcia", "APIGW", 60), ("Sofia Garcia", "AUTH", 60),  # over-allocated
-        ("Ravi Iyer", "APIGW", 50), ("Yuki Tanaka", "APIGW", 40),
-        ("Tom Becker", "ONB", 70), ("Tom Becker", "TOOLS", 40),
-        ("Yuki Tanaka", "AUTH", 30), ("Diego Santos", "BILL", 80),
-        ("Sofia Garcia", "BILL", 20), ("Noah Williams", "APIGW", 30),
-        ("Mei Lin", "APIGW", 50), ("Aanya Sharma", "APIGW", 30),
-    ]
-    for eng_name, project_key, pct in plan:
+    for eng_name, project_key, pct in ALLOCATIONS:
         eng_id = refs.eng(eng_name)
         project = refs.projects.get(project_key)
         if eng_id is None or project is None:
             continue
         await _add(session, Allocation(
             engineer_id=eng_id, project_id=project.id, percent_allocation=pct,
-            start_date=project.start_date, end_date=project.target_date,
-        ))
+            start_date=project.start_date, end_date=project.target_date))
 
 
 # --------------------------------------------------------------------------- #
-# Architecture (flagship) — components, links, ADRs, fitness, drift
-# --------------------------------------------------------------------------- #
-async def _build_architecture(session: AsyncSession, refs: _Refs) -> None:
-    project = refs.projects[FLAGSHIP_KEY]
-    assert project.id is not None
-    pid = project.id
-
-    comps = {
-        "edge-gateway": ("service", "presentation", "high"),
-        "auth-service": ("service", "business", "high"),
-        "rate-limiter": ("module", "business", "med"),
-        "config-store": ("datastore", "data", "med"),
-        "telemetry": ("service", "infra", "med"),
-        "web-app": ("ui", "presentation", "low"),
-    }
-    owners = {"edge-gateway": "Sofia Garcia", "auth-service": "Ravi Iyer",
-              "telemetry": "Noah Williams"}
-    for name, (kind, tier, crit) in comps.items():
-        comp = await _add(session, ArchitectureComponent(
-            project_id=pid, name=name, kind=kind, tier=tier, criticality=crit,
-            owner_engineer_id=refs.eng(owners.get(name)),
-            description=f"The {name} component of the gateway platform.",
-        ))
-        refs.components[name] = comp
-
-    links = [
-        ("web-app", "edge-gateway", "calls"),
-        ("edge-gateway", "auth-service", "calls"),
-        ("edge-gateway", "rate-limiter", "depends_on"),
-        ("edge-gateway", "telemetry", "publishes_to"),
-        ("auth-service", "config-store", "reads_from"),
-        ("edge-gateway", "config-store", "depends_on"),  # the drift the fitness rule forbids
-    ]
-    for src, dst, kind in links:
-        await _add(session, ComponentLink(
-            source_id=_comp_id(refs, src),
-            target_id=_comp_id(refs, dst),
-            kind=kind,
-        ))
-    await _add(session, ComponentCodeBinding(
-        component_id=_comp_id(refs, "edge-gateway"),
-        path_glob="backend/app/api/**", module_prefix="app.api",
-    ))
-    await _add(session, ComponentCodeBinding(
-        component_id=_comp_id(refs, "auth-service"),
-        path_glob="backend/app/connectors/**", module_prefix="app.connectors",
-    ))
-
-    await _build_adrs(session, refs, pid)
-    await _build_drift(session, refs, pid)
-
-
-async def _build_adrs(session: AsyncSession, refs: _Refs, pid: int) -> None:
-    today = _today()
-    adr1 = await _add(session, ArchitectureDecision(
-        project_id=pid, number=1, title="Adopt a single edge gateway",
-        status=ADRStatus.accepted, reversibility=Reversibility.one_way,
-        context="Each service exposing its own edge is inconsistent and hard to observe.",
-        decision="Route all north-south traffic through one gateway.",
-        consequences="A single, observable choke point; a new shared dependency to operate.",
-        decision_owner_id=refs.eng("Aanya Sharma"), proposed_by_id=refs.eng("Ravi Iyer"),
-    ))
-    adr2 = await _add(session, ArchitectureDecision(
-        project_id=pid, number=2, title="Use OpenTelemetry for tracing",
-        status=ADRStatus.accepted, reversibility=Reversibility.two_way,
-        context="We need vendor-neutral tracing across services.",
-        decision="Standardize on OpenTelemetry + an OTLP collector.",
-        decision_owner_id=refs.eng("Aanya Sharma"), proposed_by_id=refs.eng("Sofia Garcia"),
-        alternatives=["Vendor agent", "Custom spans"],
-    ))
-    adr3 = await _add(session, ArchitectureDecision(
-        project_id=pid, number=3, title="Token format: JWT vs opaque",
-        status=ADRStatus.under_discussion, reversibility=Reversibility.one_way,
-        context="The gateway must validate tokens cheaply at the edge.",
-        decision="Proposed: short-lived JWTs with rotating keys.",
-        decision_owner_id=refs.eng("Ravi Iyer"), proposed_by_id=refs.eng("Ravi Iyer"),
-    ))
-    await _add(session, ArchitectureDecision(
-        project_id=pid, number=4, title="Multi-region rollout",
-        status=ADRStatus.deferred, decide_by=_weeks(today, 4),
-        context="Latency for non-US users is high.",
-        decision_owner_id=refs.eng("Aanya Sharma"),
-    ))
-    await _add(session, ArchitectureDecision(
-        project_id=pid, number=5, title="Introduce a service mesh",
-        status=ADRStatus.proposed, proposed_by_id=refs.eng("Sofia Garcia"),
-        context="mTLS and traffic policy are currently bespoke per service.",
-    ))
-    refs.adrs = {1: adr1, 2: adr2, 3: adr3}
-
-    # Link ADRs to components.
-    for adr, comp in ((adr1, "edge-gateway"), (adr2, "telemetry"), (adr3, "auth-service")):
-        assert adr.id is not None
-        await _add(session, ADRComponentLink(adr_id=adr.id, component_id=_comp_id(refs, comp)))
-
-    # A machine-checkable fitness function on the accepted gateway ADR.
-    assert adr1.id is not None
-    await _add(session, ADRFitnessFunction(
-        adr_id=adr1.id, kind="forbid",
-        source_component_id=_comp_id(refs, "edge-gateway"),
-        target_component_id=_comp_id(refs, "config-store"),
-        description="The gateway must not read the datastore directly.",
-    ))
-
-    # A review thread on the in-discussion ADR (stakeholders + comments).
-    assert adr3.id is not None
-    for name in ("Sofia Garcia", "Aanya Sharma", "Ravi Iyer"):
-        await _add(session, ADRStakeholder(adr_id=adr3.id, engineer_id=refs.eng(name)))
-    comments = [
-        ("Sofia Garcia", "JWTs let us validate at the edge without a round-trip.",
-         ADRCommentKind.approve),
-        ("Aanya Sharma", "Concerned about revocation — how do we handle logout?",
-         ADRCommentKind.request_changes),
-        ("Ravi Iyer", "We can pair short TTLs with a deny-list for revocation.",
-         ADRCommentKind.comment),
-    ]
-    for name, body, kind in comments:
-        await _add(session, ADRComment(
-            adr_id=adr3.id, engineer_id=refs.eng(name), author_name=name, body=body, kind=kind,
-        ))
-
-
-async def _build_drift(session: AsyncSession, refs: _Refs, pid: int) -> None:
-    gw = refs.components["edge-gateway"].id
-    cs = refs.components["config-store"].id
-    tel = refs.components["telemetry"].id
-    await _add(session, DriftEvent(
-        project_id=pid, kind="unexpected_dependency",
-        rule_key="dep:edge-gateway->config-store",
-        summary="edge-gateway reads config-store directly",
-        detail="Observed import violates the accepted gateway layering ADR.",
-        suspected_cause="PR #128 (Add OTLP exporter to gateway)",
-        affected_component_ids=[c for c in (gw, cs) if c is not None],
-        status="open",
-    ))
-    await _add(session, DriftEvent(
-        project_id=pid, kind="unimplemented_adr", rule_key="adr:2:telemetry",
-        summary="OpenTelemetry accepted but telemetry isn't wired in code yet",
-        affected_component_ids=[c for c in (tel,) if c is not None],
-        status="open",
-    ))
-    await _add(session, DriftScan(project_id=pid, finding_count=2))
-
-
-# --------------------------------------------------------------------------- #
-# Specs / risk / blockers / outcomes / docs / retro / draft / activity (flagship)
-# --------------------------------------------------------------------------- #
-async def _build_specs(session: AsyncSession, refs: _Refs) -> None:
-    project = refs.projects[FLAGSHIP_KEY]
-    assert project.id is not None
-    spec = await _add(session, Spec(
-        project_id=project.id, title="Edge gateway request routing",
-        problem="Clients need one stable, observable entry point that routes to services.",
-        context="Replaces per-service ingress with a unified gateway.",
-        out_of_scope="GraphQL federation; that is a separate spec.",
-        status=SpecStatus.in_progress, owner_engineer_id=refs.eng("Sofia Garcia"),
-        adr_id=refs.adrs[1].id,
-        source_url="https://demo.atlassian.net/wiki/spaces/PLAT/routing",
-    ))
-    criteria = [
-        ("Requests route to the correct upstream by path and host.", "met",
-         "Verified by the routing integration suite."),
-        ("p99 added latency at the gateway is under 15ms.", "met", "Load test on staging."),
-        ("Unmatched routes return a structured 404.", "open", None),
-        ("Per-route rate limits are enforced.", "unmet", "Rate limiting still in progress."),
-        ("Legacy direct ingress is removed.", "waived", "Deferred to the cutover phase."),
-    ]
-    for i, (text, st, verification) in enumerate(criteria):
-        await _add(session, SpecCriterion(
-            spec_id=spec.id, text=text, status=CriterionStatus(st),
-            verification=verification, sort_order=i,
-        ))
-    # Link work to the spec.
-    for name in ("Routing & middleware", "Rate limiting"):
-        task = refs.tasks[FLAGSHIP_KEY].get(name)
-        if task is not None:
-            task.spec_id = spec.id
-    await session.flush()
-
-
-async def _build_risk(session: AsyncSession, refs: _Refs) -> None:
-    project = refs.projects[FLAGSHIP_KEY]
-    init = refs.initiatives["PLATFORM-2026"]
-    assert project.id is not None and init.id is not None
-    today = _today()
-
-    await _add(session, RiskItem(
-        scope_level=RiskScope.project, scope_id=project.id,
-        title="Auth vendor lock-in", category=RiskCategory.technical,
-        probability=RiskGrade.medium, impact=RiskGrade.high, status=RiskStatus.mitigating,
-        owner_engineer_id=refs.eng("Ravi Iyer"),
-        mitigation="Wrap the provider behind an internal interface.",
-        contingency="Fall back to the self-hosted OIDC option.",
-        target_resolution_date=_weeks(today, 4),
-    ))
-    await _add(session, RiskItem(
-        scope_level=RiskScope.project, scope_id=project.id,
-        title="Load-test environment unavailable", category=RiskCategory.resource,
-        probability=RiskGrade.high, impact=RiskGrade.medium, status=RiskStatus.open,
-        owner_engineer_id=refs.eng("Noah Williams"),
-        mitigation="Stand up an ephemeral perf environment in CI.",
-    ))
-    await _add(session, RiskItem(
-        scope_level=RiskScope.initiative, scope_id=init.id,
-        title="Dependency on the data-platform team", category=RiskCategory.external,
-        probability=RiskGrade.medium, impact=RiskGrade.medium, status=RiskStatus.open,
-        owner_engineer_id=refs.eng("Marcus Lee"),
-    ))
-
-    await _add(session, RiskMitigation(
-        project_id=project.id, indicator_key="deadline_violations",
-        note="Re-sequencing auth work to protect the GA date.",
-        owner_engineer_id=refs.eng("Aanya Sharma"), check_in=_weeks(today, 1), resolved=False,
-    ))
-    await _add(session, RiskMitigation(
-        project_id=project.id, indicator_key="over_allocation",
-        note="Brought in Mei for load testing to relieve Sofia.",
-        owner_engineer_id=refs.eng("Marcus Lee"), resolved=True,
-    ))
-
-    base = utcnow()
-    snapshots = [(5, 62, "high"), (4, 55, "moderate"), (3, 50, "moderate"),
-                 (2, 48, "moderate"), (1, 44, "moderate"), (0, 40, "moderate")]
-    for weeks_ago, score, level in snapshots:
-        await _add(session, RiskSnapshot(
-            project_id=project.id, score=score, level=level,
-            created_at=base - timedelta(weeks=weeks_ago),
-        ))
-
-
-async def _build_blockers(session: AsyncSession, refs: _Refs) -> None:
-    base = utcnow()
-    today = _today()
-    auth = refs.tasks[FLAGSHIP_KEY].get("AuthN/AuthZ integration")
-    routing = refs.tasks[FLAGSHIP_KEY].get("Routing & middleware")
-
-    if auth is not None:
-        await _add(session, Blocker(
-            task_id=auth.id, reason="Waiting on the security review of the token model.",
-            raised_by_engineer_id=refs.eng("Ravi Iyer"), category=BlockerCategory.decision,
-            severity=BlockerSeverity.high, owner_engineer_id=refs.eng("Aanya Sharma"),
-            needed_by=_weeks(today, 1), created_at=base - timedelta(days=5),
-        ))
-    if routing is not None:
-        await _add(session, Blocker(
-            task_id=routing.id, reason="Blocked on staging access (now resolved).",
-            raised_by_engineer_id=refs.eng("Sofia Garcia"), category=BlockerCategory.resource,
-            severity=BlockerSeverity.medium, created_at=base - timedelta(days=20),
-            resolved_at=base - timedelta(days=14),
-        ))
-
-
-async def _build_outcomes(session: AsyncSession, refs: _Refs) -> None:
-    today = _today()
-    platform = refs.initiatives["PLATFORM-2026"]
-    growth = refs.initiatives["GROWTH-2026"]
-    flagship = refs.projects[FLAGSHIP_KEY]
-    assert platform.id is not None and growth.id is not None and flagship.id is not None
-    rows = [
-        (OutcomeScope.initiative, platform.id, "Cut p99 latency at the edge", "p99 latency",
-         "ms", 800.0, 480.0, 640.0, OutcomeStatus.on_track, "Aanya Sharma"),
-        (OutcomeScope.initiative, platform.id, "Halve incident MTTR", "MTTR", "min",
-         120.0, 60.0, 95.0, OutcomeStatus.at_risk, "Marcus Lee"),
-        (OutcomeScope.project, flagship.id, "Reduce gateway error rate", "5xx rate", "%",
-         1.2, 0.3, 0.5, OutcomeStatus.on_track, "Sofia Garcia"),
-        (OutcomeScope.initiative, growth.id, "Lift new-user activation", "activation", "%",
-         38.0, 55.0, 41.0, OutcomeStatus.at_risk, "Marcus Lee"),
-    ]
-    for scope, sid, statement, metric, unit, base_v, target, current, st, owner in rows:
-        await _add(session, Outcome(
-            scope_level=scope, scope_id=sid, statement=statement, metric=metric, unit=unit,
-            baseline_value=base_v, target_value=target, current_value=current, status=st,
-            target_date=_weeks(today, 12), owner_engineer_id=refs.eng(owner),
-        ))
-
-
-async def _build_docs(session: AsyncSession, refs: _Refs) -> None:
-    flagship = refs.projects[FLAGSHIP_KEY]
-    platform = refs.initiatives["PLATFORM-2026"]
-    assert flagship.id is not None and platform.id is not None
-    contract = refs.tasks[FLAGSHIP_KEY].get("API contract spec")
-    await _add(session, DocReference(
-        scope_level=DocScope.project, scope_id=flagship.id, kind=DocKind.tech_design,
-        title="Gateway technical design", url="https://demo.atlassian.net/wiki/PLAT/tech-design",
-        source=DocSource.manual, owner_engineer_id=refs.eng("Sofia Garcia"),
-    ))
-    await _add(session, DocReference(
-        scope_level=DocScope.initiative, scope_id=platform.id, kind=DocKind.prd,
-        title="Platform 2026 PRD", url="https://drive.google.com/file/d/doc-prd-001/view",
-        source=DocSource.drive,
-    ))
-    if contract is not None:
-        await _add(session, DocReference(
-            scope_level=DocScope.task, scope_id=contract.id, kind=DocKind.design,
-            title="API contract (OpenAPI)", url="https://demo.atlassian.net/wiki/PLAT/openapi",
-            source=DocSource.jira_epic, external_field="customfield_10042",
-        ))
-
-
-async def _build_retro(session: AsyncSession, refs: _Refs) -> None:
-    flagship = refs.projects[FLAGSHIP_KEY]
-    assert flagship.id is not None
-    gw = refs.components["edge-gateway"].id
-    retro = await _add(session, Retrospective(
-        project_id=flagship.id, title="API Gateway — phase 1 retrospective",
-        body=(
-            "## What went well\n- Routing shipped ahead of schedule.\n\n"
-            "## What to improve\n- Earlier security review on auth.\n\n"
-            "## Actions\n- Book the perf environment before hardening."
-        ),
-        status="open", affected_component_ids=[c for c in (gw,) if c is not None],
-    ))
-    for name, body in (
-        ("Sofia Garcia", "The contract-first approach paid off."),
-        ("Aanya Sharma", "Let's start the security review one sprint earlier next time."),
-    ):
-        await _add(session, RetrospectiveComment(
-            retrospective_id=retro.id, engineer_id=refs.eng(name), author_name=name, body=body,
-        ))
-
-
-async def _build_draft(session: AsyncSession, refs: _Refs) -> None:
-    flagship = refs.projects[FLAGSHIP_KEY]
-    assert flagship.id is not None
-    plan = await _add(session, DraftPlan(
-        project_id=flagship.id, title="Q3 hardening plan",
-        description="Proposed hardening work to review before creating Jira tickets.",
-        status="draft", source="Planning doc / PRD",
-    ))
-    epic = await _add(session, DraftTask(
-        plan_id=plan.id, name="Hardening", type=TaskType.summary, estimate_days=0, sort_order=0,
-    ))
-    leaves = [
-        ("Chaos testing", 5, 8.0),
-        ("Failover drills", 3, 5.0),
-        ("Security hardening", 4, 5.0),
-    ]
-    for i, (name, days, points) in enumerate(leaves):
-        await _add(session, DraftTask(
-            plan_id=plan.id, parent_id=epic.id, name=name, type=TaskType.task,
-            estimate_days=days, story_points=points, sort_order=i + 1,
-        ))
-
-
-async def _build_activity(session: AsyncSession, refs: _Refs) -> None:
-    flagship = refs.projects[FLAGSHIP_KEY]
-    assert flagship.id is not None
-    tel = refs.components["telemetry"].id
-    base = utcnow()
-    for w in range(8):
-        await _add(session, ActivityEvent(
-            project_id=flagship.id, kind="deploy", summary=f"Deployed gateway build #{120 + w}",
-            source="ci", component_id=tel, reference=f"deploy-{120 + w}",
-            created_at=base - timedelta(weeks=w, hours=2),
-        ))
-    await _add(session, ActivityEvent(
-        project_id=flagship.id, kind="build_failure", summary="CI failed on flaky auth test",
-        source="ci", created_at=base - timedelta(days=9),
-    ))
-    await _add(session, ActivityEvent(
-        project_id=flagship.id, kind="incident_open", summary="Elevated 5xx after deploy #124",
-        source="ci", component_id=tel, created_at=base - timedelta(days=12, hours=3),
-    ))
-    await _add(session, ActivityEvent(
-        project_id=flagship.id, kind="incident_close", summary="5xx resolved (rollback)",
-        source="ci", component_id=tel, created_at=base - timedelta(days=12),
-    ))
-
-
-# --------------------------------------------------------------------------- #
-# Connections (demo HTTP mock) + caches + a scenario
+# Connectors (demo HTTP mock) + caches + scenarios
 # --------------------------------------------------------------------------- #
 async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
     flagship = refs.projects[FLAGSHIP_KEY]
-    assert flagship.id is not None
+    fid = _req(flagship.id)
     conns: dict[str, Connection] = {}
-    for dc in catalog.demo_connections(flagship.id):
-        conn = await _add(session, Connection(
+    for dc in catalog.demo_connections(fid):
+        conns[dc.provider] = await _add(session, Connection(
             provider=Provider(dc.provider), name=dc.name, config=dict(dc.config),
-            encrypted_token=encrypt_token("demo-token"),
-        ))
-        conns[dc.provider] = conn
+            encrypted_token=encrypt_token("demo-token")))
 
-    # GitHub PR cache (matches the mock fixtures).
     prs = [
-        (128, "Add OTLP exporter to gateway", "open", "sofiagarcia"),
-        (126, "Golden-signal dashboards", "open", "tombecker"),
-        (120, "Structured request logging", "closed", "sofiagarcia"),
+        (318, "Wire secure gateway into engine", "open", "tombecker"),
+        (316, "Egress allow-list enforcement", "open", "yukitanaka"),
+        (309, "Streaming pipeline core", "closed", "tombecker"),
     ]
     for number, title, state, author in prs:
         await _add(session, PullRequest(
-            repo="canopy-co/platform", number=number, title=title, state=state,
-            url=f"https://github.com/canopy-co/platform/pull/{number}", author=author,
-        ))
+            repo="helix-io/data-plane", number=number, title=title, state=state,
+            url=f"https://github.com/helix-io/data-plane/pull/{number}", author=author))
 
-    # A Jira link from the demo epic into the flagship project.
-    jira_id = conns["jira"].id
-    assert jira_id is not None
     await _add(session, JiraLink(
-        connection_id=jira_id, jira_issue_id="910000", jira_key="PLAT-100",
-        jira_issue_type="Epic", target_type="project", target_id=flagship.id,
-    ))
-    # A couple of ExternalRefs so flagship tasks look synced from Jira.
-    for ext_id, key, name in (("910101", "PLAT-101", "API contract spec"),
-                              ("910102", "PLAT-102", "Routing & middleware")):
+        connection_id=_req(conns["jira"].id), jira_issue_id="910000", jira_key="HELIX-100",
+        jira_issue_type="Epic", target_type="project", target_id=fid))
+    for ext_id, key, name in (("910101", "HELIX-101", "Processing contract spec"),
+                              ("910102", "HELIX-102", "Streaming pipeline core")):
         task = refs.tasks[FLAGSHIP_KEY].get(name)
         if task is not None and task.id is not None:
             await _add(session, ExternalRef(
                 provider=Provider.jira, external_id=ext_id, external_key=key,
-                entity_type="task", entity_id=task.id,
-            ))
+                entity_type="task", entity_id=task.id))
 
 
-async def _build_scenario(session: AsyncSession, refs: _Refs) -> None:
-    """A minimal what-if scenario over the Platform initiative (snapshot of flagship work)."""
-    init = refs.initiatives["PLATFORM-2026"]
-    assert init.id is not None
-    scenario = await _add(session, Scenario(
-        initiative_id=init.id, title="Pull GA forward by adding an engineer",
-        description="What if we add a backend engineer to the gateway in Q3?",
-        status="draft",
-    ))
-    for key in ("APIGW", "AUTH"):
-        project = refs.projects[key]
-        assert project.id is not None
-        await _add(session, ScenarioProject(
-            scenario_id=scenario.id, project_id=project.id,
-            start_date=project.start_date, target_date=project.target_date,
-            skip_weekends=project.skip_weekends,
-        ))
-    # Clone the flagship's leaf tasks (flattened) + their FS chain.
-    clone_by_live: dict[int, ScenarioTask] = {}
-    leaves = [t for t in refs.leaf_order[FLAGSHIP_KEY] if t.type != TaskType.milestone]
-    project = refs.projects[FLAGSHIP_KEY]
-    assert project.id is not None
-    for live in leaves:
-        assert live.id is not None
-        st = await _add(session, ScenarioTask(
-            scenario_id=scenario.id, project_id=project.id, live_task_id=live.id,
-            name=live.name, type=TaskType.task, duration=live.duration,
-            percent_complete=live.percent_complete,
-            assignee_engineer_id=live.assignee_engineer_id,
-        ))
-        clone_by_live[live.id] = st
-    for prev, nxt in pairwise(leaves):
-        assert prev.id is not None and nxt.id is not None
-        pred_id = clone_by_live[prev.id].id
-        succ_id = clone_by_live[nxt.id].id
-        assert pred_id is not None and succ_id is not None
-        await _add(session, ScenarioDependency(
-            scenario_id=scenario.id, predecessor_id=pred_id, successor_id=succ_id,
-        ))
-    # An added (scenario-only) task — the extra engineer's parallel workstream.
-    await _add(session, ScenarioTask(
-        scenario_id=scenario.id, project_id=project.id, name="Parallelize rate limiting",
-        type=TaskType.task, duration=3, assignee_engineer_id=refs.eng("Yuki Tanaka"),
-    ))
+async def _build_scenarios(session: AsyncSession, refs: _Refs) -> None:
+    for sc in SCENARIOS:
+        init = refs.initiatives.get(sc.initiative_key)
+        if init is None:
+            continue
+        scenario = await _add(session, Scenario(
+            initiative_id=_req(init.id), title=sc.title, description=sc.description,
+            status="draft"))
+        for project in refs.projects.values():
+            if project.initiative_id == init.id:
+                await _add(session, ScenarioProject(
+                    scenario_id=scenario.id, project_id=_req(project.id),
+                    start_date=project.start_date, target_date=project.target_date,
+                    skip_weekends=project.skip_weekends))
+        project = refs.projects[sc.project_key]
+        leaves = [t for t in refs.leaf_order[sc.project_key] if t.type != TaskType.milestone]
+        clone_by_live: dict[int, ScenarioTask] = {}
+        for live in leaves:
+            st = await _add(session, ScenarioTask(
+                scenario_id=scenario.id, project_id=_req(project.id), live_task_id=live.id,
+                name=live.name, type=TaskType.task, duration=live.duration,
+                percent_complete=live.percent_complete,
+                assignee_engineer_id=live.assignee_engineer_id))
+            clone_by_live[_req(live.id)] = st
+        for prev, nxt in pairwise(leaves):
+            await _add(session, ScenarioDependency(
+                scenario_id=scenario.id, predecessor_id=_req(clone_by_live[_req(prev.id)].id),
+                successor_id=_req(clone_by_live[_req(nxt.id)].id)))
+        await _add(session, ScenarioTask(
+            scenario_id=scenario.id, project_id=_req(project.id), name=sc.added_task,
+            type=TaskType.task, duration=4,
+            assignee_engineer_id=refs.eng(sc.added_task_assignee)))
 
 
 # --------------------------------------------------------------------------- #
@@ -873,17 +719,8 @@ async def load_seed_data(session: AsyncSession, keep_user_ids: set[int]) -> dict
     await _build_initiatives(session, refs)
     await _build_projects(session, refs)
     await _build_allocations(session, refs)
-    await _build_architecture(session, refs)
-    await _build_specs(session, refs)
-    await _build_risk(session, refs)
-    await _build_blockers(session, refs)
-    await _build_outcomes(session, refs)
-    await _build_docs(session, refs)
-    await _build_retro(session, refs)
-    await _build_draft(session, refs)
-    await _build_activity(session, refs)
     await _build_connections(session, refs)
-    await _build_scenario(session, refs)
+    await _build_scenarios(session, refs)
     await session.commit()
     return await seed_summary(session)
 
