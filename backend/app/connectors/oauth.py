@@ -50,7 +50,9 @@ def provider_config(provider: Provider) -> OAuthProviderConfig:
         return OAuthProviderConfig(
             authorize_url="https://auth.atlassian.com/authorize",
             token_url="https://auth.atlassian.com/oauth/token",
-            scopes="read:jira-work read:jira-user offline_access",
+            # write:jira-work lets canopy create/update tickets from a reviewed draft plan
+            # (content only — status stays Jira-owned); read scopes drive sync.
+            scopes="read:jira-work write:jira-work read:jira-user offline_access",
             client_id=settings.JIRA_OAUTH_CLIENT_ID,
             client_secret=settings.JIRA_OAUTH_CLIENT_SECRET,
             extra_authorize_params={"audience": "api.atlassian.com", "prompt": "consent"},
@@ -67,7 +69,13 @@ def provider_config(provider: Provider) -> OAuthProviderConfig:
         return OAuthProviderConfig(
             authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
             token_url="https://oauth2.googleapis.com/token",
-            scopes="https://www.googleapis.com/auth/drive.readonly",
+            # drive.readonly to read design docs; drive.file to upload export snapshots
+            # (drive.file is per-file and non-restricted; drive.readonly is the CASA-restricted
+            # one — an Internal Workspace app avoids Google verification entirely).
+            scopes=(
+                "https://www.googleapis.com/auth/drive.readonly "
+                "https://www.googleapis.com/auth/drive.file"
+            ),
             client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
             client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
             extra_authorize_params={"access_type": "offline", "prompt": "consent"},
@@ -161,13 +169,24 @@ async def fetch_jira_cloud_id(
             await client.aclose()
 
 
-def create_state(connection_id: int) -> str:
+@dataclass
+class OAuthState:
+    """Decoded CSRF state: the connection being authorized, and the user when this is a
+    per-user (SSO) connect (`user_id` is None for the shared/service connection flow)."""
+
+    connection_id: int
+    user_id: int | None = None
+
+
+def create_state(connection_id: int, user_id: int | None = None) -> str:
     expire = datetime.now(UTC) + timedelta(seconds=_STATE_TTL_SECONDS)
-    payload = {"cid": connection_id, "purpose": "oauth", "exp": expire}
+    payload: dict[str, Any] = {"cid": connection_id, "purpose": "oauth", "exp": expire}
+    if user_id is not None:
+        payload["uid"] = user_id
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def verify_state(state: str) -> int | None:
+def verify_state(state: str) -> OAuthState | None:
     try:
         payload = jwt.decode(state, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
     except jwt.PyJWTError:
@@ -175,4 +194,7 @@ def verify_state(state: str) -> int | None:
     if payload.get("purpose") != "oauth":
         return None
     cid = payload.get("cid")
-    return int(cid) if cid is not None else None
+    if cid is None:
+        return None
+    uid = payload.get("uid")
+    return OAuthState(connection_id=int(cid), user_id=int(uid) if uid is not None else None)

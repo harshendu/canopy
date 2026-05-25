@@ -75,15 +75,27 @@ allowed; legacy `member` ≈ architect):
 |ADR propose / comment (G2/G6)            |rw   |rw       |rw         |rw      |r     |
 |ADR status transition / components       |rw   |rw       |rw         |r       |r     |
 |Risk mitigations (Q)                     |rw   |rw       |rw         |r       |r     |
+|Connectors: create / authorize / delete connection (J)|rw|rw    |–          |–       |–     |
+|Connectors: sync / ingest / push-to-Jira / harvest / links (J)|rw|rw|rw      |–       |–     |
+|Connectors: connect my own account — per-user SSO (J2a)|rw|rw   |rw         |rw      |–     |
+|Connectors: list + read external / export download (J6/S)|r|r   |r          |r       |r     |
 
 - **Engineer "own task":** an engineer (linked via `Engineer.user_id`) may `PATCH` only a task
   whose `assignee_engineer_id` is theirs (e.g. update progress); creating/deleting tasks, editing
   the dependency graph, and replanning stay planner-only.
+- **Connectors (J):** connection lifecycle + the shared/service OAuth authorize is `ArchitectWriter`
+  (admin/architect); sync, ingest, push-to-Jira, doc harvest, jira-links, and status-history are
+  `PlannerWriter` (+ eng-manager). Per-user SSO connect (J2a) is open to any contributor (non-viewer)
+  when the admin's `allow_user_connect` permits it. **External writes are also human-only** —
+  push-to-Jira (§C10) and export-to-Drive (§S) reject `agent`-scope tokens (§A6); ingest, the draft
+  record-push, and sync stay open to agents (internal, idempotent two-way-door). Enforced in
+  `connectors.py` / `drafts.py` / `exports.py`; the `oauth/callback` is intentionally unauthenticated
+  (trust via signed `state`).
 - **The web app hides** write controls the current role can't use (a pure `src/lib/permissions.ts`
   mirrors the matrix); the server is the real gate and returns `403` regardless.
-- **Not enforced yet:** connector writes (still any authenticated user) and the engineer
-  "own-allocation / availability" carve-out (that self-service flow is §F4, not built) — capacity
-  writes are planner-only for now. Decision **rules/approval gates** (G3) remain advisory.
+- **Not enforced yet:** the engineer "own-allocation / availability" carve-out (that self-service
+  flow is §F4, not built) — capacity writes are planner-only for now. Decision **rules/approval
+  gates** (G3) remain advisory.
 
 ### A4. Get current user
 - **API:** `GET /api/v1/auth/me`. The web app caches this to gate admin-only nav.
@@ -133,6 +145,36 @@ reads stay open everywhere; writes are still gated by `role`. Personas are a **l
   anywhere — it only sets where you land.
 - **Not built:** bespoke per-persona *dashboards* (each persona sees the shared surfaces at a
   default altitude, not a custom-built page); admin **UI** to edit a user's function (API-only).
+
+### A8. Integration strategy — per-provider read/write policy *(admin)* **[new]**
+Setting up connectors is heavy and a single shared token can't always fit, so the **admin chooses,
+per provider** (Jira / GitHub / Drive), *how* canopy reads and writes — independently on a **read
+axis** and a **write axis**. The policy is the control plane every connector path consults; the
+absence of a setting reads back as the default (**direct/direct**), so existing installs are
+unaffected until an admin opts in. (Phase 1 of a larger plan — per-user SSO, MCP-orchestrated
+ingest, and file-drop ingest are later phases.)
+- **Read strategy** — `direct` (canopy polls / accepts webhooks using its **own credentials** when
+  available, degrading silently when not), or `mcp` / `file` (canopy does **not** call the provider
+  API — data arrives via Claude over MCP or a file drop). *Phase 1 wires `direct` only; `mcp`/`file`
+  are shown but not yet selectable.*
+- **Write strategy** — `direct` (canopy writes with its own credentials), `mcp` (the write is
+  **routed through Claude**; canopy's direct write paths refuse with `403`), or `disabled`
+  (read-only — writes blocked).
+- **UI:** `/admin/integrations` (admin only, in the sidebar for admins) — one row per provider with
+  a Reads and a Writes select (`frontend/src/pages/AdminIntegrations.tsx`).
+- **API:** `GET /api/v1/admin/integrations` (all providers, defaults synthesized) and
+  `PATCH /api/v1/admin/integrations/{provider}` — both admin-gated (`AdminUser`).
+- **Enforcement** (`app/services/integration_policy.py`): the reconciliation poll
+  (`app/workers/worker.py`) and webhook intake (`app/webhooks/jira.py`, `github.py`) stand down when
+  reads ≠ `direct`; the direct write paths — draft **push-to-Jira** (§C10) and **export-to-Drive**
+  (§S) — return `403` when writes ≠ `direct`. Orthogonal to the bounded-agency gate (§A6).
+- **Built in Phase 2:** per-user SSO connections (`allow_user_connect` + per-user OAuth, §J2a).
+- **Built in Phase 3:** MCP-orchestrated ingest (Claude pushes external data in idempotently) +
+  the draft push write-back + the scheduled-Claude-job pattern (§J3a) — so the `mcp` read strategy
+  and `mcp` write strategy are now functional, not inert.
+- **Built in Phase 4:** file-drop ingest (§J3b) — an upload endpoint + a watched local/S3 drop
+  folder — so the `file` read strategy is now functional too. The full integration-strategy matrix
+  is in place.
 
 ---
 
@@ -748,14 +790,35 @@ component map + ADRs and maintains the queue.
 - **API:** `POST /api/v1/connectors/connections` (token is encrypted at rest) · **MCP:**
   `list_connections`.
 
-### J2. Connect via OAuth
+### J2. Connect via OAuth (shared service connection)
 - **UI:** on a connection row → **Connect** (or **Reconnect**). The browser is redirected to the
   provider's consent screen; after approval the provider redirects back and the connection shows
   **authorized**.
 - **API:** `GET /api/v1/connectors/oauth/{connection_id}/authorize` → provider URL (CSRF `state` is a
   signed JWT); provider redirects to `GET /api/v1/connectors/oauth/callback`, which exchanges the
   code, stores encrypted access + refresh tokens, and (for Jira) resolves the cloud id.
+- **Scopes:** Jira `read:jira-work write:jira-work read:jira-user offline_access`; Google Drive
+  `drive.readonly` + `drive.file` (`drive.readonly` is the CASA-restricted one — an **Internal
+  Workspace** app avoids Google verification); GitHub `repo read:org`.
 - **Setup:** requires registered OAuth apps + `*_OAUTH_CLIENT_ID/SECRET` env vars.
+
+### J2a. Per-user SSO — connect your own account **[new — Phase 2]**
+When the admin enables `allow_user_connect` for a provider (§A8), a `Connection` is the
+**integration definition** (target config + an *optional* shared service token) and each user can
+attach their **own** OAuth credential to it — canopy then reads/writes **as that user**.
+- **UI:** `/connectors` shows "per-user SSO available" on eligible connections with a **Connect my
+  account** button (and "your account connected" once done).
+- **API:** `POST /api/v1/connectors/oauth/{connection_id}/connect-me` (any authenticated user; 403 if
+  the provider's `allow_user_connect` is off). The signed `state` carries the user id so the
+  (unauthenticated) callback binds the tokens to a **`UserConnection`** (the user's personal
+  credential, with **its own watermark**). `GET /connectors/connections` reports `allow_user_connect`
+  + `user_connected` per row.
+- **Resolution:** background reads (the reconciliation poll) use the shared service token; a
+  **user-triggered** read (Sync now) uses the caller's own credential when present (else shared);
+  **writes** (push-to-Jira §C10, export-to-Drive §S) use the caller's own credential for attribution,
+  falling back to the shared token. A narrow-access user's pull is **non-destructive** — sync is
+  upsert-only and each `UserConnection` keeps its own watermark, so it can't remove what the service
+  token populated or disturb the service cursor (`app/services/integration_policy.py`).
 
 ### J3. Sync from Jira
 - **UI:** on a Jira connection → **Sync now** (full sync). Imports epics→summary tasks and
@@ -765,6 +828,46 @@ component map + ADRs and maintains the queue.
   **MCP:** `trigger_jira_sync`.
 - **Background:** an arq worker runs an incremental reconciliation poll on a cron as the correctness
   backstop behind webhooks.
+- **Note:** the poll, webhooks, and "Sync now" all **stand down** when the provider's read strategy
+  is `mcp`/`file` (§A8) — the data then arrives via ingest (§J3a) or a file drop (Phase 4).
+
+### J3a. MCP-orchestrated ingest — Claude pushes data in **[new — Phase 3]**
+When a provider's reads (or writes) are **MCP-managed** (admin set them to `mcp`, §A8), canopy
+doesn't call the provider API. Instead **Claude** reads the external system with its own connectors
+and pushes **normalized** data into canopy idempotently — the MCP twin of the direct sync. Every
+ingest upserts via `ExternalRef` (never deletes), maps into the connection's configured project,
+and (issues) replans on new tasks; ingest does **not** advance the connection watermark.
+- **Issues → tasks:** `POST /api/v1/connectors/connections/{id}/ingest/issues`
+  (`{issues:[{external_id, external_key, summary, status, issue_type, parent_external_id,
+  updated}]}`) · **MCP:** `ingest_jira_issues`. Epics→summary; re-ingest updates, never duplicates.
+- **PRs → cache:** `POST .../ingest/pull-requests` · **MCP:** `ingest_github_pull_requests`.
+- **Draft push write-back (writes=`mcp`):** when `push_draft_to_jira` is disabled by policy, Claude
+  creates the tickets itself then `POST /api/v1/draft-plans/{id}/record-push`
+  (`{results:[{draft_task_id, jira_issue_id, jira_key}]}`) stamps each task and flips the plan to
+  `synced` (idempotent) · **MCP:** `record_draft_push`.
+- **Auth:** ingest + record-push are **planner-gated but not human-only** — internal, idempotent
+  two-way-door writes, so a scheduled Claude job using an **agent-scope token** (§A6) may call them
+  (the external read/write happens through Claude's own connectors, outside canopy's agency gate).
+- **Scheduling:** lives on the architect's Claude account (`/loop` or a scheduled task); canopy
+  doesn't drive it. Runbook: skill **`mcp-ingest`**. Logic: `app/services/ingest.py` (shares the
+  task-upsert core with the Jira sync so the two paths can't drift).
+
+### J3b. File-drop ingest — import a JSON/CSV export **[new — Phase 4]**
+A second *transport* for the same ingest (§J3a): drop an export file and canopy parses + loads it
+idempotently. The entity type is inferred from the connection's provider (Jira→issues,
+GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the file). Two ways in:
+- **Upload:** `/connectors` → **Import file** on a Jira/GitHub connection (or
+  `POST /api/v1/connectors/connections/{id}/ingest/file`, multipart; planner-gated, agent-allowed).
+  Accepts **JSON** (an array of `IngestIssue`/`IngestPullRequest` objects) or **CSV** (header row =
+  field names). Returns `{provider, created, updated, skipped, parsed, errors}`.
+- **Watched shared storage:** an arq cron (`poll_file_drops`) ingests files dropped into a
+  configured backend — **local** directory or **S3** bucket (`[s3]` extra) by deployment, *not*
+  Drive. Layout `<root>/<connection_id>/*.{json,csv}`; each file is moved to `processed/` (or
+  `failed/` + an `.error` note) so the poll is idempotent without a tracking table. Disabled when
+  no backend is configured. Config: `FILE_DROP_BACKEND` (`local`|`s3`), `FILE_DROP_LOCAL_DIR` /
+  `FILE_DROP_S3_BUCKET` / `FILE_DROP_S3_PREFIX`, `FILE_DROP_POLL_MINUTES`.
+- Logic: `app/services/file_ingest.py` (parser) + `app/services/file_drop.py` (storage backends +
+  poll), reusing the §J3a idempotent ingest.
 
 ### J4. Receive provider webhooks (live updates)
 - **Flow:** Jira/GitHub POST to `/webhooks/jira` / `/webhooks/github`. The receiver verifies the HMAC

@@ -3,6 +3,7 @@ import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom"
 
 import { useAuth } from "./lib/auth";
 import { useCurrentUser } from "./lib/useCurrentUser";
+import { canContribute } from "./lib/permissions";
 import { personaHome } from "./lib/persona";
 import { useEventStream } from "./lib/useEventStream";
 import Login from "./pages/Login";
@@ -17,6 +18,7 @@ import Decisions from "./pages/Decisions";
 import MyWorkspace from "./pages/MyWorkspace";
 import MyToday from "./pages/MyToday";
 import AdminUsers from "./pages/AdminUsers";
+import AdminIntegrations from "./pages/AdminIntegrations";
 import Team from "./pages/Team";
 
 const Portfolio = lazy(() => import("./pages/Portfolio")); // Recharts — load on demand
@@ -60,12 +62,19 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
           <NavLink to="/team" className={navClass}>
             Team
           </NavLink>
-          <NavLink to="/connectors" className={navClass}>
-            Connectors
-          </NavLink>
+          {canContribute(me?.role) && (
+            <NavLink to="/connectors" className={navClass}>
+              Connectors
+            </NavLink>
+          )}
           {me?.role === "admin" && (
             <NavLink to="/admin/users" className={navClass}>
               Users
+            </NavLink>
+          )}
+          {me?.role === "admin" && (
+            <NavLink to="/admin/integrations" className={navClass}>
+              Integrations
             </NavLink>
           )}
         </nav>
@@ -187,6 +196,14 @@ export default function App() {
         element={
           <ProtectedLayout>
             <AdminUsers />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/admin/integrations"
+        element={
+          <ProtectedLayout>
+            <AdminIntegrations />
           </ProtectedLayout>
         }
       />

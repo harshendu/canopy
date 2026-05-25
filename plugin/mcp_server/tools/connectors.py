@@ -104,3 +104,33 @@ def register(mcp, client) -> None:
                 "source": "agent",
             },
         )
+
+    @mcp.tool
+    async def ingest_jira_issues(connection_id: int, issues: list[dict]) -> dict:
+        """Push Jira issues you've read yourself (e.g. via your Jira tools) into canopy as tasks,
+        idempotently. Use this when the connection's reads are MCP-managed (canopy doesn't poll
+        Jira) — it's the MCP twin of `trigger_jira_sync`.
+
+        Each issue is a dict: {"external_id": "<jira issue id>", "external_key": "PROJ-123",
+        "summary": "...", "status": "In Progress", "issue_type": "Story", "parent_external_id":
+        "<parent jira id or null>", "updated": "<jira updated timestamp>"}. Epics become summary
+        tasks; re-ingesting the same issue updates (never duplicates). Status is mirrored
+        read-only. Issues map into the connection's configured project; new tasks trigger a replan.
+        """
+        return await client.post(
+            f"/connectors/connections/{connection_id}/ingest/issues", {"issues": issues}
+        )
+
+    @mcp.tool
+    async def ingest_github_pull_requests(connection_id: int, pull_requests: list[dict]) -> dict:
+        """Push GitHub pull requests you've read yourself into canopy's PR cache, idempotently
+        (the MCP twin of the GitHub PR webhook, for when the connection's reads are MCP-managed).
+
+        Each PR is a dict: {"number": 42, "title": "...", "state": "open", "url": "https://...",
+        "author": "octocat", "updated": "<updated timestamp>"}. Keyed on (repo, number); the repo
+        comes from the connection config. Re-ingesting the same PR updates it.
+        """
+        return await client.post(
+            f"/connectors/connections/{connection_id}/ingest/pull-requests",
+            {"pull_requests": pull_requests},
+        )

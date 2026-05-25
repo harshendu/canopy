@@ -13,9 +13,66 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt_token, encrypt_token
 from app.models.base import Provider, utcnow
-from app.models.integration import Connection
+from app.models.integration import Connection, UserConnection
 
 _REFRESH_SKEW_SECONDS = 60
+
+
+class EffectiveCredential:
+    """A user's personal token (a `UserConnection`) layered over a shared integration's config
+    (its parent `Connection`). Connectors run against this to act *as the user* without
+    duplicating the target config: `provider`/`config` are read from the parent connection,
+    while the token, refresh token, expiry, and watermark read and **write through to the
+    `UserConnection` row** (so token rotation and the per-user incremental cursor persist there,
+    not on the shared connection)."""
+
+    def __init__(self, connection: Connection, user_connection: UserConnection) -> None:
+        self._connection = connection
+        self._user = user_connection
+
+    @property
+    def provider(self) -> Provider:
+        return self._connection.provider
+
+    @property
+    def config(self) -> dict:
+        return self._connection.config
+
+    @property
+    def encrypted_token(self) -> str | None:
+        return self._user.encrypted_token
+
+    @encrypted_token.setter
+    def encrypted_token(self, value: str | None) -> None:
+        self._user.encrypted_token = value
+
+    @property
+    def encrypted_refresh_token(self) -> str | None:
+        return self._user.encrypted_refresh_token
+
+    @encrypted_refresh_token.setter
+    def encrypted_refresh_token(self, value: str | None) -> None:
+        self._user.encrypted_refresh_token = value
+
+    @property
+    def token_expires_at(self) -> datetime | None:
+        return self._user.token_expires_at
+
+    @token_expires_at.setter
+    def token_expires_at(self, value: datetime | None) -> None:
+        self._user.token_expires_at = value
+
+    @property
+    def watermark(self) -> str | None:
+        return self._user.watermark
+
+    @watermark.setter
+    def watermark(self, value: str | None) -> None:
+        self._user.watermark = value
+
+
+# What a connector can run against: a shared Connection, or a user's token over a shared config.
+Credential = Connection | EffectiveCredential
 
 
 @dataclass
@@ -37,7 +94,7 @@ class SyncResult:
 class Connector(ABC):
     provider: Provider
 
-    def __init__(self, connection: Connection, session: AsyncSession) -> None:
+    def __init__(self, connection: Credential, session: AsyncSession) -> None:
         self.connection = connection
         self.session = session
         self.config = connection.config or {}
@@ -101,7 +158,7 @@ def register(provider: Provider) -> Callable[[type[Connector]], type[Connector]]
     return deco
 
 
-def get_connector(connection: Connection, session: AsyncSession) -> Connector:
+def get_connector(connection: Credential, session: AsyncSession) -> Connector:
     try:
         cls = _REGISTRY[connection.provider]
     except KeyError as exc:  # pragma: no cover - defensive

@@ -3,7 +3,27 @@ from datetime import datetime
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field
 
-from app.models.base import Provider, TimestampMixin
+from app.models.base import Provider, ReadStrategy, TimestampMixin, WriteStrategy
+
+
+class IntegrationSetting(TimestampMixin, table=True):
+    """Admin-chosen integration policy for one provider: how reads and writes flow.
+
+    One row per provider. The **absence** of a row means the default — direct reads + direct
+    writes (canopy uses its own credentials) — which preserves the pre-policy behavior so
+    existing installs are unaffected until an admin opts in.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("provider", name="uq_integration_setting_provider"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider: Provider = Field(index=True)
+    read_strategy: ReadStrategy = Field(default=ReadStrategy.direct)
+    write_strategy: WriteStrategy = Field(default=WriteStrategy.direct)
+    # Phase-2 hook: whether non-admin users may connect their own (per-user OAuth) account.
+    allow_user_connect: bool = False
 
 
 class Connection(TimestampMixin, table=True):
@@ -23,6 +43,32 @@ class Connection(TimestampMixin, table=True):
     @property
     def authorized(self) -> bool:
         """True once a token (API token or OAuth access token) has been stored."""
+        return self.encrypted_token is not None
+
+
+class UserConnection(TimestampMixin, table=True):
+    """A user's personal OAuth credential attached to a shared `Connection` (the integration
+    definition). canopy acts **as the user** with this token; the target config (Jira site/
+    project, repo, Drive) comes from the parent `Connection`. Each user has at most one
+    credential per connection, with **its own watermark** so a narrow-access pull can't disturb
+    the service connection's incremental cursor or remove what the service token populated.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("connection_id", "user_id", name="uq_user_connection"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    connection_id: int = Field(foreign_key="connection.id", index=True)
+    user_id: int = Field(foreign_key="app_user.id", index=True)
+    encrypted_token: str | None = None
+    encrypted_refresh_token: str | None = None
+    token_expires_at: datetime | None = None
+    watermark: str | None = None
+    active: bool = True
+
+    @property
+    def authorized(self) -> bool:
         return self.encrypted_token is not None
 
 

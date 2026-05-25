@@ -75,6 +75,32 @@ class Provider(StrEnum):
     gdrive = "gdrive"
 
 
+class ReadStrategy(StrEnum):
+    """How canopy reads a provider's data (per-provider, admin-chosen integration policy).
+
+    `direct` polls / accepts webhooks using canopy's own credentials (the shared service
+    connection today; a per-user OAuth connection in a later phase) **when they are available**,
+    degrading silently when they are not. `mcp` / `file` mean canopy does not call the provider
+    API itself — data arrives via Claude over MCP, or via a file drop into shared storage.
+    """
+
+    direct = "direct"
+    mcp = "mcp"
+    file = "file"
+
+
+class WriteStrategy(StrEnum):
+    """How writes back to a provider happen (per-provider, admin-chosen integration policy).
+
+    `direct` writes from canopy with its own credentials; `mcp` routes the write through Claude
+    (canopy's own direct write paths refuse); `disabled` blocks writes entirely.
+    """
+
+    direct = "direct"
+    mcp = "mcp"
+    disabled = "disabled"
+
+
 class UserRole(StrEnum):
     admin = "admin"
     architect = "architect"

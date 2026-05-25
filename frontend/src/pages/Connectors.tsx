@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { Connection, Provider } from "../api/types";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
 
 const CONFIG_HINTS: Record<Provider, string> = {
   jira: '{"base_url":"https://you.atlassian.net","email":"you@co.com","project_id":1,"jira_project_key":"PLAT"}',
@@ -15,24 +17,41 @@ export default function Connectors() {
   const qc = useQueryClient();
   const [searchParams] = useSearchParams();
   const justConnected = searchParams.get("connected");
+  const { data: me } = useCurrentUser();
+  const mayManage = canWriteProjects(me?.role); // admin/architect: create + shared-connection OAuth
+  const mayPlan = isPlanner(me?.role); // + eng-manager: sync + file import
+  const mayConnectSelf = canContribute(me?.role); // any non-viewer: connect their own account
   const [provider, setProvider] = useState<Provider>("jira");
   const [name, setName] = useState("");
   const [token, setToken] = useState("");
   const [config, setConfig] = useState(CONFIG_HINTS.jira);
   const [error, setError] = useState<string | null>(null);
-  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null);
 
   const connections = useQuery({
     queryKey: ["connections"],
     queryFn: () => api.get<Connection[]>("/connectors/connections"),
   });
 
-  async function connectOAuth(connectionId: number) {
-    const { authorize_url } = await api.get<{ authorize_url: string }>(
-      `/connectors/oauth/${connectionId}/authorize`,
-    );
-    window.location.href = authorize_url;
-  }
+  // OAuth flows redirect on success; surface failures (misconfig / policy) instead of failing silently.
+  const oauthConnect = useMutation({
+    mutationFn: (connectionId: number) =>
+      api.get<{ authorize_url: string }>(`/connectors/oauth/${connectionId}/authorize`),
+    onSuccess: ({ authorize_url }) => {
+      window.location.href = authorize_url;
+    },
+    onError: (e: Error) => setMsg({ text: `Connect failed: ${e.message}`, error: true }),
+  });
+
+  // Per-user SSO: authorize the current user's own account against this integration.
+  const connectMe = useMutation({
+    mutationFn: (connectionId: number) =>
+      api.post<{ authorize_url: string }>(`/connectors/oauth/${connectionId}/connect-me`),
+    onSuccess: ({ authorize_url }) => {
+      window.location.href = authorize_url;
+    },
+    onError: (e: Error) => setMsg({ text: `Connect failed: ${e.message}`, error: true }),
+  });
 
   const create = useMutation({
     mutationFn: () => {
@@ -62,8 +81,35 @@ export default function Connectors() {
     mutationFn: (connectionId: number) =>
       api.post<Record<string, number>>(`/connectors/connections/${connectionId}/sync`),
     onSuccess: (res) =>
-      setSyncMsg(`Synced: ${res.created} created, ${res.updated} updated, ${res.skipped} skipped`),
-    onError: (e: Error) => setSyncMsg(`Sync failed: ${e.message}`),
+      setMsg({
+        text: `Synced: ${res.created} created, ${res.updated} updated, ${res.skipped} skipped`,
+        error: false,
+      }),
+    onError: (e: Error) => setMsg({ text: `Sync failed: ${e.message}`, error: true }),
+  });
+
+  // File-drop ingest: upload a JSON/CSV export; canopy parses + loads it idempotently.
+  const importFile = useMutation({
+    mutationFn: ({ connectionId, file }: { connectionId: number; file: File }) => {
+      const form = new FormData();
+      form.append("file", file);
+      return api.upload<{
+        created: number;
+        updated: number;
+        skipped: number;
+        parsed: number;
+        errors: string[];
+      }>(`/connectors/connections/${connectionId}/ingest/file`, form);
+    },
+    onSuccess: (res) => {
+      const errs = res.errors.length ? `, ${res.errors.length} row error(s)` : "";
+      setMsg({
+        text: `Imported: ${res.created} created, ${res.updated} updated, ${res.skipped} skipped${errs}`,
+        error: res.errors.length > 0,
+      });
+      qc.invalidateQueries({ queryKey: ["connections"] });
+    },
+    onError: (e: Error) => setMsg({ text: `Import failed: ${e.message}`, error: true }),
   });
 
   return (
@@ -77,10 +123,12 @@ export default function Connectors() {
       )}
 
       <p className="text-sm text-slate-500">
-        Add a connection, then either paste an API token above or use{" "}
-        <span className="font-medium">Connect</span> to authorize via OAuth.
+        {mayManage
+          ? "Add a connection, then either paste an API token or use Connect to authorize via OAuth."
+          : "You can view connections and, where enabled, connect your own account. Managing shared connections requires an architect or admin."}
       </p>
 
+      {mayManage && (
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -126,10 +174,17 @@ export default function Connectors() {
           Add connection
         </button>
       </form>
+      )}
 
-      {syncMsg && (
-        <div className="rounded border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600">
-          {syncMsg}
+      {msg && (
+        <div
+          className={`rounded border px-4 py-2 text-sm ${
+            msg.error
+              ? "border-red-200 bg-red-50 text-red-700"
+              : "border-canopy-500/30 bg-canopy-50 text-canopy-700"
+          }`}
+        >
+          {msg.text}
         </div>
       )}
 
@@ -153,21 +208,75 @@ export default function Connectors() {
               {c.watermark && (
                 <span className="ml-2 text-xs text-slate-400">synced ≥ {c.watermark}</span>
               )}
+              {(c.read_strategy !== "direct" || c.write_strategy !== "direct") && (
+                <span
+                  className="ml-2 rounded bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700"
+                  title={`reads: ${c.read_strategy} · writes: ${c.write_strategy}`}
+                >
+                  MCP-managed
+                </span>
+              )}
+              {c.allow_user_connect && (
+                <span
+                  className={`ml-2 rounded px-2 py-0.5 text-xs ${
+                    c.user_connected
+                      ? "bg-green-100 text-green-700"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  {c.user_connected ? "your account connected" : "per-user SSO available"}
+                </span>
+              )}
             </span>
             <span className="flex gap-2">
-              <button
-                onClick={() => connectOAuth(c.id)}
-                className="rounded border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
-              >
-                {c.authorized ? "Reconnect" : "Connect"}
-              </button>
-              <button
-                onClick={() => sync.mutate(c.id)}
-                disabled={sync.isPending}
-                className="rounded border border-canopy-500 px-3 py-1 text-xs font-medium text-canopy-700 disabled:opacity-50"
-              >
-                Sync now
-              </button>
+              {mayManage && (
+                <button
+                  onClick={() => oauthConnect.mutate(c.id)}
+                  className="rounded border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  {c.authorized ? "Reconnect" : "Connect"}
+                </button>
+              )}
+              {c.allow_user_connect && mayConnectSelf && (
+                <button
+                  onClick={() => connectMe.mutate(c.id)}
+                  className="rounded border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  {c.user_connected ? "Reconnect my account" : "Connect my account"}
+                </button>
+              )}
+              {mayPlan && (
+                <button
+                  onClick={() => sync.mutate(c.id)}
+                  disabled={sync.isPending || c.read_strategy !== "direct"}
+                  title={
+                    c.read_strategy !== "direct"
+                      ? "Reads are managed via MCP/file for this provider — Claude ingests the data."
+                      : undefined
+                  }
+                  className="rounded border border-canopy-500 px-3 py-1 text-xs font-medium text-canopy-700 disabled:opacity-50"
+                >
+                  Sync now
+                </button>
+              )}
+              {mayPlan && c.provider !== "gdrive" && (
+                <label
+                  className="cursor-pointer rounded border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  title="Import a JSON or CSV export — canopy parses and loads it idempotently."
+                >
+                  Import file
+                  <input
+                    type="file"
+                    accept=".json,.csv"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) importFile.mutate({ connectionId: c.id, file });
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              )}
             </span>
           </li>
         ))}

@@ -244,6 +244,24 @@ export interface Connection {
   watermark: string | null;
   active: boolean;
   authorized: boolean;
+  // Per-user SSO (Phase 2): whether this provider permits per-user connect (admin policy),
+  // and whether the current user has connected their own account to this connection.
+  allow_user_connect: boolean;
+  user_connected: boolean;
+  // Integration policy (Phase 1/3): so the UI can show when reads/writes are MCP-managed.
+  read_strategy: ReadStrategy;
+  write_strategy: WriteStrategy;
+}
+
+// Per-provider integration policy (admin-chosen). See backend app/services/integration_policy.py.
+export type ReadStrategy = "direct" | "mcp" | "file";
+export type WriteStrategy = "direct" | "mcp" | "disabled";
+
+export interface IntegrationSetting {
+  provider: Provider;
+  read_strategy: ReadStrategy;
+  write_strategy: WriteStrategy;
+  allow_user_connect: boolean;
 }
 
 export interface ADR {

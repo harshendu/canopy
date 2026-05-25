@@ -12,6 +12,7 @@ from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, HumanOnly, PlannerWriter, SessionDep
 from app.core.events import publish
+from app.models.base import Provider
 from app.models.draft import DraftPlan, DraftTask
 from app.models.project import Project
 from app.schemas.entities import (
@@ -21,11 +22,13 @@ from app.schemas.entities import (
     DraftPlanUpdate,
     DraftPushRequest,
     DraftPushResult,
+    DraftRecordPushRequest,
+    DraftRecordPushResult,
     DraftTaskCreate,
     DraftTaskRead,
     DraftTaskUpdate,
 )
-from app.services import draft_sync
+from app.services import draft_sync, integration_policy
 
 router = APIRouter()
 
@@ -151,9 +154,31 @@ async def delete_draft_task(session: SessionDep, _: PlannerWriter, task_id: int)
 
 @router.post("/draft-plans/{plan_id}/push-to-jira", response_model=DraftPushResult)
 async def push_draft_to_jira(
-    session: SessionDep, _: PlannerWriter, __: HumanOnly, plan_id: int, payload: DraftPushRequest
+    session: SessionDep,
+    user: PlannerWriter,
+    __: HumanOnly,
+    plan_id: int,
+    payload: DraftPushRequest,
 ) -> DraftPushResult:
+    write = await integration_policy.resolve_write(session, Provider.jira)
+    if not write.allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=write.reason)
     try:
-        return await draft_sync.push_plan_to_jira(session, plan_id, payload.connection_id)
+        return await draft_sync.push_plan_to_jira(
+            session, plan_id, payload.connection_id, user.id
+        )
+    except draft_sync.DraftPushError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/draft-plans/{plan_id}/record-push", response_model=DraftRecordPushResult)
+async def record_draft_push(
+    session: SessionDep, _: PlannerWriter, plan_id: int, payload: DraftRecordPushRequest
+) -> DraftRecordPushResult:
+    """Write-back for `write_strategy=mcp`: Claude created the Jira tickets itself; record their
+    ids here so re-pushing is idempotent and the plan flips to synced. Internal write — allowed
+    for agent-scope tokens (no `HumanOnly` gate), unlike the direct push above."""
+    try:
+        return await draft_sync.record_external_push(session, plan_id, payload.results)
     except draft_sync.DraftPushError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

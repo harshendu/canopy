@@ -12,12 +12,11 @@ import base64
 from typing import Any
 
 import httpx
-from sqlmodel import select
 
 from app.connectors.base import Connector, SyncResult, register
 from app.connectors.http import request_with_retry
 from app.models.base import Provider
-from app.models.integration import PullRequest
+from app.services import ingest
 
 _API = "https://api.github.com"
 
@@ -97,31 +96,18 @@ class GitHubConnector(Connector):
         return SyncResult(provider="github")
 
     async def _upsert_pull_request(self, repo: str, pr: dict[str, Any]) -> str:
-        """Upsert a PullRequest cache row from a webhook `pull_request`; returns the action."""
-        number = pr["number"]
-        result = await self.session.execute(
-            select(PullRequest).where(PullRequest.repo == repo, PullRequest.number == number)
+        """Upsert a PullRequest cache row from a webhook `pull_request`; returns the action.
+        Delegates to the shared cache upsert so the webhook and MCP/file ingest stay consistent."""
+        return await ingest.upsert_pull_request(
+            self.session,
+            repo=repo,
+            number=pr["number"],
+            title=pr.get("title", ""),
+            state=pr.get("state", "open"),
+            url=pr.get("html_url"),
+            author=(pr.get("user") or {}).get("login"),
+            updated=pr.get("updated_at"),
         )
-        existing = result.scalar_one_or_none()
-        if existing is None:
-            self.session.add(
-                PullRequest(
-                    repo=repo,
-                    number=number,
-                    title=pr.get("title", ""),
-                    state=pr.get("state", "open"),
-                    url=pr.get("html_url"),
-                    author=(pr.get("user") or {}).get("login"),
-                    remote_updated=pr.get("updated_at"),
-                )
-            )
-            return "created"
-        existing.title = pr.get("title", existing.title)
-        existing.state = pr.get("state", existing.state)
-        existing.url = pr.get("html_url")
-        existing.author = (pr.get("user") or {}).get("login")
-        existing.remote_updated = pr.get("updated_at")
-        return "updated"
 
     async def handle_webhook(self, payload: dict[str, Any]) -> SyncResult:
         """Handle a GitHub `pull_request` event by upserting the PR cache."""

@@ -146,6 +146,7 @@ function DraftPlanDetailPanel({
   const [parentId, setParentId] = useState<number | "">("");
   const [connId, setConnId] = useState<number | "">("");
   const [pushResult, setPushResult] = useState<DraftPushResult | null>(null);
+  const [pushError, setPushError] = useState<string | null>(null);
 
   const detail = useQuery({
     queryKey: ["draft-plan", planId],
@@ -189,7 +190,11 @@ function DraftPlanDetailPanel({
     (c) => c.provider === "jira" && c.active && Number(c.config.project_id) === projectId,
   );
   const resolvedConnId = connId === "" && jiraConns.length === 1 ? jiraConns[0].id : connId;
-  const canPush = mayPlan && jiraConns.length > 0 && resolvedConnId !== "";
+  const resolvedConn = jiraConns.find((c) => c.id === resolvedConnId);
+  // The direct push path is only available when the provider's writes are `direct`. Under
+  // `mcp`/`disabled`, canopy refuses (Claude creates the tickets and records them back instead).
+  const writeDirect = resolvedConn?.write_strategy === "direct";
+  const canPush = mayPlan && jiraConns.length > 0 && resolvedConnId !== "" && writeDirect;
 
   const push = useMutation({
     mutationFn: () =>
@@ -198,8 +203,10 @@ function DraftPlanDetailPanel({
       }),
     onSuccess: (res) => {
       setPushResult(res);
+      setPushError(null);
       invalidate();
     },
+    onError: (e: Error) => setPushError(e.message),
   });
 
   if (!detail.data) return <div className="mt-1 text-xs text-slate-400">Loading…</div>;
@@ -339,7 +346,14 @@ function DraftPlanDetailPanel({
                 No Jira connection is configured for this project.
               </span>
             )}
+            {jiraConns.length > 0 && resolvedConnId !== "" && !writeDirect && (
+              <span className="text-xs text-amber-700">
+                Jira writes are {resolvedConn?.write_strategy}-managed — create the tickets via
+                Claude, then record them back (canopy won't push directly).
+              </span>
+            )}
           </div>
+          {pushError && <p className="text-xs text-red-600">Push failed: {pushError}</p>}
           {pushResult && (
             <div className="space-y-1 text-xs">
               <div className="text-slate-600">

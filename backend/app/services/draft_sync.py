@@ -18,7 +18,13 @@ from app.core.events import publish
 from app.models.base import Provider, utcnow
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import Connection
-from app.schemas.entities import DraftPushResult, DraftPushTaskResult
+from app.schemas.entities import (
+    DraftPushRecord,
+    DraftPushResult,
+    DraftPushTaskResult,
+    DraftRecordPushResult,
+)
+from app.services import integration_policy
 
 
 class DraftPushError(Exception):
@@ -67,18 +73,26 @@ def _ordered_tasks(tasks: list[DraftTask]) -> list[DraftTask]:
 
 
 async def push_plan_to_jira(
-    session: AsyncSession, plan_id: int, connection_id: int | None = None
+    session: AsyncSession,
+    plan_id: int,
+    connection_id: int | None = None,
+    user_id: int | None = None,
 ) -> DraftPushResult:
     plan = await session.get(DraftPlan, plan_id)
     if plan is None:
         raise DraftPushError("Draft plan not found")
 
     connection = await _resolve_jira_connection(session, plan.project_id, connection_id)
-    if not connection.authorized:
-        raise DraftPushError("Jira connection is not authorized yet")
     assert connection.id is not None
 
-    connector = get_connector(connection, session)
+    # Write as the caller when they've connected their own account (attribution); else shared.
+    credential, reason = await integration_policy.resolve_write_credential(
+        session, connection, user_id
+    )
+    if credential is None:
+        raise DraftPushError(reason)
+
+    connector = get_connector(credential, session)
     if not isinstance(connector, JiraConnector):  # pragma: no cover - defensive
         raise DraftPushError("Connection is not a Jira connection")
 
@@ -153,3 +167,33 @@ async def push_plan_to_jira(
         failed=failed,
         results=results,
     )
+
+
+async def record_external_push(
+    session: AsyncSession, plan_id: int, records: list[DraftPushRecord]
+) -> DraftRecordPushResult:
+    """Write-back for `write_strategy=mcp`: Claude created the Jira tickets itself, so it records
+    each draft task's resulting Jira id/key here and we flip the plan to `synced`. Idempotent —
+    re-recording the same ids stamps the same values, so a re-push won't duplicate tickets."""
+    plan = await session.get(DraftPlan, plan_id)
+    if plan is None:
+        raise DraftPushError("Draft plan not found")
+
+    rows = await session.execute(select(DraftTask).where(DraftTask.plan_id == plan_id))
+    by_id = {t.id: t for t in rows.scalars().all()}
+
+    recorded = 0
+    for record in records:
+        task = by_id.get(record.draft_task_id)
+        if task is None:
+            raise DraftPushError(f"Draft task {record.draft_task_id} is not in plan {plan_id}")
+        task.jira_issue_id = record.jira_issue_id
+        task.jira_key = record.jira_key
+        recorded += 1
+
+    if recorded:
+        plan.status = "synced"
+        plan.synced_at = utcnow()
+    await session.commit()
+    await publish({"type": "draft_push", "project_id": plan.project_id, "plan_id": plan_id})
+    return DraftRecordPushResult(plan_id=plan_id, recorded=recorded, status=plan.status)

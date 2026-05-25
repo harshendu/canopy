@@ -99,3 +99,17 @@ def register(mcp, client) -> None:
         return await client.post(
             f"/draft-plans/{plan_id}/push-to-jira", {"connection_id": connection_id}
         )
+
+    @mcp.tool
+    async def record_draft_push(plan_id: int, results: list[dict]) -> dict:
+        """Record Jira tickets you created **yourself** for a draft plan (use when the Jira
+        connection's writes are MCP-managed, so `push_draft_to_jira` is disabled).
+
+        After you create the tickets via your own Jira tools, call this to stamp each draft task
+        with its new Jira id/key and flip the plan to `synced`. `results` is a list of dicts:
+        {"draft_task_id": 12, "jira_issue_id": "<jira id>", "jira_key": "PROJ-123"}. Idempotent —
+        re-recording the same ids won't create duplicates, so a re-push stays safe.
+        """
+        return await client.post(
+            f"/draft-plans/{plan_id}/record-push", {"results": results}
+        )
