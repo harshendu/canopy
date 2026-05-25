@@ -190,9 +190,10 @@ projects and rolls up their health.
   (§R) via `initiative_id`.
 
 ### B3. Open a project (the cockpit)
-- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Dependencies · Capacity ·
-  Decisions · Architecture · Drift · Roadmap · Plan → Jira · Jira Links · Burndown · Risk · Retros ·
-  Activity** (the **Jira Links** tab links Jira tickets into the project — §J9).
+- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Specs · Dependencies · Capacity ·
+  Decisions · Docs · Architecture · Drift · Roadmap · Plan → Jira · Jira Links · Burndown ·
+  Delivery · Risk · Retros · Activity** (the **Specs** tab is §W, **Docs** is §V, **Delivery** is
+  §X, and the **Jira Links** tab links Jira tickets into the project — §J9).
   The header has an **Export ▾** menu (PDF/CSV snapshot, §S), a **5-day week** toggle, **Set
   baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
   hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
@@ -962,8 +963,9 @@ release | qa | runbook | other), a `source` (jira_epic | manual | repo | drive),
   `fetch_epics`, and `fetch_remote_links`.
 
 ### V4. Not built (deliberate limits)
-- **No React UI yet** — references + coverage are API/MCP-only (the setup is conversational by
-  design); a Docs panel on the project/initiative cockpit is the fast-follow.
+- **UI:** a **Docs** tab on the project cockpit and a **Documents** panel on the initiative cockpit
+  list references grouped by kind with coverage badges + an add-link form (the AI-driven *setup* /
+  harvest stays conversational). Built.
 - **No link-health checking** (a HEAD/404 sweep to flag broken/stale links — `link_health`
   exists but stays `unchecked`), **no Jira attachments** harvest (only fields + remote/
   description links), and **no write-back** of canopy-added links onto the Jira epic
@@ -1008,8 +1010,9 @@ document graph (§V) or `source_url`; the governing decision links via `adr_id`.
   each criterion against the implementation → mark `verified` when all are met.
 
 ### W4. Not built (deliberate limits)
-- **No React UI yet** — specs + criteria are API/MCP-only; a Specs panel on the project cockpit is
-  a fast-follow.
+- **UI:** a **Specs** tab on the project cockpit lists specs, creates them, and expands each into
+  its problem + acceptance criteria (with a readiness bar and contributor-writable verdicts) +
+  implementing tasks. Built.
 - **No status transition gating** (unlike ADRs §G2) and **no DraftPlan→Spec FK** (link a draft
   plan's `source` to the spec, then link the synced tasks). **No `Task.implements_adr_id`** yet
   (decision→task traceability is roadmap gap #5).
@@ -1043,8 +1046,9 @@ pure in `app/services/flow_metrics.py` (unit-tested); the endpoint reuses `build
   (WIP over the team's cycle-time P85), `sufficient` + `reason`.
 
 ### X2. Not built (deliberate limits)
-- **No React Delivery tab yet** — metrics are API/MCP-only; the initiative-level dashboard is the
-  fast-follow.
+- **UI:** a **Delivery** tab on the project cockpit and a **Delivery metrics** panel on the
+  initiative cockpit show the DORA + flow stat cards with a window selector and the honesty notes.
+  Built.
 - **No rework rate** (DORA 2025 — needs unplanned/rework tagging canopy doesn't have), **no flow
   efficiency** (needs an active-vs-wait status classification), and **no PR-review / decision
   latency** (need GitHub PR metrics §J6 / ADR status history). Surfaced as `notes`, not faked.
@@ -1186,11 +1190,10 @@ team member via `Engineer.user_id` (§A5).
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
 - **What-if** scheduling (C5).
-- **Document graph** (§V): references + coverage + the epic doc-field mapping/harvest are
-  API/MCP-only — no Docs panel on the cockpit yet.
-- **Specs** (§W): spec CRUD + acceptance criteria + self-audit are API/MCP-only — no Specs panel
-  on the project cockpit yet.
-- **Delivery metrics** (§X): DORA + flow are API/MCP-only — no Delivery tab on the cockpit yet.
+- The **epic doc-field mapping / harvest** setup (§V2/§V3) stays conversational (AI-driven via the
+  plugin) — no React wizard (deliberate); the Docs **tab** itself is built (read + add links).
+- The **agent-token** mint (§A6) has no UI button yet — mint via `POST /auth/agent-token` (the
+  Specs/Docs/Delivery **tabs** themselves are now built).
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - *(closed previously: G5 blast radius; Risk (§Q) + portfolio scores (§B1); user/role mgmt (A3) +
   engineer workspace (§M); per-role enforcement (§A3a); drift detection (§N); retros/postmortems

@@ -16,6 +16,9 @@ import type {
 import GanttChart from "../components/GanttChart";
 import CapacityView from "../components/CapacityView";
 import RoadmapView from "../components/RoadmapView";
+import DeliveryView from "../components/DeliveryView";
+import SpecsView from "../components/SpecsView";
+import DocsView from "../components/DocsView";
 import ExportMenu from "../components/ExportMenu";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
 import RiskRegister from "../components/RiskRegister";
@@ -39,15 +42,18 @@ const DraftPlanView = lazy(() => import("../components/DraftPlanView"));
 type Tab =
   | "gantt"
   | "board"
+  | "specs"
   | "deps"
   | "capacity"
   | "decisions"
+  | "docs"
   | "architecture"
   | "drift"
   | "roadmap"
   | "drafts"
   | "jiralinks"
   | "burndown"
+  | "delivery"
   | "risk"
   | "retros"
   | "activity";
@@ -55,15 +61,18 @@ type Tab =
 const TABS: Tab[] = [
   "gantt",
   "board",
+  "specs",
   "deps",
   "capacity",
   "decisions",
+  "docs",
   "architecture",
   "drift",
   "roadmap",
   "drafts",
   "jiralinks",
   "burndown",
+  "delivery",
   "risk",
   "retros",
   "activity",
@@ -286,15 +295,18 @@ export default function ProjectView() {
         {([
           ["gantt", "Gantt"],
           ["board", "Board"],
+          ["specs", "Specs"],
           ["deps", "Dependencies"],
           ["capacity", "Capacity"],
           ["decisions", "Decisions"],
+          ["docs", "Docs"],
           ["architecture", "Architecture"],
           ["drift", "Drift"],
           ["roadmap", "Roadmap"],
           ["drafts", "Plan → Jira"],
           ["jiralinks", "Jira Links"],
           ["burndown", "Burndown"],
+          ["delivery", "Delivery"],
           ["risk", "Risk"],
           ["retros", "Retros"],
           ["activity", "Activity"],
@@ -399,6 +411,14 @@ export default function ProjectView() {
         ) : (
           <p className="text-sm text-slate-500">No tasks to graph yet.</p>
         ))}
+
+      {tab === "specs" && (
+        <SpecsView projectId={id} mayPlan={mayPlan} mayContribute={mayContribute} />
+      )}
+
+      {tab === "docs" && <DocsView scope="project" scopeId={id} mayWrite={mayPlan} />}
+
+      {tab === "delivery" && <DeliveryView scope="project" id={id} />}
 
       {tab === "capacity" && <CapacityView projectId={id} />}
 
