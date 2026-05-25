@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.models.base import TaskType
-from app.models.project import Holiday, Project, Task, TaskStatusHistory
+from app.models.project import Dependency, Holiday, Milestone, Project, Task, TaskStatusHistory
 from app.models.scenario import (
     Scenario,
     ScenarioAllocation,
@@ -30,7 +30,7 @@ from app.models.scenario import (
     ScenarioProject,
     ScenarioTask,
 )
-from app.models.team import Engineer
+from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.schemas.entities import (
     AlertRead,
     AlertsResponse,
@@ -97,6 +97,129 @@ class MaterializedScenario:
     live_tasks: dict[int, Task]  # by live task id
     live_history: dict[int, list[TaskStatusHistory]] = field(default_factory=dict)
     engineer_names: dict[int, str] = field(default_factory=dict)
+
+
+async def snapshot_live_into_scenario(session: AsyncSession, scenario: Scenario) -> None:
+    """Clone the initiative's live planning rows into the scenario tables.
+
+    Every cloned row keeps a `live_*_id` so apply can map back to update/delete; rows added in
+    the scenario have none. Shared by the create-scenario endpoint and the demo seed loader.
+    """
+    assert scenario.id is not None
+    sid = scenario.id
+    live_projects = list(
+        (
+            await session.execute(
+                select(Project).where(Project.initiative_id == scenario.initiative_id)
+            )
+        ).scalars().all()
+    )
+    project_ids = {p.id for p in live_projects if p.id is not None}
+    for p in live_projects:
+        session.add(
+            ScenarioProject(
+                scenario_id=sid,
+                project_id=p.id,
+                start_date=p.start_date,
+                target_date=p.target_date,
+                skip_weekends=p.skip_weekends,
+            )
+        )
+
+    live_tasks = (
+        list(
+            (
+                await session.execute(select(Task).where(col(Task.project_id).in_(project_ids)))
+            ).scalars().all()
+        )
+        if project_ids
+        else []
+    )
+    task_rows: dict[int, ScenarioTask] = {}
+    for lt in live_tasks:
+        if lt.id is None:
+            continue
+        st = ScenarioTask(
+            scenario_id=sid,
+            project_id=lt.project_id,
+            live_task_id=lt.id,
+            name=lt.name,
+            description=lt.description,
+            type=lt.type,
+            duration=lt.duration,
+            deadline=lt.deadline,
+            percent_complete=lt.percent_complete,
+            assignee_engineer_id=lt.assignee_engineer_id,
+        )
+        session.add(st)
+        task_rows[lt.id] = st
+    await session.flush()  # assign scenario task ids
+    live_to_sid = {lid: st.id for lid, st in task_rows.items()}
+    for lt in live_tasks:
+        if lt.id is not None and lt.parent_id is not None and lt.parent_id in live_to_sid:
+            task_rows[lt.id].parent_id = live_to_sid[lt.parent_id]
+
+    live_task_ids = set(live_to_sid)
+    for d in (await session.execute(select(Dependency))).scalars().all():
+        if d.predecessor_id in live_task_ids and d.successor_id in live_task_ids:
+            session.add(
+                ScenarioDependency(
+                    scenario_id=sid,
+                    predecessor_id=live_to_sid[d.predecessor_id],
+                    successor_id=live_to_sid[d.successor_id],
+                    type=d.type,
+                    lag=d.lag,
+                    live_dep_id=d.id,
+                )
+            )
+
+    if project_ids:
+        ml_rows = await session.execute(
+            select(Milestone).where(col(Milestone.project_id).in_(project_ids))
+        )
+        for ml in ml_rows.scalars().all():
+            session.add(
+                ScenarioMilestone(
+                    scenario_id=sid,
+                    project_id=ml.project_id,
+                    live_milestone_id=ml.id,
+                    name=ml.name,
+                    description=ml.description,
+                    target_date=ml.target_date,
+                    status=ml.status,
+                )
+            )
+        alloc_rows = await session.execute(
+            select(Allocation).where(col(Allocation.project_id).in_(project_ids))
+        )
+        for a in alloc_rows.scalars().all():
+            session.add(
+                ScenarioAllocation(
+                    scenario_id=sid,
+                    live_allocation_id=a.id,
+                    engineer_id=a.engineer_id,
+                    project_id=a.project_id,
+                    task_id=live_to_sid.get(a.task_id) if a.task_id is not None else None,
+                    percent_allocation=a.percent_allocation,
+                    capacity_hours_per_week=a.capacity_hours_per_week,
+                    start_date=a.start_date,
+                    end_date=a.end_date,
+                )
+            )
+
+    for av in (await session.execute(select(EngineerAvailability))).scalars().all():
+        session.add(
+            ScenarioAvailability(
+                scenario_id=sid,
+                live_availability_id=av.id,
+                engineer_id=av.engineer_id,
+                start_date=av.start_date,
+                end_date=av.end_date,
+                capacity_factor=av.capacity_factor,
+                note=av.note,
+            )
+        )
+    await session.flush()
 
 
 async def materialize(session: AsyncSession, scenario_id: int) -> MaterializedScenario | None:
