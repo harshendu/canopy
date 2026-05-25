@@ -132,3 +132,6 @@ class PullRequest(TimestampMixin, table=True):
     url: str | None = None
     author: str | None = None
     remote_updated: str | None = None
+    # The task this PR implements, when known (matched by branch/Jira key on ingest). Lets the
+    # UI surface a task's code changes alongside its Jira issue and design docs.
+    task_id: int | None = Field(default=None, foreign_key="task.id", index=True)

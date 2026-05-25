@@ -1,10 +1,13 @@
 import pytest
+from sqlmodel import select
 
 from app.core.config import settings
 from app.core.security import hash_password
 from app.models.base import UserRole
+from app.models.project import Task
 from app.models.user import User
 from app.services import seed
+from app.services.links import collect_task_links
 
 
 async def _admin(session) -> User:
@@ -52,8 +55,6 @@ async def test_seed_loader_builds_a_full_coherent_dataset(db_session):
 async def test_seed_scenarios_are_rich_whatifs(db_session):
     """Each seeded scenario is a real clone-plus-edits, not an empty branch — so the Compare,
     Capacity, Gantt and Milestones tabs all have content and a non-trivial delta vs live."""
-    from sqlmodel import select
-
     from app.models.scenario import (
         Scenario,
         ScenarioAllocation,
@@ -96,6 +97,25 @@ async def test_seed_scenarios_are_rich_whatifs(db_session):
             + sum(av.live_availability_id is None for av in s_avail)
         )
         assert edits > 0, f"scenario {scenario.title!r} has no edits vs live"
+
+
+@pytest.mark.asyncio
+async def test_flagship_task_surfaces_external_links(db_session):
+    await seed.load_seed_data(db_session, set())
+    task = (
+        await db_session.execute(select(Task).where(Task.name == "Wire secure gateway in"))
+    ).scalars().one()
+    assert task.id is not None
+
+    links = await collect_task_links(db_session, task.id)
+    # A clickable Jira issue built from the demo connection's browsable base_url.
+    assert links.jira is not None
+    assert links.jira.key.startswith("HELIX-")
+    assert links.jira.url == f"https://helix.atlassian.net/browse/{links.jira.key}"
+    # The GitHub PRs that implement it.
+    assert {pr.number for pr in links.pull_requests} == {318, 316}
+    # A design doc that lives in GitHub (source=repo).
+    assert any(d.source.value == "repo" for d in links.docs)
 
 
 @pytest.mark.asyncio

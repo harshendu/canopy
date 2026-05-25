@@ -2,10 +2,24 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Blocker, BlockerCategory, BlockerSeverity, Task } from "../api/types";
+import type {
+  Blocker,
+  BlockerCategory,
+  BlockerSeverity,
+  DocSource,
+  Task,
+  TaskExternalLinks,
+} from "../api/types";
 import { spreadConfidence, spreadTone } from "../lib/estimates";
 import RiskRegister from "./RiskRegister";
 import TagEditor from "./TagEditor";
+
+const DOC_SOURCE_LABEL: Record<DocSource, string> = {
+  jira_epic: "Jira",
+  manual: "manual",
+  repo: "GitHub",
+  drive: "Drive",
+};
 
 const numOrNull = (s: string): number | null => (s.trim() === "" ? null : Number(s));
 
@@ -59,6 +73,11 @@ export default function TaskDetailPanel({
 
         <div className="space-y-6 p-4">
           {task.data && <TaskFields task={task.data} projectId={projectId} canEdit={mayPlan} />}
+
+          <section>
+            <h3 className="mb-2 text-sm font-semibold text-slate-700">External links</h3>
+            <ExternalLinksSection taskId={taskId} />
+          </section>
 
           <section>
             <h3 className="mb-2 text-sm font-semibold text-slate-700">Blockers</h3>
@@ -208,6 +227,107 @@ function TaskFields({
         </button>
       )}
     </form>
+  );
+}
+
+/** A task's links out to the systems that own the work: its Jira issue, the GitHub PRs
+ *  implementing it, and the design docs (GitHub/Drive) scoped to it. Read-only — canopy links,
+ *  it never stores the resources (doc CRUD lives on the project Docs tab). */
+function ExternalLinksSection({ taskId }: { taskId: number }) {
+  const links = useQuery({
+    queryKey: ["task-links", taskId],
+    queryFn: () => api.get<TaskExternalLinks>(`/tasks/${taskId}/links`),
+  });
+
+  const data = links.data;
+  if (!data) return <p className="text-xs text-slate-400">Loading…</p>;
+
+  const empty = !data.jira && data.pull_requests.length === 0 && data.docs.length === 0;
+  if (empty)
+    return <p className="text-xs text-slate-400">No linked Jira issue, pull requests, or docs.</p>;
+
+  return (
+    <div className="space-y-3 text-sm">
+      {data.jira && (
+        <div>
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Jira issue
+          </div>
+          {data.jira.url ? (
+            <a
+              href={data.jira.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-0.5 font-medium text-blue-700 hover:underline"
+            >
+              {data.jira.key} ↗
+            </a>
+          ) : (
+            <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
+              {data.jira.key}
+            </span>
+          )}
+        </div>
+      )}
+
+      {data.pull_requests.length > 0 && (
+        <div>
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Pull requests
+          </div>
+          <ul className="space-y-1">
+            {data.pull_requests.map((pr) => (
+              <li key={pr.id} className="flex items-center gap-2">
+                <a
+                  href={pr.url ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="truncate text-canopy-700 hover:underline"
+                  title={`${pr.repo} #${pr.number}`}
+                >
+                  #{pr.number} {pr.title}
+                </a>
+                <span
+                  className={`rounded px-1 py-0.5 text-[10px] uppercase ${
+                    pr.state === "open"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  {pr.state}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {data.docs.length > 0 && (
+        <div>
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Documents
+          </div>
+          <ul className="space-y-1">
+            {data.docs.map((d) => (
+              <li key={d.id} className="flex items-center gap-2">
+                <a
+                  href={d.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="truncate text-canopy-700 hover:underline"
+                  title={d.url}
+                >
+                  {d.title || d.url}
+                </a>
+                <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-500">
+                  {DOC_SOURCE_LABEL[d.source]}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
