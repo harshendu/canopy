@@ -12,6 +12,7 @@ from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, HumanOnly, PlannerWriter, SessionDep
 from app.core.events import publish
+from app.models.base import Provider
 from app.models.draft import DraftPlan, DraftTask
 from app.models.project import Project
 from app.schemas.entities import (
@@ -25,7 +26,7 @@ from app.schemas.entities import (
     DraftTaskRead,
     DraftTaskUpdate,
 )
-from app.services import draft_sync
+from app.services import draft_sync, integration_policy
 
 router = APIRouter()
 
@@ -153,6 +154,9 @@ async def delete_draft_task(session: SessionDep, _: PlannerWriter, task_id: int)
 async def push_draft_to_jira(
     session: SessionDep, _: PlannerWriter, __: HumanOnly, plan_id: int, payload: DraftPushRequest
 ) -> DraftPushResult:
+    write = await integration_policy.resolve_write(session, Provider.jira)
+    if not write.allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=write.reason)
     try:
         return await draft_sync.push_plan_to_jira(session, plan_id, payload.connection_id)
     except draft_sync.DraftPushError as exc:

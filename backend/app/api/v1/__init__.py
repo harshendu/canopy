@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     activity,
+    admin_integrations,
     architecture,
     auth,
     blockers,
@@ -58,3 +59,4 @@ api_router.include_router(retros.router, tags=["retros"])
 api_router.include_router(activity.router, tags=["activity"])
 api_router.include_router(blockers.router, tags=["blockers"])
 api_router.include_router(scenarios.router, tags=["scenarios"])
+api_router.include_router(admin_integrations.router, prefix="/admin", tags=["admin"])

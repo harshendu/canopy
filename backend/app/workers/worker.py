@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from arq import cron
-from sqlmodel import select
 
 from app.connectors import get_connector
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.models.base import Provider
 from app.models.integration import Connection
+from app.services import integration_policy
 from app.workers.queue import redis_settings
 
 
@@ -19,13 +19,11 @@ async def jira_incremental_sync(ctx: dict[str, Any]) -> dict[int, dict[str, int]
     """Reconciliation poll — the correctness backstop behind webhooks."""
     summary: dict[int, dict[str, int]] = {}
     async with async_session_factory() as session:
-        connections = (
-            await session.execute(
-                select(Connection).where(
-                    Connection.provider == Provider.jira, Connection.active == True  # noqa: E712
-                )
-            )
-        ).scalars().all()
+        setting = await integration_policy.get_setting(session, Provider.jira)
+        if not integration_policy.reads_direct(setting):
+            # Jira reads are sourced via MCP/file by policy — canopy's poll stands down.
+            return summary
+        connections = await integration_policy.usable_direct_connections(session, Provider.jira)
         for connection in connections:
             if connection.id is None:
                 continue

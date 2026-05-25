@@ -134,6 +134,31 @@ reads stay open everywhere; writes are still gated by `role`. Personas are a **l
 - **Not built:** bespoke per-persona *dashboards* (each persona sees the shared surfaces at a
   default altitude, not a custom-built page); admin **UI** to edit a user's function (API-only).
 
+### A8. Integration strategy — per-provider read/write policy *(admin)* **[new]**
+Setting up connectors is heavy and a single shared token can't always fit, so the **admin chooses,
+per provider** (Jira / GitHub / Drive), *how* canopy reads and writes — independently on a **read
+axis** and a **write axis**. The policy is the control plane every connector path consults; the
+absence of a setting reads back as the default (**direct/direct**), so existing installs are
+unaffected until an admin opts in. (Phase 1 of a larger plan — per-user SSO, MCP-orchestrated
+ingest, and file-drop ingest are later phases.)
+- **Read strategy** — `direct` (canopy polls / accepts webhooks using its **own credentials** when
+  available, degrading silently when not), or `mcp` / `file` (canopy does **not** call the provider
+  API — data arrives via Claude over MCP or a file drop). *Phase 1 wires `direct` only; `mcp`/`file`
+  are shown but not yet selectable.*
+- **Write strategy** — `direct` (canopy writes with its own credentials), `mcp` (the write is
+  **routed through Claude**; canopy's direct write paths refuse with `403`), or `disabled`
+  (read-only — writes blocked).
+- **UI:** `/admin/integrations` (admin only, in the sidebar for admins) — one row per provider with
+  a Reads and a Writes select (`frontend/src/pages/AdminIntegrations.tsx`).
+- **API:** `GET /api/v1/admin/integrations` (all providers, defaults synthesized) and
+  `PATCH /api/v1/admin/integrations/{provider}` — both admin-gated (`AdminUser`).
+- **Enforcement** (`app/services/integration_policy.py`): the reconciliation poll
+  (`app/workers/worker.py`) and webhook intake (`app/webhooks/jira.py`, `github.py`) stand down when
+  reads ≠ `direct`; the direct write paths — draft **push-to-Jira** (§C10) and **export-to-Drive**
+  (§S) — return `403` when writes ≠ `direct`. Orthogonal to the bounded-agency gate (§A6).
+- **Not built (later phases):** per-user SSO connections, MCP ingest tools + admin-scheduled Claude
+  sync jobs, and the file-drop ingest pipeline (the `mcp`/`file` read strategies are inert until then).
+
 ---
 
 ## R. Initiatives (the program layer above projects) **[new — v2 §R / C1]**

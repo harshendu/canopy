@@ -23,7 +23,7 @@ from app.models.project import Milestone, Project, Task
 from app.models.team import Allocation, Engineer
 from app.models.user import User
 from app.schemas.entities import ExportToDriveRequest, ExportToDriveResult
-from app.services import export_csv, export_pdf
+from app.services import export_csv, export_pdf, integration_policy
 from app.services.snapshot import InitiativeSnapshot, PortfolioSnapshot, ProjectSnapshot
 
 router = APIRouter()
@@ -165,6 +165,9 @@ async def _upload_to_drive(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Drive connection is not authorized"
         )
+    write = await integration_policy.resolve_write(session, Provider.gdrive)
+    if not write.allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=write.reason)
     connector = get_connector(connection, session)
     if not isinstance(connector, GoogleDriveConnector):  # pragma: no cover - defensive
         raise HTTPException(

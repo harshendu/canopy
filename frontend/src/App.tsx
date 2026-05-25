@@ -17,6 +17,7 @@ import Decisions from "./pages/Decisions";
 import MyWorkspace from "./pages/MyWorkspace";
 import MyToday from "./pages/MyToday";
 import AdminUsers from "./pages/AdminUsers";
+import AdminIntegrations from "./pages/AdminIntegrations";
 import Team from "./pages/Team";
 
 const Portfolio = lazy(() => import("./pages/Portfolio")); // Recharts — load on demand
@@ -66,6 +67,11 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
           {me?.role === "admin" && (
             <NavLink to="/admin/users" className={navClass}>
               Users
+            </NavLink>
+          )}
+          {me?.role === "admin" && (
+            <NavLink to="/admin/integrations" className={navClass}>
+              Integrations
             </NavLink>
           )}
         </nav>
@@ -187,6 +193,14 @@ export default function App() {
         element={
           <ProtectedLayout>
             <AdminUsers />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/admin/integrations"
+        element={
+          <ProtectedLayout>
+            <AdminIntegrations />
           </ProtectedLayout>
         }
       />

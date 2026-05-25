@@ -246,6 +246,17 @@ export interface Connection {
   authorized: boolean;
 }
 
+// Per-provider integration policy (admin-chosen). See backend app/services/integration_policy.py.
+export type ReadStrategy = "direct" | "mcp" | "file";
+export type WriteStrategy = "direct" | "mcp" | "disabled";
+
+export interface IntegrationSetting {
+  provider: Provider;
+  read_strategy: ReadStrategy;
+  write_strategy: WriteStrategy;
+  allow_user_connect: boolean;
+}
+
 export interface ADR {
   id: number;
   project_id: number;

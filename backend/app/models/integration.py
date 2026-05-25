@@ -3,7 +3,27 @@ from datetime import datetime
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field
 
-from app.models.base import Provider, TimestampMixin
+from app.models.base import Provider, ReadStrategy, TimestampMixin, WriteStrategy
+
+
+class IntegrationSetting(TimestampMixin, table=True):
+    """Admin-chosen integration policy for one provider: how reads and writes flow.
+
+    One row per provider. The **absence** of a row means the default — direct reads + direct
+    writes (canopy uses its own credentials) — which preserves the pre-policy behavior so
+    existing installs are unaffected until an admin opts in.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("provider", name="uq_integration_setting_provider"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    provider: Provider = Field(index=True)
+    read_strategy: ReadStrategy = Field(default=ReadStrategy.direct)
+    write_strategy: WriteStrategy = Field(default=WriteStrategy.direct)
+    # Phase-2 hook: whether non-admin users may connect their own (per-user OAuth) account.
+    allow_user_connect: bool = False
 
 
 class Connection(TimestampMixin, table=True):
