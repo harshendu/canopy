@@ -238,8 +238,16 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   so the risk timeline is a real trend. Drift carries a **scan log** (`DriftScan`): `GET .../drift`
   returns `last_scanned_at` + `scan_due` (true when code bindings exist but the scan is missing or
   >7 days old), surfacing staleness so the Drift Sentinel re-scans (the server can't crawl code).
-- **Observability:** `GET /api/v1/health` (liveness) and `/api/v1/health/ready` (DB check) for
-  orchestration; structured logging via `app/core/logging.py`.
+- **Observability:** `GET /api/v1/health` (liveness, also reports `demo_mode`) and
+  `/api/v1/health/ready` (DB check) for orchestration; structured logging via `app/core/logging.py`.
+- **Demo / seeded-data mode (`DEMO_MODE`, local/dev only):** a repo-resident dataset in
+  `app/services/seed/` (`catalog.py` = declarative data, `loader.py` = build/reset engine) that fills
+  every UI surface; an admin loads/resets it from the UI (`/admin/demo`, `app/api/v1/admin_demo.py`,
+  double-gated on admin **and** `DEMO_MODE` via `require_demo_mode`). `clear_all_data` wipes by
+  iterating `SQLModel.metadata.sorted_tables` in reverse (nulling self-FKs first — portability rule),
+  keeping the acting admin + superuser. Demo connectors (`config.demo=true`) are served by an offline
+  HTTP mock (`app/connectors/demo.py`) injected at `Connector.open_client`, so Jira/GitHub/Drive
+  sync + reads work without credentials. Extend the seed as features grow (it backs e2e). USER_FLOWS §Z.
 - **Frontend tests:** Vitest (`npm run test`) covers pure helpers (e.g. `src/lib/horizon.ts`); CI
   runs it between lint and build. Extract pure logic out of components to keep it testable.
 

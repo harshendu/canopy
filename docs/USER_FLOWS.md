@@ -1358,6 +1358,64 @@ team member via `Engineer.user_id` (§A5).
 
 ---
 
+## Z. Demo / seeded-data mode (local & dev only) **[new]**
+
+A switch (`DEMO_MODE=true`, **never** in production) that makes the whole app explorable from a
+single, repository-resident seed dataset — and lets an admin reset/reload it from the UI. It is also
+the substrate for browser e2e tests (the seed is extended as features grow). Seed data lives in
+`backend/app/services/seed/` (`catalog.py` = declarative data, `loader.py` = the build/reset engine).
+
+### Z1. What the seed contains
+A single, recognizable narrative — **Helix**, an enterprise hybrid-platform vendor whose product
+splits into a vendor-owned **control plane** (multi-tenant SaaS) and a customer-deployed **data
+plane** (the intelligence suite that keeps customer data in the customer's own VPC), plus a
+**field/solutions** org that does the complex customer deployments. Three initiatives mirror that
+org (**Control Plane Scale-Out**, **Data Plane v2 — BYOC**, **Field Delivery & Onboarding**) over
+**8 fully-populated projects**.
+
+It includes users across **every role** (admin / architect / engineering_manager / engineer /
+viewer / member) and **every persona/function** (engineering / product / design / architecture /
+management / leadership); a cross-functional **team** (~13 members) with skill tags, timezones,
+committed hours and **availability** (PTO / ramp-up / on-call / on-site). Each project is a scheduled
+**WBS** (phases → tasks, dependencies, milestones, holidays) run through the real CPM planner, with
+**cross-project hand-offs** inside initiatives (so the cross-project critical path is real), a
+**baseline + variance** on the flagship, and **back-dated status history / activity / risk
+snapshots** so every time-series view (burndown, Monte-Carlo forecast, DORA + flow, risk timeline)
+shows real trends. **Rich content is on every project**: an architecture map, **ADRs** (accepted /
+in-discussion with a review thread / proposed / deferred — populating all four **decision-queue**
+buckets, including an overdue one), **fitness functions** + **drift** events, **specs** + criteria,
+**risks** (RAID, project + initiative scope), **blockers**, **outcomes**, **doc references**, **retros**
+(including an **incident postmortem**), **draft plans**, two **scenarios**, three demo **connections**,
+and project state that makes the **alerts** digest fire (deadline miss, overdue milestone,
+over-allocation, overdue risk, open blocker).
+
+### Z2. Reset / reload from the UI *(admin, demo mode)*
+- **UI:** sidebar **"Demo data"** (admin only) → **`/admin/demo`**. Shows current row counts + the
+  demo logins, with **"Reset & load demo data"** (wipe everything, then rebuild) and
+  **"Clear all data"** (wipe to empty). Both keep the acting admin **and** the configured superuser
+  signed in; everything else (including other users) is wiped and re-seeded.
+- **API:** `GET /api/v1/admin/demo/status` · `POST /api/v1/admin/demo/reseed` ·
+  `POST /api/v1/admin/demo/clear` — all admin-gated **and** double-gated on `DEMO_MODE` (they 403
+  when it is off, so they can never run against prod). `GET /api/v1/health` reports `demo_mode`.
+- **Login helper:** `GET /api/v1/admin/demo/public` (unauthenticated) lists the demo accounts +
+  shared password when demo mode is on; the **login screen** shows them as click-to-fill (empty
+  otherwise). Every demo login uses the password `canopy-demo`.
+
+### Z3. Offline connectors (mocked services)
+When demo mode is on, any connection whose config carries `demo: true` is served by an **in-process
+HTTP mock** (`backend/app/connectors/demo.py`), so **Sync from Jira** (§J3), GitHub PR reads, Drive
+doc reads, ADR import, doc harvest, and draft → Jira push (§C10.2) all work with **no real
+credentials and no network**. Policy is unchanged (default direct reads/writes); the mock is injected
+at the connector's `open_client()` chokepoint.
+
+### Z4. Not built (deliberate limits)
+- Demo mode is **not** a multi-tenant or production feature; it is gated off by default and the
+  reset/reseed endpoints refuse to run unless `DEMO_MODE=true`.
+- The mock returns a small, fixed fixture set (not a full Jira/GitHub/Drive emulation) — enough to
+  exercise every read/sync flow end-to-end, not to fuzz the providers.
+
+---
+
 ## Known UI gaps (currently API/MCP-only)
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:

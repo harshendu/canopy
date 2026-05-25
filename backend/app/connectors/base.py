@@ -108,7 +108,14 @@ class Connector(ABC):
         raise NotImplementedError
 
     async def open_client(self) -> httpx.AsyncClient:
-        """Refresh the OAuth token if needed, then build the connector's HTTP client."""
+        """Refresh the OAuth token if needed, then build the connector's HTTP client.
+
+        In demo mode a connection flagged ``config.demo`` is served by an in-process HTTP
+        mock (no network), so the whole UI works offline."""
+        from app.connectors.demo import demo_client, is_demo_connection
+
+        if is_demo_connection(self):
+            return demo_client(self)
         await self.ensure_fresh_token()
         return self._client()
 

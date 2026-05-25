@@ -71,7 +71,7 @@ app.include_router(webhook_router, prefix="/webhooks")
 
 @app.get("/api/v1/health", tags=["health"])
 async def health() -> dict:
-    return {"status": "ok", "service": settings.PROJECT_NAME}
+    return {"status": "ok", "service": settings.PROJECT_NAME, "demo_mode": settings.DEMO_MODE}
 
 
 @app.get("/api/v1/health/ready", tags=["health"])

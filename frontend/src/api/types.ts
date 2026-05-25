@@ -533,6 +533,28 @@ export interface User {
   is_active: boolean;
 }
 
+// --- Demo / seeded-data mode (local & dev only) ---
+export interface DemoAccount {
+  email: string;
+  full_name: string;
+  role: string;
+  function: string;
+}
+
+export interface DemoStatus {
+  demo_mode: boolean;
+  seeded: boolean;
+  counts: Record<string, number>;
+  password: string | null;
+  accounts: DemoAccount[];
+}
+
+export interface DemoPublic {
+  demo_mode: boolean;
+  password: string | null;
+  accounts: DemoAccount[];
+}
+
 export type ActivityKind = "deploy" | "build_failure" | "incident_open" | "incident_close";
 
 export interface ActivityEvent {
