@@ -816,6 +816,25 @@ class InitiativeCriticalPath(BaseModel):
     handoffs: list[CriticalPathHandoff]  # cross-project edges on the critical path
 
 
+class InitiativeDigest(BaseModel):
+    """A manage-by-exception weekly health roll-up for an initiative (leads with what needs
+    attention). Delivery (Slack/email) is a hook over this — see §I."""
+
+    initiative_id: int
+    name: str
+    generated_on: date
+    headline: str
+    on_track: bool | None
+    risk_level: str
+    drift_level: str
+    p85_date: date | None
+    open_blockers: int
+    open_decisions: int
+    attention: list[str]  # the exception list
+    outcomes: list[str]  # "statement (status)"
+    markdown: str
+
+
 class InitiativeRollup(BaseModel):
     """Health rolled up across an initiative's sub-projects."""
 

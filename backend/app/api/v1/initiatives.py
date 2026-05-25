@@ -10,8 +10,16 @@ from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
 from app.api.v1.projects import open_project_risk_counts, summarize_project
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
-from app.models.base import ADRStatus, TaskType, utcnow
-from app.models.project import Dependency, Initiative, Project, Task, TaskStatusHistory
+from app.models.base import ADRStatus, ProjectHealth, TaskType, utcnow
+from app.models.outcome import Outcome
+from app.models.project import (
+    Blocker,
+    Dependency,
+    Initiative,
+    Project,
+    Task,
+    TaskStatusHistory,
+)
 from app.models.risk_register import RiskItem
 from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.schemas.entities import (
@@ -20,11 +28,13 @@ from app.schemas.entities import (
     ForecastResponse,
     InitiativeCreate,
     InitiativeCriticalPath,
+    InitiativeDigest,
     InitiativeRead,
     InitiativeRollup,
     InitiativeUpdate,
     ProjectSummary,
 )
+from app.services import digest as digest_service
 from app.services.burndown import is_done_status
 from app.services.capacity import AvailabilitySpan
 from app.services.cross_project import CPDep, CPTask, cross_project_critical_path
@@ -221,6 +231,91 @@ async def initiative_rollup(
         drift_level=drift_level(drift_score),
         open_decisions=open_decisions,
         on_track=on_track,
+    )
+
+
+@router.get("/{initiative_id}/digest", response_model=InitiativeDigest)
+async def initiative_digest(
+    session: SessionDep, user: CurrentUser, initiative_id: int
+) -> InitiativeDigest:
+    """A manage-by-exception weekly health roll-up (leads with what needs attention). Reuses the
+    rollup + forecast and adds open blockers + outcomes. Delivery (Slack/email) is a hook over
+    this output, not built here (same posture as the alerts digest §I)."""
+    rollup = await initiative_rollup(session, user, initiative_id)
+    forecast = await initiative_forecast(session, user, initiative_id)
+
+    pids = [p.id for p in rollup.projects]
+    open_blockers = 0
+    if pids:
+        task_ids = [
+            t
+            for t in (
+                await session.execute(select(col(Task.id)).where(col(Task.project_id).in_(pids)))
+            ).scalars()
+            if t is not None
+        ]
+        if task_ids:
+            open_blockers = len(
+                list(
+                    (
+                        await session.execute(
+                            select(Blocker).where(
+                                col(Blocker.task_id).in_(task_ids),
+                                col(Blocker.resolved_at).is_(None),
+                            )
+                        )
+                    ).scalars()
+                )
+            )
+
+    outcomes = list(
+        (
+            await session.execute(
+                select(Outcome).where(
+                    Outcome.scope_level == "initiative", Outcome.scope_id == initiative_id
+                )
+            )
+        ).scalars()
+    )
+    at_risk = [
+        p.name
+        for p in rollup.projects
+        if (p.health in (ProjectHealth.at_risk, ProjectHealth.off_track))
+        or p.risk_level in ("high", "critical")
+    ]
+    inputs = digest_service.DigestInputs(
+        name=rollup.initiative.name,
+        generated_on=date.today(),
+        on_track=rollup.on_track,
+        target_date=rollup.initiative.target_date,
+        project_end=rollup.project_end,
+        p85_date=forecast.p85_date,
+        forecast_sufficient=forecast.sufficient,
+        risk_level=rollup.risk_level,
+        drift_level=rollup.drift_level,
+        avg_percent_complete=rollup.avg_percent_complete,
+        completed_tasks=rollup.completed_tasks,
+        total_tasks=rollup.total_tasks,
+        open_decisions=rollup.open_decisions,
+        open_blockers=open_blockers,
+        at_risk_projects=at_risk,
+        outcomes=[f"{o.statement} ({o.status})" for o in outcomes],
+    )
+    attention = digest_service.attention_items(inputs)
+    return InitiativeDigest(
+        initiative_id=initiative_id,
+        name=inputs.name,
+        generated_on=inputs.generated_on,
+        headline=digest_service.headline(attention),
+        on_track=rollup.on_track,
+        risk_level=rollup.risk_level,
+        drift_level=rollup.drift_level,
+        p85_date=forecast.p85_date,
+        open_blockers=open_blockers,
+        open_decisions=rollup.open_decisions,
+        attention=attention,
+        outcomes=inputs.outcomes,
+        markdown=digest_service.render_markdown(inputs, attention),
     )
 
 

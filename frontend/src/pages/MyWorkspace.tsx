@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import type { ADR, MyWorkspace as Workspace } from "../api/types";
 import { STATUS_LABELS } from "../lib/decisions";
 import { roleLabel } from "../lib/roles";
+import { functionLabel } from "../lib/persona";
 
 const adrLabel = (n: number) => `ADR-${String(n).padStart(4, "0")}`;
 
@@ -79,6 +80,9 @@ export default function MyWorkspace() {
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500">
           <span className="rounded bg-slate-100 px-2 py-0.5 text-xs">{roleLabel(user.role)}</span>
+          <span className="rounded bg-canopy-50 px-2 py-0.5 text-xs text-canopy-700">
+            {functionLabel(user.function)}
+          </span>
           {engineer ? (
             <>
               {engineer.github_login && <span>@{engineer.github_login}</span>}

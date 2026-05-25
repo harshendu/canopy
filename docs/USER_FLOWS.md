@@ -119,6 +119,21 @@ forbidden from **one-way-door / external-write** actions; **two-way-door** actio
   agent-authored PR via webhook — the server can't crawl code itself (§N4), so that scan stays
   agent-driven; the webhook→agent trigger is the remaining piece of roadmap gap #4.
 
+### A7. Cross-functional persona (`function`) + per-persona landing **[new]**
+A user carries a **`function`** — `engineering | product | design | architecture | management |
+leadership` — **orthogonal to their access `role`** (roadmap gap #6; the stakeholder model in
+[`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) §5). It makes PM/UX/staff/director/exec
+first-class identities (not all "viewer") and drives the **default landing surface**, *not* CRUD —
+reads stay open everywhere; writes are still gated by `role`. Personas are a **lens, not a wall**.
+- **API:** `function` is set on `POST /api/v1/auth/register` and `PATCH /api/v1/auth/users/{id}`
+  (admin) and returned on `GET /api/v1/auth/me` (defaults to `engineering`).
+- **UI:** on login (and the `/` root) the app routes to the persona's home (`src/lib/persona.ts`):
+  leadership/product → `/initiatives`, management → `/team`, architecture → `/decisions`,
+  engineering → `/me`. The `/me` workspace shows the persona badge. Any user can still navigate
+  anywhere — it only sets where you land.
+- **Not built:** bespoke per-persona *dashboards* (each persona sees the shared surfaces at a
+  default altitude, not a custom-built page); admin **UI** to edit a user's function (API-only).
+
 ---
 
 ## R. Initiatives (the program layer above projects) **[new — v2 §R / C1]**
@@ -167,6 +182,18 @@ projects and rolls up their health.
 - **API:** `GET /api/v1/initiatives/{id}/critical-path` (ordered critical chain with each task's
   project, total working days, `spans_projects`, and the `handoffs`; cyclic cross-project deps →
   409) · **MCP:** `get_initiative_critical_path`.
+
+### R5. Initiative digest — manage-by-exception weekly roll-up **[new]**
+- A synthesized health digest that **leads with what needs attention** (roadmap gap #6 / `PF L-R2`;
+  37signals/Cagan: green is silent, surface exceptions). Reuses the **rollup** (§R3) + **forecast**
+  (§C8) and adds **open blockers** (across the initiative's projects) + **outcomes** (§Y). Returns
+  a `headline`, an `attention` exception list (behind target, P85 past target, elevated risk/drift,
+  open blockers, decisions awaiting, at-risk sub-projects), the status numbers, the outcomes, and a
+  ready-to-send **`markdown`** rendering. Pure synthesis in `app/services/digest.py`.
+- **API:** `GET /api/v1/initiatives/{id}/digest` · **MCP:** `get_initiative_digest` (the spine of
+  the `daily-standup` skill §L16).
+- **Delivery** to Slack/email is a **hook over this output**, not built (same posture as the alerts
+  digest §I) — the digest *content* is the deliverable.
 
 ---
 
@@ -1193,6 +1220,14 @@ pipeline — an honest manual signal, like the weekly health note). `status`:
   (`add_spec_criterion`), approve it, plan + link the implementing work (`link_task_to_spec`, with
   `drafting-jira-tickets`), then **self-audit** each criterion against the implementation
   (`get_spec` → `update_spec_criterion` met/unmet) and mark the spec `verified` when all are met.
+
+### L16. Daily standup / health digest (skill) **[new]**
+- The **`daily-standup`** skill builds a manage-by-exception briefing (§R5): it reads
+  `get_initiative_digest` for the spine (headline + attention list + status + outcomes), drills the
+  exceptions (`list_blockers`, `decision_queue`, `get_drift`, `get_forecast`,
+  `get_initiative_critical_path`, `list_outcomes`), and writes a tight, exception-first update.
+  Composes existing read tools, writes nothing — safe on any cadence (pair with `/loop`). Delivery
+  to Slack/email is a hook over the digest content.
 
 ---
 

@@ -165,6 +165,14 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   pipeline). `progress_ratio` is computed (pure `app/services/outcomes.py`); the retro seeder opens
   with an outcomes section so retros evaluate the bet. MCP: `list_outcomes`/`add_outcome`/
   `update_outcome`. USER_FLOWS §Y; roadmap gap #2 in AI_NATIVE_EXECUTION.md.
+- **Cross-functional persona + initiative digest:** `User.function` (engineering | product |
+  design | architecture | management | leadership) is **orthogonal to `role`** — it makes
+  PM/UX/staff/director/exec first-class and drives the **default landing** (`frontend/src/lib/persona.ts`),
+  not CRUD (reads stay open; writes gated by `role`). `GET /initiatives/{id}/digest` synthesizes a
+  **manage-by-exception** weekly roll-up (pure `app/services/digest.py`, reusing the rollup +
+  forecast + blockers + outcomes; leads with the `attention` exception list) — MCP
+  `get_initiative_digest`, skill `daily-standup`. Slack/email **delivery is a hook** over the digest
+  (not built, like the alerts digest §I). USER_FLOWS §A7/§R5; roadmap gap #6 in AI_NATIVE_EXECUTION.md.
 - **Bounded agency (scoped tokens):** access tokens carry a `scope` claim — `full` (human) or
   `agent`. An `agent` token (minted via `POST /auth/agent-token`, planner-gated) acts as its issuer
   but is blocked (403) from **one-way-door / external-write** actions: accepting a `one_way` ADR,

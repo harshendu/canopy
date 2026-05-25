@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, EmailStr
 
-from app.models.base import UserRole
+from app.models.base import UserFunction, UserRole
 
 
 class Token(BaseModel):
@@ -24,11 +24,13 @@ class UserCreate(BaseModel):
     password: str
     full_name: str | None = None
     role: UserRole = UserRole.member
+    function: UserFunction = UserFunction.engineering
 
 
 class UserUpdate(BaseModel):
     full_name: str | None = None
     role: UserRole | None = None
+    function: UserFunction | None = None
     is_active: bool | None = None
 
 
@@ -38,4 +40,5 @@ class UserRead(BaseModel):
     email: EmailStr
     full_name: str | None = None
     role: UserRole
+    function: UserFunction = UserFunction.engineering
     is_active: bool

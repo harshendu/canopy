@@ -221,3 +221,16 @@ class OutcomeStatus(StrEnum):
     at_risk = "at_risk"
     validated = "validated"  # the bet paid off (terminal)
     invalidated = "invalidated"  # the bet didn't (terminal)
+
+
+class UserFunction(StrEnum):
+    """A user's cross-functional persona — orthogonal to their access `role`. Drives the default
+    landing surface and digest cadence, not CRUD (reads stay open; writes are gated by `role`).
+    AI_NATIVE_EXECUTION.md §5: PM/UX/staff/director/exec are first-class, not all 'viewer'."""
+
+    engineering = "engineering"
+    product = "product"
+    design = "design"
+    architecture = "architecture"
+    management = "management"  # eng manager / director
+    leadership = "leadership"  # executive

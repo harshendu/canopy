@@ -63,6 +63,7 @@ async def register(session: SessionDep, _: AdminUser, payload: UserCreate) -> Us
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
         role=payload.role,
+        function=payload.function,
     )
     session.add(user)
     await session.commit()

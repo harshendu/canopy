@@ -498,11 +498,20 @@ export type UserRole =
   | "viewer"
   | "member";
 
+export type UserFunction =
+  | "engineering"
+  | "product"
+  | "design"
+  | "architecture"
+  | "management"
+  | "leadership";
+
 export interface User {
   id: number;
   email: string;
   full_name: string | null;
   role: UserRole;
+  function: UserFunction;
   is_active: boolean;
 }
 
