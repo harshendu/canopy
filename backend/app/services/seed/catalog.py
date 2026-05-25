@@ -326,13 +326,59 @@ class InitiativeSpec:
 
 
 @dataclass(frozen=True)
+class ScenarioAddedTask:
+    """A brand-new task the what-if introduces (no live counterpart)."""
+
+    name: str
+    duration: int = 4
+    assignee: str | None = None
+    after_task: str | None = None  # live task name (in project_key) it depends on (FS)
+
+
+@dataclass(frozen=True)
+class ScenarioAllocSpec:
+    """A scenario-only engineer allocation (e.g. pulling someone onto the work)."""
+
+    engineer: str
+    project_key: str
+    percent_allocation: float = 100.0
+    start_weeks: int = 0  # weeks from today
+    end_weeks: int = 12
+
+
+@dataclass(frozen=True)
+class ScenarioAvailSpec:
+    """A scenario-only availability override (PTO / ramp-up / conference)."""
+
+    engineer: str
+    start_weeks: int
+    end_weeks: int
+    capacity_factor: float = 0.0  # 0..1
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class ScenarioMilestonePull:
+    """Pull a cloned milestone's target date in (negative) or out (positive)."""
+
+    name: str  # the milestone name within project_key
+    weeks_delta: int
+
+
+@dataclass(frozen=True)
 class ScenarioSpec:
     initiative_key: str
     title: str
     description: str
-    project_key: str  # the project whose tasks are cloned into the scenario
-    added_task: str
-    added_task_assignee: str | None = None
+    project_key: str  # the project whose tasks anchor the edits
+    status: str = "draft"  # draft | ready (applied/archived would desync from live — never seeded)
+    added_tasks: tuple[ScenarioAddedTask, ...] = ()
+    removed_tasks: tuple[str, ...] = ()  # live task names (in project_key) to tombstone
+    duration_overrides: tuple[tuple[str, int], ...] = ()  # (live task name, new duration)
+    allocations: tuple[ScenarioAllocSpec, ...] = ()
+    availability: tuple[ScenarioAvailSpec, ...] = ()
+    milestone_pulls: tuple[ScenarioMilestonePull, ...] = ()
+    target_weeks_delta: int = 0  # shift the project_key scenario target date
 
 
 @dataclass(frozen=True)
@@ -514,13 +560,52 @@ CROSS_PROJECT_HANDOFFS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
     (("REGISTRY", "Policy bundle publish API"), ("CPORCH", "Consume policy bundles")),
 )
 
+# Each scenario is a faithful clone of its initiative's live plan (every project's tasks, deps,
+# milestones, allocations, availability) with a coherent set of edits layered on — so the Compare,
+# Capacity, Gantt and Milestones tabs all show a real delta against live. Statuses stay draft/ready
+# (an "applied" scenario would have to match live, which the seed doesn't mutate).
 SCENARIOS: tuple[ScenarioSpec, ...] = (
-    ScenarioSpec("DATA-PLANE", "Add a security engineer to pull GA forward",
-                 "What if a second security engineer joins the gateway work in Q3?",
-                 "ENGINE", "Parallelize enclave hardening", "Yuki Tanaka"),
-    ScenarioSpec("CONTROL-PLANE", "Defer multi-region to cut Q3 scope",
-                 "What if multi-region is deferred and that capacity goes to onboarding?",
-                 "CPORCH", "Harden single-region autoscaling", "Ravi Iyer"),
+    ScenarioSpec(
+        "DATA-PLANE", "Add a security engineer to pull GA forward",
+        "The secure-gateway integration is the at-risk critical path. What if Ivan joins Yuki on "
+        "the enclave work so the gateway lands sooner and BYOC GA pulls in three weeks?",
+        "ENGINE", status="ready",
+        added_tasks=(
+            ScenarioAddedTask("Parallelize enclave hardening", 4, "Ivan Petrov",
+                              after_task="In-VPC model execution"),
+        ),
+        duration_overrides=(("Wire secure gateway in", 3),),
+        allocations=(ScenarioAllocSpec("Ivan Petrov", "ENGINE", 80, 0, 12),),
+        milestone_pulls=(ScenarioMilestonePull("BYOC GA", -3),),
+        target_weeks_delta=-3,
+    ),
+    ScenarioSpec(
+        "CONTROL-PLANE", "Defer multi-region to cut Q3 scope",
+        "What if multi-region autoscaling is deferred out of Q3 and that capacity goes to the "
+        "tenant onboarding console instead?",
+        "CPORCH", status="draft",
+        removed_tasks=("Multi-region autoscaling",),
+        added_tasks=(
+            ScenarioAddedTask("Harden single-region autoscaling", 3, "Ravi Iyer",
+                              after_task="Fleet health reconciler"),
+        ),
+        allocations=(ScenarioAllocSpec("Sofia Garcia", "CONSOLE", 40, 0, 10),),
+        milestone_pulls=(ScenarioMilestonePull("GA", -2),),
+        target_weeks_delta=-2,
+    ),
+    ScenarioSpec(
+        "FIELD-DELIVERY", "Plan around the Q3 PTO crunch",
+        "What if two field engineers are out over the summer? Model the availability dip and the "
+        "buffer the guided-install work needs to absorb it.",
+        "FIELDCON", status="draft",
+        duration_overrides=(("Guided install wizard", 8),),
+        availability=(
+            ScenarioAvailSpec("Omar Haddad", 4, 6, 0.0, "Summer PTO"),
+            ScenarioAvailSpec("Hannah Schmidt", 6, 8, 0.3, "Parental leave ramp-down"),
+        ),
+        milestone_pulls=(ScenarioMilestonePull("Guided install MVP", 2),),
+        target_weeks_delta=2,
+    ),
 )
 
 

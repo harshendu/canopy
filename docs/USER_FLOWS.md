@@ -1385,7 +1385,10 @@ shows real trends. **Rich content is on every project**: an architecture map, **
 in-discussion with a review thread / proposed / deferred — populating all four **decision-queue**
 buckets, including an overdue one), **fitness functions** + **drift** events, **specs** + criteria,
 **risks** (RAID, project + initiative scope), **blockers**, **outcomes**, **doc references**, **retros**
-(including an **incident postmortem**), **draft plans**, two **scenarios**, three demo **connections**,
+(including an **incident postmortem**), **draft plans**, three **scenarios** (one rich what-if per
+initiative — each a full snapshot of the live plan plus a coherent set of edits across tasks,
+dependencies, milestones, allocations and availability, in `draft`/`ready` status — so the §T
+Compare/Capacity/Gantt/Milestones tabs all show a real delta), three demo **connections**,
 and project state that makes the **alerts** digest fire (deadline miss, overdue milestone,
 over-allocation, overdue risk, open blocker).
 

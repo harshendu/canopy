@@ -79,7 +79,10 @@ from app.models.retro import Retrospective, RetrospectiveComment
 from app.models.risk_register import RiskItem
 from app.models.scenario import (
     Scenario,
+    ScenarioAllocation,
+    ScenarioAvailability,
     ScenarioDependency,
+    ScenarioMilestone,
     ScenarioProject,
     ScenarioTask,
 )
@@ -87,6 +90,7 @@ from app.models.spec import Spec, SpecCriterion
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
 from app.services.planner import reschedule_project
+from app.services.scenario_engine import snapshot_live_into_scenario
 from app.services.seed import catalog
 from app.services.seed.catalog import (
     ALLOCATIONS,
@@ -128,6 +132,16 @@ def _today() -> date:
 
 def _weeks(base: date, n: int) -> date:
     return base + timedelta(weeks=n)
+
+
+def _clone_of(
+    refs: _Refs, project_key: str, by_live: dict[int, ScenarioTask], name: str
+) -> ScenarioTask | None:
+    """The scenario task cloned from the live task `name` in `project_key` (None if not found)."""
+    live = refs.tasks[project_key].get(name)
+    if live is None or live.id is None:
+        return None
+    return by_live.get(live.id)
 
 
 def _risk_level(score: int) -> str:
@@ -675,37 +689,84 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
 
 
 async def _build_scenarios(session: AsyncSession, refs: _Refs) -> None:
+    """Each scenario is a faithful clone of its initiative's live plan (via the same snapshot the
+    create-scenario endpoint uses) with a coherent set of edits layered on, so Compare / Capacity /
+    Gantt / Milestones all show a real delta. Status is set last (snapshot assumes a draft)."""
+    today = _today()
     for sc in SCENARIOS:
         init = refs.initiatives.get(sc.initiative_key)
-        if init is None:
+        project = refs.projects.get(sc.project_key)
+        if init is None or project is None:
             continue
         scenario = await _add(session, Scenario(
             initiative_id=_req(init.id), title=sc.title, description=sc.description,
             status="draft"))
-        for project in refs.projects.values():
-            if project.initiative_id == init.id:
-                await _add(session, ScenarioProject(
-                    scenario_id=scenario.id, project_id=_req(project.id),
-                    start_date=project.start_date, target_date=project.target_date,
-                    skip_weekends=project.skip_weekends))
-        project = refs.projects[sc.project_key]
-        leaves = [t for t in refs.leaf_order[sc.project_key] if t.type != TaskType.milestone]
-        clone_by_live: dict[int, ScenarioTask] = {}
-        for live in leaves:
-            st = await _add(session, ScenarioTask(
-                scenario_id=scenario.id, project_id=_req(project.id), live_task_id=live.id,
-                name=live.name, type=TaskType.task, duration=live.duration,
-                percent_complete=live.percent_complete,
-                assignee_engineer_id=live.assignee_engineer_id))
-            clone_by_live[_req(live.id)] = st
-        for prev, nxt in pairwise(leaves):
-            await _add(session, ScenarioDependency(
-                scenario_id=scenario.id, predecessor_id=_req(clone_by_live[_req(prev.id)].id),
-                successor_id=_req(clone_by_live[_req(nxt.id)].id)))
-        await _add(session, ScenarioTask(
-            scenario_id=scenario.id, project_id=_req(project.id), name=sc.added_task,
-            type=TaskType.task, duration=4,
-            assignee_engineer_id=refs.eng(sc.added_task_assignee)))
+        await snapshot_live_into_scenario(session, scenario)
+
+        clones = (await session.execute(
+            select(ScenarioTask).where(ScenarioTask.scenario_id == scenario.id))).scalars().all()
+        by_live_task = {c.live_task_id: c for c in clones if c.live_task_id is not None}
+
+        for name in sc.removed_tasks:  # defer scope: tombstone (apply would delete the live task)
+            clone = _clone_of(refs, sc.project_key, by_live_task, name)
+            if clone is not None:
+                clone.removed = True
+
+        for name, duration in sc.duration_overrides:
+            clone = _clone_of(refs, sc.project_key, by_live_task, name)
+            if clone is not None:
+                clone.duration = duration
+
+        for added in sc.added_tasks:
+            new_task = await _add(session, ScenarioTask(
+                scenario_id=scenario.id, project_id=_req(project.id), name=added.name,
+                type=TaskType.task, duration=added.duration,
+                assignee_engineer_id=refs.eng(added.assignee)))
+            pred = (_clone_of(refs, sc.project_key, by_live_task, added.after_task)
+                    if added.after_task is not None else None)
+            if pred is not None:
+                await _add(session, ScenarioDependency(
+                    scenario_id=scenario.id, predecessor_id=_req(pred.id),
+                    successor_id=_req(new_task.id)))
+
+        if sc.milestone_pulls:
+            ms_by_name = {
+                m.name: m for m in (await session.execute(select(ScenarioMilestone).where(
+                    ScenarioMilestone.scenario_id == scenario.id,
+                    ScenarioMilestone.project_id == project.id))).scalars().all()
+            }
+            for pull in sc.milestone_pulls:
+                ms = ms_by_name.get(pull.name)
+                if ms is not None and ms.target_date is not None:
+                    ms.target_date = _weeks(ms.target_date, pull.weeks_delta)
+
+        if sc.target_weeks_delta:
+            sp = (await session.execute(select(ScenarioProject).where(
+                ScenarioProject.scenario_id == scenario.id,
+                ScenarioProject.project_id == project.id))).scalar_one_or_none()
+            if sp is not None and sp.target_date is not None:
+                sp.target_date = _weeks(sp.target_date, sc.target_weeks_delta)
+
+        for alloc in sc.allocations:
+            eng_id = refs.eng(alloc.engineer)
+            alloc_project = refs.projects.get(alloc.project_key)
+            if eng_id is not None and alloc_project is not None:
+                await _add(session, ScenarioAllocation(
+                    scenario_id=scenario.id, engineer_id=eng_id, project_id=alloc_project.id,
+                    percent_allocation=alloc.percent_allocation,
+                    start_date=_weeks(today, alloc.start_weeks),
+                    end_date=_weeks(today, alloc.end_weeks)))
+
+        for av in sc.availability:
+            eng_id = refs.eng(av.engineer)
+            if eng_id is not None:
+                await _add(session, ScenarioAvailability(
+                    scenario_id=scenario.id, engineer_id=eng_id,
+                    start_date=_weeks(today, av.start_weeks),
+                    end_date=_weeks(today, av.end_weeks),
+                    capacity_factor=av.capacity_factor, note=av.note))
+
+        scenario.status = sc.status
 
 
 # --------------------------------------------------------------------------- #

@@ -43,9 +43,59 @@ async def test_seed_loader_builds_a_full_coherent_dataset(db_session):
     assert counts["specs"] >= 8  # every project has a spec
     assert counts["outcomes"] >= 8
     assert counts["blockers"] >= 2
-    assert counts["scenarios"] >= 2
+    assert counts["scenarios"] >= 3  # one rich what-if per initiative
     assert counts["status_history"] > 0
     assert counts["connections"] == 3
+
+
+@pytest.mark.asyncio
+async def test_seed_scenarios_are_rich_whatifs(db_session):
+    """Each seeded scenario is a real clone-plus-edits, not an empty branch — so the Compare,
+    Capacity, Gantt and Milestones tabs all have content and a non-trivial delta vs live."""
+    from sqlmodel import select
+
+    from app.models.scenario import (
+        Scenario,
+        ScenarioAllocation,
+        ScenarioAvailability,
+        ScenarioMilestone,
+        ScenarioTask,
+    )
+
+    await seed.load_seed_data(db_session, set())
+    scenarios = (await db_session.execute(select(Scenario))).scalars().all()
+
+    # Lifecycle is demonstrated: at least one reviewed ("ready") and one in-flight ("draft").
+    statuses = {s.status for s in scenarios}
+    assert "ready" in statuses and "draft" in statuses
+
+    # Across the scenarios, every editable dimension is exercised at least once.
+    all_tasks = (await db_session.execute(select(ScenarioTask))).scalars().all()
+    assert any(t.live_task_id is None for t in all_tasks)  # an added task
+    assert any(t.removed for t in all_tasks)  # a tombstoned (deferred) task
+    assert (await db_session.execute(select(ScenarioAllocation))).scalars().first() is not None
+    assert (await db_session.execute(select(ScenarioAvailability))).scalars().first() is not None
+    assert (await db_session.execute(select(ScenarioMilestone))).scalars().first() is not None
+
+    # Every scenario is a faithful full clone (milestones + allocations carried over) carrying at
+    # least one explicit edit (an added/removed row) — never an empty branch.
+    for scenario in scenarios:
+        sid = scenario.id
+        s_tasks = [t for t in all_tasks if t.scenario_id == sid]
+        s_allocs = (await db_session.execute(
+            select(ScenarioAllocation).where(ScenarioAllocation.scenario_id == sid)
+        )).scalars().all()
+        s_avail = (await db_session.execute(
+            select(ScenarioAvailability).where(ScenarioAvailability.scenario_id == sid)
+        )).scalars().all()
+        assert any(t.live_task_id is not None for t in s_tasks)  # cloned the live plan
+        edits = (
+            sum(t.live_task_id is None for t in s_tasks)
+            + sum(t.removed for t in s_tasks)
+            + sum(a.live_allocation_id is None for a in s_allocs)
+            + sum(av.live_availability_id is None for av in s_avail)
+        )
+        assert edits > 0, f"scenario {scenario.title!r} has no edits vs live"
 
 
 @pytest.mark.asyncio
