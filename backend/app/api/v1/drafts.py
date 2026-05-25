@@ -22,6 +22,8 @@ from app.schemas.entities import (
     DraftPlanUpdate,
     DraftPushRequest,
     DraftPushResult,
+    DraftRecordPushRequest,
+    DraftRecordPushResult,
     DraftTaskCreate,
     DraftTaskRead,
     DraftTaskUpdate,
@@ -165,5 +167,18 @@ async def push_draft_to_jira(
         return await draft_sync.push_plan_to_jira(
             session, plan_id, payload.connection_id, user.id
         )
+    except draft_sync.DraftPushError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/draft-plans/{plan_id}/record-push", response_model=DraftRecordPushResult)
+async def record_draft_push(
+    session: SessionDep, _: PlannerWriter, plan_id: int, payload: DraftRecordPushRequest
+) -> DraftRecordPushResult:
+    """Write-back for `write_strategy=mcp`: Claude created the Jira tickets itself; record their
+    ids here so re-pushing is idempotent and the plan flips to synced. Internal write — allowed
+    for agent-scope tokens (no `HumanOnly` gate), unlike the direct push above."""
+    try:
+        return await draft_sync.record_external_push(session, plan_id, payload.results)
     except draft_sync.DraftPushError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

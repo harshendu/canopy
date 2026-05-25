@@ -157,8 +157,11 @@ ingest, and file-drop ingest are later phases.)
   reads ≠ `direct`; the direct write paths — draft **push-to-Jira** (§C10) and **export-to-Drive**
   (§S) — return `403` when writes ≠ `direct`. Orthogonal to the bounded-agency gate (§A6).
 - **Built in Phase 2:** per-user SSO connections (`allow_user_connect` + per-user OAuth, §J2a).
-- **Not built (later phases):** MCP ingest tools + admin-scheduled Claude sync jobs, and the
-  file-drop ingest pipeline (the `mcp`/`file` read strategies are inert until then).
+- **Built in Phase 3:** MCP-orchestrated ingest (Claude pushes external data in idempotently) +
+  the draft push write-back + the scheduled-Claude-job pattern (§J3a) — so the `mcp` read strategy
+  and `mcp` write strategy are now functional, not inert.
+- **Not built (later phase):** the file-drop ingest pipeline (the `file` read strategy stays inert
+  until Phase 4).
 
 ---
 
@@ -812,6 +815,29 @@ attach their **own** OAuth credential to it — canopy then reads/writes **as th
   **MCP:** `trigger_jira_sync`.
 - **Background:** an arq worker runs an incremental reconciliation poll on a cron as the correctness
   backstop behind webhooks.
+- **Note:** the poll, webhooks, and "Sync now" all **stand down** when the provider's read strategy
+  is `mcp`/`file` (§A8) — the data then arrives via ingest (§J3a) or a file drop (Phase 4).
+
+### J3a. MCP-orchestrated ingest — Claude pushes data in **[new — Phase 3]**
+When a provider's reads (or writes) are **MCP-managed** (admin set them to `mcp`, §A8), canopy
+doesn't call the provider API. Instead **Claude** reads the external system with its own connectors
+and pushes **normalized** data into canopy idempotently — the MCP twin of the direct sync. Every
+ingest upserts via `ExternalRef` (never deletes), maps into the connection's configured project,
+and (issues) replans on new tasks; ingest does **not** advance the connection watermark.
+- **Issues → tasks:** `POST /api/v1/connectors/connections/{id}/ingest/issues`
+  (`{issues:[{external_id, external_key, summary, status, issue_type, parent_external_id,
+  updated}]}`) · **MCP:** `ingest_jira_issues`. Epics→summary; re-ingest updates, never duplicates.
+- **PRs → cache:** `POST .../ingest/pull-requests` · **MCP:** `ingest_github_pull_requests`.
+- **Draft push write-back (writes=`mcp`):** when `push_draft_to_jira` is disabled by policy, Claude
+  creates the tickets itself then `POST /api/v1/draft-plans/{id}/record-push`
+  (`{results:[{draft_task_id, jira_issue_id, jira_key}]}`) stamps each task and flips the plan to
+  `synced` (idempotent) · **MCP:** `record_draft_push`.
+- **Auth:** ingest + record-push are **planner-gated but not human-only** — internal, idempotent
+  two-way-door writes, so a scheduled Claude job using an **agent-scope token** (§A6) may call them
+  (the external read/write happens through Claude's own connectors, outside canopy's agency gate).
+- **Scheduling:** lives on the architect's Claude account (`/loop` or a scheduled task); canopy
+  doesn't drive it. Runbook: skill **`mcp-ingest`**. Logic: `app/services/ingest.py` (shares the
+  task-upsert core with the Jira sync so the two paths can't drift).
 
 ### J4. Receive provider webhooks (live updates)
 - **Flow:** Jira/GitHub POST to `/webhooks/jira` / `/webhooks/github`. The receiver verifies the HMAC

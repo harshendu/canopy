@@ -20,6 +20,7 @@ from app.models.base import (
     OutcomeStatus,
     ProjectHealth,
     Provider,
+    ReadStrategy,
     RetrospectiveKind,
     Reversibility,
     RiskCategory,
@@ -28,6 +29,7 @@ from app.models.base import (
     RiskStatus,
     SpecStatus,
     TaskType,
+    WriteStrategy,
 )
 from app.schemas.auth import UserRead
 from app.services import metadata
@@ -532,6 +534,9 @@ class ConnectionRead(BaseModel):
     # and whether the current caller has connected their own account to this connection.
     allow_user_connect: bool = False
     user_connected: bool = False
+    # Integration policy (Phase 1/3): so the UI can show when reads/writes are MCP-managed.
+    read_strategy: ReadStrategy = ReadStrategy.direct
+    write_strategy: WriteStrategy = WriteStrategy.direct
 
 
 class PullRequestRead(BaseModel):
@@ -1247,6 +1252,62 @@ class DraftPushResult(BaseModel):
     updated: int
     failed: int
     results: list[DraftPushTaskResult]
+
+
+# --- MCP-orchestrated ingest (Claude pushes external data into canopy idempotently) ---
+class IngestIssue(BaseModel):
+    """A normalized external issue (e.g. a Jira issue Claude read with its own connector)."""
+
+    external_id: str  # provider issue id (opaque, stable) — the ExternalRef key
+    external_key: str | None = None  # human key, e.g. "PROJ-123"
+    summary: str
+    status: str | None = None  # mirrored read-only (Jira stays status owner)
+    issue_type: str | None = None  # epic types become summary tasks
+    parent_external_id: str | None = None
+    updated: str | None = None  # remote "updated" timestamp, for staleness checks
+
+
+class IngestIssuesRequest(BaseModel):
+    issues: list[IngestIssue]
+
+
+class IngestPullRequest(BaseModel):
+    """A normalized external pull request for the PR cache."""
+
+    number: int
+    title: str
+    state: str  # open | closed
+    url: str | None = None
+    author: str | None = None
+    updated: str | None = None
+
+
+class IngestPullRequestsRequest(BaseModel):
+    pull_requests: list[IngestPullRequest]
+
+
+class IngestResult(BaseModel):
+    provider: str
+    created: int
+    updated: int
+    skipped: int
+
+
+# --- Draft push write-back (write_strategy=mcp: Claude creates tickets, records ids here) ---
+class DraftPushRecord(BaseModel):
+    draft_task_id: int
+    jira_issue_id: str
+    jira_key: str | None = None
+
+
+class DraftRecordPushRequest(BaseModel):
+    results: list[DraftPushRecord]
+
+
+class DraftRecordPushResult(BaseModel):
+    plan_id: int
+    recorded: int
+    status: str  # the draft plan's resulting status (e.g. "synced")
 
 
 # --- Exports (snapshots viewable outside canopy) ---

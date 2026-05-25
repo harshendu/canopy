@@ -248,6 +248,9 @@ export interface Connection {
   // and whether the current user has connected their own account to this connection.
   allow_user_connect: boolean;
   user_connected: boolean;
+  // Integration policy (Phase 1/3): so the UI can show when reads/writes are MCP-managed.
+  read_strategy: ReadStrategy;
+  write_strategy: WriteStrategy;
 }
 
 // Per-provider integration policy (admin-chosen). See backend app/services/integration_policy.py.

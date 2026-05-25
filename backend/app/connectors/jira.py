@@ -26,7 +26,7 @@ from app.connectors.http import request_with_retry
 from app.models.base import Provider, TaskType
 from app.models.integration import ExternalRef
 from app.models.project import Project, Task, TaskStatusHistory
-from app.services import mapping
+from app.services import ingest, mapping
 
 _FIELDS = ["summary", "status", "issuetype", "parent", "updated"]
 _EPIC_TYPES = {"Epic"}
@@ -118,48 +118,24 @@ class JiraConnector(Connector):
         parent = fields.get("parent")
         parent_ext_id = parent.get("id") if parent else None
 
-        ref = await mapping.get_ref(self.session, Provider.jira, ext_id, "task")
-        if ref is not None and not mapping.is_stale(ref, updated):
-            return "skipped", parent_ext_id, ext_id
-
-        is_epic = issuetype in self._epic_type_names()
-        task_type = TaskType.summary if is_epic and not force_leaf else TaskType.task
-        task: Task | None = None
-        if ref is not None:
-            task = await self.session.get(Task, ref.entity_id)
-        if task is None:  # new issue, or dangling ref — create
-            task = Task(project_id=pid, name=summary, type=task_type)
-            self.session.add(task)
-            await self.session.flush()
-            action = "created" if ref is None else "updated"
-        else:
-            action = "updated"
-        task.name = summary
-        task.status = status
-        task.type = task_type
-        await self.session.flush()
-        assert task.id is not None  # guaranteed after flush
-
-        await mapping.upsert_ref(
+        # Shared upsert core (also used by MCP ingest) keeps the two paths from drifting.
+        action, _ = await ingest.upsert_task_from_external(
             self.session,
+            project_id=pid,
             provider=Provider.jira,
             external_id=ext_id,
-            entity_type="task",
-            entity_id=task.id,
             external_key=key,
-            remote_updated=updated,
+            summary=summary,
+            status=status,
+            is_epic=issuetype in self._epic_type_names(),
+            updated=updated,
+            force_leaf=force_leaf,
         )
         return action, parent_ext_id, ext_id
 
     async def _wire_parents(self, parent_links: list[tuple[str, str]]) -> None:
         """Second pass: set Task.parent_id once every epic has an ExternalRef."""
-        for child_ext_id, parent_ext_id in parent_links:
-            child_ref = await mapping.get_ref(self.session, Provider.jira, child_ext_id, "task")
-            parent_ref = await mapping.get_ref(self.session, Provider.jira, parent_ext_id, "task")
-            if child_ref and parent_ref:
-                child = await self.session.get(Task, child_ref.entity_id)
-                if child and child.parent_id != parent_ref.entity_id:
-                    child.parent_id = parent_ref.entity_id
+        await ingest.wire_parents(self.session, Provider.jira, parent_links)
 
     async def _run(self, jql: str) -> SyncResult:
         result = SyncResult(provider="jira")

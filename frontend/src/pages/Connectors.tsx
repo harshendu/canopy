@@ -161,6 +161,14 @@ export default function Connectors() {
               {c.watermark && (
                 <span className="ml-2 text-xs text-slate-400">synced ≥ {c.watermark}</span>
               )}
+              {(c.read_strategy !== "direct" || c.write_strategy !== "direct") && (
+                <span
+                  className="ml-2 rounded bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700"
+                  title={`reads: ${c.read_strategy} · writes: ${c.write_strategy}`}
+                >
+                  MCP-managed
+                </span>
+              )}
               {c.allow_user_connect && (
                 <span
                   className={`ml-2 rounded px-2 py-0.5 text-xs ${
@@ -190,7 +198,12 @@ export default function Connectors() {
               )}
               <button
                 onClick={() => sync.mutate(c.id)}
-                disabled={sync.isPending}
+                disabled={sync.isPending || c.read_strategy !== "direct"}
+                title={
+                  c.read_strategy !== "direct"
+                    ? "Reads are managed via MCP/file for this provider — Claude ingests the data."
+                    : undefined
+                }
                 className="rounded border border-canopy-500 px-3 py-1 text-xs font-medium text-canopy-700 disabled:opacity-50"
               >
                 Sync now

@@ -9,12 +9,13 @@ from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.connectors import get_connector, oauth
+from app.connectors.base import SyncResult
 from app.connectors.gdrive import GoogleDriveConnector
 from app.connectors.github import GitHubConnector
 from app.connectors.jira import JiraConnector
 from app.core.config import settings
 from app.core.crypto import encrypt_token
-from app.models.base import Provider, utcnow
+from app.models.base import Provider, ReadStrategy, WriteStrategy, utcnow
 from app.models.integration import Connection, IntegrationSetting, PullRequest, UserConnection
 from app.schemas.entities import (
     ConnectionCreate,
@@ -22,9 +23,12 @@ from app.schemas.entities import (
     DocFieldMapping,
     EpicDocSampleResponse,
     HarvestDocsResult,
+    IngestIssuesRequest,
+    IngestPullRequestsRequest,
+    IngestResult,
     PullRequestRead,
 )
-from app.services import doc_graph, integration_policy
+from app.services import doc_graph, ingest, integration_policy
 from app.services import sync as sync_service
 
 router = APIRouter()
@@ -40,9 +44,11 @@ async def _get_connection(session: AsyncSession, connection_id: int) -> Connecti
 @router.get("/connections", response_model=list[ConnectionRead])
 async def list_connections(session: SessionDep, user: CurrentUser) -> list[ConnectionRead]:
     connections = list((await session.execute(select(Connection))).scalars().all())
-    # Per-provider policy (allow_user_connect) + which connections the caller has connected.
-    settings_rows = (await session.execute(select(IntegrationSetting))).scalars().all()
+    # Per-provider policy (allow_user_connect + read/write strategy) + which connections the
+    # caller has connected their own account to.
+    settings_rows = list((await session.execute(select(IntegrationSetting))).scalars().all())
     allow_by_provider = {s.provider: s.allow_user_connect for s in settings_rows}
+    setting_by_provider = {s.provider: s for s in settings_rows}
     my_connected = {
         uc.connection_id
         for uc in (
@@ -65,6 +71,16 @@ async def list_connections(session: SessionDep, user: CurrentUser) -> list[Conne
             authorized=c.authorized,
             allow_user_connect=allow_by_provider.get(c.provider, False),
             user_connected=c.id in my_connected,
+            read_strategy=(
+                setting_by_provider[c.provider].read_strategy
+                if c.provider in setting_by_provider
+                else ReadStrategy.direct
+            ),
+            write_strategy=(
+                setting_by_provider[c.provider].write_strategy
+                if c.provider in setting_by_provider
+                else WriteStrategy.direct
+            ),
         )
         for c in connections
     ]
@@ -115,6 +131,39 @@ async def trigger_incremental_sync(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return asdict(result)
+
+
+# --- MCP-orchestrated ingest (Claude pushes external data in; the MCP twin of sync) ---
+# Planner-gated but NOT human-only: ingest is an internal, idempotent two-way-door write, so a
+# scheduled Claude job (agent-scope token) may call it.
+@router.post("/connections/{connection_id}/ingest/issues", response_model=IngestResult)
+async def ingest_issues(
+    session: SessionDep, _: PlannerWriter, connection_id: int, payload: IngestIssuesRequest
+) -> SyncResult:
+    connection = await _get_connection(session, connection_id)
+    if connection.provider != Provider.jira:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Not a Jira connection"
+        )
+    try:
+        return await ingest.ingest_issues(session, connection, payload.issues)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/connections/{connection_id}/ingest/pull-requests", response_model=IngestResult)
+async def ingest_pull_requests(
+    session: SessionDep, _: PlannerWriter, connection_id: int, payload: IngestPullRequestsRequest
+) -> SyncResult:
+    connection = await _get_connection(session, connection_id)
+    if connection.provider != Provider.github:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Not a GitHub connection"
+        )
+    try:
+        return await ingest.ingest_pull_requests(session, connection, payload.pull_requests)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 # --- OAuth 2.0 (3LO) flows ---
