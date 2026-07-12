@@ -249,6 +249,40 @@ class OutcomeStatus(StrEnum):
     invalidated = "invalidated"  # the bet didn't (terminal)
 
 
+# --- Change proposals (agent-staged writes, human-reviewed in the UI) ---
+class ProposalScope(StrEnum):
+    """What a change proposal targets (polymorphic, like RiskScope/OutcomeScope)."""
+
+    project = "project"
+    initiative = "initiative"
+
+
+class ProposalStatus(StrEnum):
+    open = "open"  # staged, awaiting human review
+    applied = "applied"  # a human reviewed and committed it from the UI
+    rejected = "rejected"  # a human turned it down (see review_note)
+    withdrawn = "withdrawn"  # the author (often the agent) pulled it back
+
+
+class ProposalEntity(StrEnum):
+    """The canopy entity a proposal item mutates."""
+
+    task = "task"
+    dependency = "dependency"
+    milestone = "milestone"
+    blocker = "blocker"
+    risk = "risk"
+    outcome = "outcome"
+    decision = "decision"
+    doc_reference = "doc_reference"
+
+
+class ProposalAction(StrEnum):
+    create = "create"
+    update = "update"
+    resolve = "resolve"  # blockers only: mark the impediment cleared
+
+
 class UserFunction(StrEnum):
     """A user's cross-functional persona — orthogonal to their access `role`. Drives the default
     landing surface and digest cadence, not CRUD (reads stay open; writes are gated by `role`).

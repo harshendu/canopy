@@ -1,8 +1,8 @@
 {
   "name": "canopy",
   "displayName": "Canopy Architecture Manager",
-  "version": "0.1.0",
-  "description": "Manage software architecture, projects, milestones, teams, Jira sync, and Gantt scheduling from Claude.",
+  "version": "0.2.0",
+  "description": "Manage software architecture, projects, milestones, teams, Jira sync, and Gantt scheduling from Claude — with review-first change proposals: stage updates from any source (Slack, email, meetings, Jira, GitHub, Drive) for the architect to review and commit in the canopy UI.",
   "author": "Canopy",
   "license": "MIT",
   "keywords": [
@@ -17,6 +17,11 @@
       "type": "string",
       "description": "Base URL of the canopy backend, e.g. http://localhost:8000",
       "default": "http://localhost:8000"
+    },
+    "dashboard_url": {
+      "type": "string",
+      "description": "Base URL of the canopy web dashboard, used for review links (change proposals). In production this is usually the same origin as the API; for local dev use the Vite server, e.g. http://localhost:5173",
+      "default": "http://localhost:5173"
     },
     "api_token": {
       "type": "string",

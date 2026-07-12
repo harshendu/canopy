@@ -1,6 +1,9 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 
+import { api } from "./api/client";
+import type { Proposal } from "./api/types";
 import { useAuth } from "./lib/auth";
 import { useCurrentUser } from "./lib/useCurrentUser";
 import { canContribute } from "./lib/permissions";
@@ -18,6 +21,7 @@ import Connectors from "./pages/Connectors";
 import Decisions from "./pages/Decisions";
 import MyWorkspace from "./pages/MyWorkspace";
 import MyToday from "./pages/MyToday";
+import Reviews from "./pages/Reviews";
 import AdminUsers from "./pages/AdminUsers";
 import AdminIntegrations from "./pages/AdminIntegrations";
 import AdminFeatures from "./pages/AdminFeatures";
@@ -39,6 +43,14 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
   useEventStream(isAuthenticated); // live-refresh caches on backend change events
   const { data: me } = useCurrentUser(isAuthenticated);
   const features = useFeatures(isAuthenticated);
+  // The review-queue badge: staged changes awaiting a human. SSE keeps it live.
+  const openProposals = useQuery({
+    queryKey: ["proposals", "open"],
+    queryFn: () => api.get<Proposal[]>("/proposals?status=open"),
+    enabled: isAuthenticated && featureOn(features, "ai.proposals"),
+    staleTime: 30 * 1000,
+  });
+  const reviewCount = openProposals.data?.length ?? 0;
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
@@ -56,6 +68,18 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
             <NavLink to="/me" className={navClass}>
               My work
             </NavLink>
+            {featureOn(features, "ai.proposals") && (
+              <NavLink to="/reviews" className={navClass}>
+                <span className="flex items-center justify-between">
+                  Reviews
+                  {reviewCount > 0 && (
+                    <span className="rounded-full bg-amber-500 px-1.5 text-xs font-semibold text-white">
+                      {reviewCount}
+                    </span>
+                  )}
+                </span>
+              </NavLink>
+            )}
             <NavLink to="/portfolio" className={navClass}>
               Portfolio
             </NavLink>
@@ -195,6 +219,22 @@ export default function App() {
         element={
           <ProtectedLayout>
             <ProjectView />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/reviews"
+        element={
+          <ProtectedLayout>
+            <Reviews />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/reviews/:proposalId"
+        element={
+          <ProtectedLayout>
+            <Reviews />
           </ProtectedLayout>
         }
       />

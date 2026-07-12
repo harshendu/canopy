@@ -175,6 +175,11 @@ FEATURE_CATALOG: tuple[FeatureDef, ...] = (
         "ai.agent_tokens", "Bounded agent tokens",
         "Mint scoped tokens for Claude that are blocked from one-way-door actions.", "ai",
     ),
+    FeatureDef(
+        "ai.proposals", "Change proposals (review queue)",
+        "Agent-staged canopy changes a human reviews, edits down, and applies from the UI.",
+        "ai",
+    ),
 )
 
 FEATURES_BY_KEY: dict[str, FeatureDef] = {f.key: f for f in FEATURE_CATALOG}

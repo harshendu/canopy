@@ -7,7 +7,7 @@
     {
       "name": "canopy",
       "source": "./plugin",
-      "description": "Manage software architecture, projects, milestones, teams, Jira sync, and Gantt scheduling from Claude."
+      "description": "Manage software architecture, projects, milestones, teams, Jira sync, and Gantt scheduling from Claude — with review-first change proposals: stage updates from any connected source (Slack, email, meetings, Jira, GitHub, Drive) for the architect to review and commit in the canopy UI."
     }
   ]
 }

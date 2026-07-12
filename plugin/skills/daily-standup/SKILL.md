@@ -35,9 +35,16 @@ signal, is flagged, not assumed green). See `docs/AI_NATIVE_EXECUTION.md` §5.
    the outcomes. Keep it scannable — this is read every day. The digest's `markdown` is a good
    starting point; enrich it with the drill-down detail.
 
+5. **Offer to stage the follow-ups (optional).** A briefing usually surfaces work the human
+   would then do by hand — a blocker that needs raising, a risk worth logging, a decision from
+   yesterday's thread. Offer to stage them as one `canopy:propose_changes` batch (with each
+   item's provenance) so the user can commit them from the Reviews queue in one click. Don't
+   write them directly — the standup's authority is observation, not mutation.
+
 ## Notes
 - **Altitude:** keep it exception-first and short. Don't dump every task — surface the few things
   that need a human.
 - **Delivery** to Slack/email isn't built in canopy yet — post the briefing wherever the team
   reads (the digest content is the deliverable; delivery is a hook over it).
-- This composes existing read tools and writes nothing; safe to run on any cadence (see `/loop`).
+- Steps 1–4 compose read tools and write nothing; step 5 stages (never applies) — so the skill
+  stays safe on any cadence (see `/loop`), including on an agent-scope token.

@@ -9,7 +9,18 @@ Use this when the architect describes work to be planned ("plan the auth rewrite
 "lay out Q3", "what's our critical path?"). canopy owns the schedule; Jira owns the
 tickets (see the `syncing-jira` skill to pull real epics/stories first).
 
-## Workflow
+## Direct build vs staged proposal (decide first)
+
+- **Fresh/empty project, the architect dictating the plan live** → build directly with
+  the workflow below (they're watching the plan take shape).
+- **Re-shaping a plan that already has live scheduled work** (new phases, duration
+  re-cuts, dependency re-wires), or a plan **derived from docs/threads** rather than
+  dictated in-session → stage it as ONE `canopy:propose_changes` batch instead
+  (task/dependency/milestone items; `ref` + `parent_ref`/`predecessor_ref` build the WBS
+  before ids exist). The architect reviews the whole re-shape in the canopy UI and
+  applies it atomically — apply replans automatically. See `updating-canopy` §2.
+
+## Workflow (direct build)
 
 1. **Find or create the project.** Call `canopy:list_projects`. If none fits, create
    one in the app (or ask the architect). Note the numeric `project_id`.

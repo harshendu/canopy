@@ -61,7 +61,10 @@ class UserRead(BaseModel):
 
 class SessionInfo(BaseModel):
     """The active session: the effective (possibly impersonated) user, plus the real admin behind
-    it when an admin is impersonating someone else (``None`` for an ordinary session)."""
+    it when an admin is impersonating someone else (``None`` for an ordinary session). `scope`
+    reports the token's bounded-agency tier (§A6) — an `agent` session can stage change
+    proposals but cannot apply them (or take other one-way-door / external-write actions)."""
 
     user: UserRead
     impersonator: UserRead | None = None
+    scope: str = "full"  # full | agent

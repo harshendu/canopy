@@ -5,6 +5,7 @@
       "args": ["${CLAUDE_PLUGIN_ROOT}/mcp_server/server.py"],
       "env": {
         "CANOPY_API_BASE_URL": "${user_config.api_base_url}",
+        "CANOPY_DASHBOARD_URL": "${user_config.dashboard_url}",
         "CANOPY_API_TOKEN": "${user_config.api_token}",
         "CANOPY_API_EMAIL": "${user_config.api_email}",
         "CANOPY_API_PASSWORD": "${user_config.api_password}"
