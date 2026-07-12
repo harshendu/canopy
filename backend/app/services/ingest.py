@@ -12,8 +12,9 @@ from __future__ import annotations
 import contextlib
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.connectors.base import SyncResult
 from app.models.base import Provider, TaskType
@@ -41,9 +42,12 @@ async def resolve_assignee_engineer(
 ) -> int | None:
     """Map an external (Jira) assignee onto an Engineer, creating one when unknown.
 
-    Match order: exact `jira_account_id`, then exact display name (case-insensitive, which
-    also back-fills the account id on the existing row), else a new active Engineer — the
-    assignee is a real team member in Jira, so ownership lands on a real row here too.
+    Match order: exact `jira_account_id`, then exact display name (case-insensitive) — but a
+    name match is only trusted for a row **without** an account id (which it back-fills):
+    two Jira users sharing a display name must not collapse onto one Engineer. Otherwise a
+    new active Engineer is created — the assignee is a real team member in Jira, so
+    ownership lands on a real row here too. `jira_account_id` is unique; a concurrent sync
+    creating the same person loses the insert race inside a savepoint and re-reads the row.
     """
     if not account_id and not display_name:
         return None
@@ -53,19 +57,28 @@ async def resolve_assignee_engineer(
             await session.execute(select(Engineer).where(Engineer.jira_account_id == account_id))
         ).scalars().first()
     if engineer is None and display_name:
-        engineer = (
-            await session.execute(
-                select(Engineer).where(func.lower(Engineer.name) == display_name.lower())
-            )
-        ).scalars().first()
-        if engineer is not None and account_id and engineer.jira_account_id is None:
+        name_match = select(Engineer).where(func.lower(Engineer.name) == display_name.lower())
+        if account_id:
+            # Only adopt a row that isn't already claimed by a different Jira account.
+            name_match = name_match.where(col(Engineer.jira_account_id).is_(None))
+        engineer = (await session.execute(name_match)).scalars().first()
+        if engineer is not None and account_id:
             engineer.jira_account_id = account_id
     if engineer is None:
         engineer = Engineer(
             name=display_name or f"jira:{account_id}", jira_account_id=account_id
         )
-        session.add(engineer)
-        await session.flush()
+        try:
+            async with session.begin_nested():
+                session.add(engineer)
+                await session.flush()
+        except IntegrityError:
+            # Another sync inserted this account id concurrently — use their row.
+            engineer = (
+                await session.execute(
+                    select(Engineer).where(Engineer.jira_account_id == account_id)
+                )
+            ).scalars().one()
     assert engineer.id is not None  # guaranteed after flush
     return engineer.id
 

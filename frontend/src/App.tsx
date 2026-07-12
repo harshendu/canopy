@@ -6,7 +6,7 @@ import { useCurrentUser } from "./lib/useCurrentUser";
 import { canContribute } from "./lib/permissions";
 import { personaHome } from "./lib/persona";
 import { useEventStream } from "./lib/useEventStream";
-import { featureOn, useFeatures } from "./lib/useFeatures";
+import { featureOn, useFeatures, useFeaturesQuery } from "./lib/useFeatures";
 import Login from "./pages/Login";
 import Projects from "./pages/Projects";
 import ProjectView from "./pages/ProjectView";
@@ -120,12 +120,14 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
   );
 }
 
-/** Land each persona on their default surface (a lens, not a wall — see lib/persona). */
+/** Land each persona on their default surface (a lens, not a wall — see lib/persona).
+ *  Waits for the feature map too, so a persona whose surface is gated off falls back to
+ *  /projects instead of being routed to a 403 during the first render. */
 function PersonaHome() {
   const { data: me, isLoading } = useCurrentUser();
-  const features = useFeatures();
-  if (isLoading) return <Loading />;
-  return <Navigate to={personaHome(me?.function, features)} replace />;
+  const features = useFeaturesQuery();
+  if (isLoading || features.isPending) return <Loading />;
+  return <Navigate to={personaHome(me?.function, features.data?.features ?? {})} replace />;
 }
 
 export default function App() {

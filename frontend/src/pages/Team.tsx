@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { CapacityResponse, Engineer, Role, User } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
+import { featureOn, useFeatures } from "../lib/useFeatures";
 import AvailabilityEditor from "../components/AvailabilityEditor";
 import CapacityHeatmap from "../components/CapacityHeatmap";
 
@@ -29,9 +30,13 @@ export default function Team() {
     queryFn: () => api.get<Role[]>("/team/roles"),
   });
   // Org-wide: capacity summed across every project, so cross-project overload shows.
+  // Skipped (and the section hidden) when the tracking.capacity gate is off.
+  const features = useFeatures();
+  const capacityOn = featureOn(features, "tracking.capacity");
   const capacity = useQuery({
     queryKey: ["capacity", "org"],
     queryFn: () => api.get<CapacityResponse>("/team/capacity"),
+    enabled: capacityOn,
   });
   // Only admins can list users; fail quietly so the link control just hides for others.
   const users = useQuery({
@@ -246,23 +251,25 @@ export default function Team() {
         </section>
       )}
 
-      <section className="space-y-2">
-        <div>
-          <h2 className="font-semibold">Capacity across all projects</h2>
-          <p className="text-xs text-slate-500">
-            Each engineer's allocation summed across every project, per ISO week. Cells over 100%
-            (red) are over-allocated — including overload that is hidden inside any single project.
-          </p>
-        </div>
-        {capacity.data ? (
-          <CapacityHeatmap
-            data={capacity.data}
-            emptyHint="No allocations yet — allocate engineers on a project's Capacity tab to see org-wide load."
-          />
-        ) : (
-          <p className="text-sm text-slate-500">Loading capacity…</p>
-        )}
-      </section>
+      {capacityOn && (
+        <section className="space-y-2">
+          <div>
+            <h2 className="font-semibold">Capacity across all projects</h2>
+            <p className="text-xs text-slate-500">
+              Each engineer's allocation summed across every project, per ISO week. Cells over 100%
+              (red) are over-allocated — including overload that is hidden inside any single project.
+            </p>
+          </div>
+          {capacity.data ? (
+            <CapacityHeatmap
+              data={capacity.data}
+              emptyHint="No allocations yet — allocate engineers on a project's Capacity tab to see org-wide load."
+            />
+          ) : (
+            <p className="text-sm text-slate-500">Loading capacity…</p>
+          )}
+        </section>
+      )}
     </div>
   );
 }

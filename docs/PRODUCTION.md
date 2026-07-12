@@ -45,8 +45,10 @@ Set in `.env` (everything else can keep its default):
 > `engineering_manager` can plan but not administer users). For one-way-door safety you
 > can instead mint a bounded **agent token** (`POST /api/v1/auth/agent-token`) and set it
 > as `CANOPY_API_TOKEN` — it blocks Jira pushes / scenario applies / one-way ADR accepts,
-> but expires (30 days max), so the email/password service account is the
-> zero-maintenance default.
+> but expires (30 days max). Pick **one**: a static token is authoritative — the client
+> then never logs in with email/password, so a bounded token can't silently escalate to a
+> full-scope session when it expires (its 401 surfaces instead). The email/password
+> service account is the zero-maintenance default when you don't need agent bounding.
 
 ## 2. Launch
 

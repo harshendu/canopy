@@ -13,6 +13,7 @@ import type {
 import { riskTone, scoreBar } from "../lib/risk";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
+import { featureOn, useFeatures } from "../lib/useFeatures";
 
 const SEVERITY_STYLES: Record<string, string> = {
   error: "border-red-300 bg-red-50 text-red-700",
@@ -30,9 +31,14 @@ export default function RiskView({ projectId }: { projectId: number }) {
     queryKey: ["risk", projectId],
     queryFn: () => api.get<RiskResponse>(`/projects/${projectId}/risk`),
   });
+  // The alerts digest sits behind its own gate (tracking.alerts), which can be off while
+  // governance.risk (this tab) is on — skip the call and hide the panel then.
+  const features = useFeatures();
+  const alertsOn = featureOn(features, "tracking.alerts");
   const alerts = useQuery({
     queryKey: ["alerts", projectId],
     queryFn: () => api.get<AlertsResponse>(`/projects/${projectId}/alerts`),
+    enabled: alertsOn,
   });
   const engineers = useQuery({
     queryKey: ["engineers"],
@@ -192,29 +198,31 @@ export default function RiskView({ projectId }: { projectId: number }) {
       </div>
 
       {/* Lagging indicators: the alerts digest */}
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 font-semibold">
-          Alerts <span className="text-xs font-normal text-slate-400">(lagging indicators)</span>
-        </h2>
-        {!alerts.data ? (
-          <p className="text-sm text-slate-500">Loading alerts…</p>
-        ) : alerts.data.alerts.length === 0 ? (
-          <p className="text-sm text-slate-500">No alerts — everything looks on track.</p>
-        ) : (
-          <ul className="space-y-2">
-            {alerts.data.alerts.map((a, i) => (
-              <li
-                key={i}
-                className={`rounded border px-4 py-2 text-sm ${
-                  SEVERITY_STYLES[a.severity] ?? SEVERITY_STYLES.info
-                }`}
-              >
-                <span className="font-medium uppercase">{a.severity}</span> · {a.message}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {alertsOn && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <h2 className="mb-2 font-semibold">
+            Alerts <span className="text-xs font-normal text-slate-400">(lagging indicators)</span>
+          </h2>
+          {!alerts.data ? (
+            <p className="text-sm text-slate-500">Loading alerts…</p>
+          ) : alerts.data.alerts.length === 0 ? (
+            <p className="text-sm text-slate-500">No alerts — everything looks on track.</p>
+          ) : (
+            <ul className="space-y-2">
+              {alerts.data.alerts.map((a, i) => (
+                <li
+                  key={i}
+                  className={`rounded border px-4 py-2 text-sm ${
+                    SEVERITY_STYLES[a.severity] ?? SEVERITY_STYLES.info
+                  }`}
+                >
+                  <span className="font-medium uppercase">{a.severity}</span> · {a.message}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

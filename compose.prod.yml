@@ -63,6 +63,20 @@ services:
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    # Ready = migrations applied (they run before uvicorn) + DB reachable. The worker
+    # keys off this so its first cron tick never hits an unmigrated schema.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
     restart: unless-stopped
 
   worker:
@@ -73,7 +87,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       DEMO_MODE: "false"
     depends_on:
-      db:
+      backend:
         condition: service_healthy
       redis:
         condition: service_healthy

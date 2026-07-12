@@ -1,0 +1,14 @@
+# Root build context (deploy/Dockerfile.caddy). Keep host-side artifacts out of images:
+# without this, `COPY frontend .` would overlay the host's node_modules/dist over the
+# freshly-installed ones inside the build (wrong platform / mixed versions), and the
+# context would ship .git + virtualenvs + secrets.
+.git
+.env
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.db
+e2e
+docs

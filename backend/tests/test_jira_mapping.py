@@ -158,6 +158,30 @@ async def test_assignee_matches_existing_engineer_by_name_and_backfills_account(
 
 
 @pytest.mark.asyncio
+async def test_same_display_name_different_account_creates_second_engineer(db_session):
+    """Two Jira users sharing a display name must not collapse onto one Engineer."""
+    connector = await _make_connector(db_session)
+    first = Engineer(name="Dana Lee", jira_account_id="acc-1")
+    db_session.add(first)
+    await db_session.flush()
+
+    await connector._upsert_issue(
+        _issue("30010", "PLAT-30", "Story", "2026-05-01T10:00:00.000+0000",
+               assignee=("acc-2", "Dana Lee"))
+    )
+    await db_session.commit()
+
+    engineers = (
+        await db_session.execute(select(Engineer).order_by(Engineer.id))
+    ).scalars().all()
+    assert len(engineers) == 2
+    assert engineers[0].jira_account_id == "acc-1"  # untouched
+    assert engineers[1].jira_account_id == "acc-2"
+    task = await _task_for(db_session, "30010")
+    assert task.assignee_engineer_id == engineers[1].id
+
+
+@pytest.mark.asyncio
 async def test_unassigned_issue_leaves_local_owner_untouched(db_session):
     connector = await _make_connector(db_session)
     local_owner = Engineer(name="Local Owner")

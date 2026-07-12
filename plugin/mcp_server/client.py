@@ -9,8 +9,11 @@ user's plugin config, or exported directly for standalone / cloud Claude session
                         long-lived MCP service never needs manual token rotation
 
 Empty values are treated as unset so a blank plugin config doesn't clobber an env var
-provided by the surrounding (e.g. cloud) session. A static CANOPY_API_TOKEN wins over
-email/password until it expires; then the login fallback takes over.
+provided by the surrounding (e.g. cloud) session. A static CANOPY_API_TOKEN is
+**authoritative**: when one is set, the client never logs in with email/password — a
+deliberately *bounded* token (e.g. an agent-scope token, §A6) must not silently escalate
+to a full-scope session when it expires. Email/password is the alternative for when no
+static token is configured.
 """
 
 from __future__ import annotations
@@ -25,6 +28,8 @@ class CanopyClient:
         base = (os.environ.get("CANOPY_API_BASE_URL") or "http://localhost:8000").rstrip("/")
         self.base_url = f"{base}/api/v1"
         self.token = os.environ.get("CANOPY_API_TOKEN") or ""
+        # A static token pins the identity AND its scope; login is only for token-less setups.
+        self._static_token = bool(self.token)
         self.email = os.environ.get("CANOPY_API_EMAIL") or ""
         self.password = os.environ.get("CANOPY_API_PASSWORD") or ""
 
@@ -35,8 +40,8 @@ class CanopyClient:
         return headers
 
     async def _login(self, client: httpx.AsyncClient) -> bool:
-        """Mint a fresh JWT from the configured service account, if one is set."""
-        if not (self.email and self.password):
+        """Mint a fresh JWT from the service account — never when a static token is pinned."""
+        if self._static_token or not (self.email and self.password):
             return False
         resp = await client.post(
             "/auth/login", data={"username": self.email, "password": self.password}
@@ -56,13 +61,14 @@ class CanopyClient:
         timeout: float = 60.0,
     ):
         async with httpx.AsyncClient(base_url=self.base_url, timeout=timeout) as client:
-            if not self.token and self.email:
+            if not self.token:
                 await self._login(client)
             resp = await client.request(
                 method, path, params=params, json=json, headers=self._headers()
             )
             if resp.status_code == 401 and await self._login(client):
-                # The stored token expired (or was revoked): one re-login + retry.
+                # A client-minted JWT expired: one re-login + retry. (Static tokens are
+                # never replaced — their 401 surfaces to the caller.)
                 resp = await client.request(
                     method, path, params=params, json=json, headers=self._headers()
                 )

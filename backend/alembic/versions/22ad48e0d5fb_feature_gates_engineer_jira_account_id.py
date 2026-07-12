@@ -38,8 +38,9 @@ def upgrade() -> None:
         'engineer',
         sa.Column('jira_account_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     )
+    # Unique index (NULLs exempt on all three dialects): one Engineer per Jira account.
     op.create_index(
-        op.f('ix_engineer_jira_account_id'), 'engineer', ['jira_account_id'], unique=False
+        op.f('ix_engineer_jira_account_id'), 'engineer', ['jira_account_id'], unique=True
     )
 
 

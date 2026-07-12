@@ -17,6 +17,7 @@ import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canWriteProjects, isPlanner } from "../lib/permissions";
+import { featureOn, useFeatures } from "../lib/useFeatures";
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -36,6 +37,11 @@ export default function InitiativeView() {
   const mayWriteInitiative = canWriteProjects(me?.role);
   const mayPlan = isPlanner(me?.role);
 
+  // Sections whose backing endpoints sit behind their own gates (§A10) are skipped and
+  // hidden when off — otherwise they'd 403 into deceptively-empty panels.
+  const features = useFeatures();
+  const forecastOn = featureOn(features, "tracking.forecast");
+
   const rollup = useQuery({
     queryKey: ["initiative-rollup", id],
     queryFn: () => api.get<InitiativeRollup>(`/initiatives/${id}/rollup`),
@@ -47,6 +53,7 @@ export default function InitiativeView() {
   const forecast = useQuery({
     queryKey: ["initiative-forecast", id],
     queryFn: () => api.get<ForecastResponse>(`/initiatives/${id}/forecast`),
+    enabled: forecastOn,
   });
 
   if (!rollup.data) {
@@ -93,13 +100,15 @@ export default function InitiativeView() {
         </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            to={`/initiatives/${id}/scenarios`}
-            className="rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
-          >
-            Scenarios
-          </Link>
-          <ExportMenu scope="initiative" id={id} />
+          {featureOn(features, "planning.scenarios") && (
+            <Link
+              to={`/initiatives/${id}/scenarios`}
+              className="rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+            >
+              Scenarios
+            </Link>
+          )}
+          {featureOn(features, "reporting.exports") && <ExportMenu scope="initiative" id={id} />}
         </div>
       </div>
 
@@ -125,15 +134,17 @@ export default function InitiativeView() {
           value={r.project_end ?? "—"}
           hint={r.initiative.target_date ? `target ${r.initiative.target_date}` : "no target"}
         />
-        <Stat
-          label="Forecast (P85)"
-          value={fc?.sufficient ? fc.p85_date ?? "—" : "—"}
-          hint={
-            fc?.sufficient
-              ? `P50 ${fc.p50_date}`
-              : "needs throughput history"
-          }
-        />
+        {forecastOn && (
+          <Stat
+            label="Forecast (P85)"
+            value={fc?.sufficient ? fc.p85_date ?? "—" : "—"}
+            hint={
+              fc?.sufficient
+                ? `P50 ${fc.p50_date}`
+                : "needs throughput history"
+            }
+          />
+        )}
       </div>
 
       {cp && cp.tasks.length > 0 && (
@@ -178,21 +189,29 @@ export default function InitiativeView() {
         </div>
       )}
 
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <OutcomesPanel scope="initiative" scopeId={id} mayWrite={mayPlan} />
-      </div>
+      {featureOn(features, "portfolio.outcomes") && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <OutcomesPanel scope="initiative" scopeId={id} mayWrite={mayPlan} />
+        </div>
+      )}
 
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <DeliveryView scope="initiative" id={id} />
-      </div>
+      {featureOn(features, "tracking.delivery") && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <DeliveryView scope="initiative" id={id} />
+        </div>
+      )}
 
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <RiskRegister scope="initiative" scopeId={id} mayWrite={mayPlan} />
-      </div>
+      {featureOn(features, "governance.risk") && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <RiskRegister scope="initiative" scopeId={id} mayWrite={mayPlan} />
+        </div>
+      )}
 
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <DocsView scope="initiative" scopeId={id} mayWrite={mayPlan} />
-      </div>
+      {featureOn(features, "governance.docs") && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <DocsView scope="initiative" scopeId={id} mayWrite={mayPlan} />
+        </div>
+      )}
 
       <div>
         <h2 className="mb-2 font-semibold">Sub-projects</h2>
@@ -237,7 +256,9 @@ export default function InitiativeView() {
         )}
       </div>
 
-      <JiraLinksPanel targetType="initiative" targetId={id} />
+      {featureOn(features, "integrations") && (
+        <JiraLinksPanel targetType="initiative" targetId={id} />
+      )}
     </div>
   );
 }
