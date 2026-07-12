@@ -13,6 +13,7 @@ from app.api.deps import (
     Impersonator,
     PlannerWriter,
     SessionDep,
+    TokenScopeDep,
 )
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.base import TokenScope, UserRole
@@ -54,12 +55,16 @@ async def me(user: CurrentUser) -> User:
 
 
 @router.get("/session", response_model=SessionInfo)
-async def session_info(user: CurrentUser, impersonator: Impersonator) -> SessionInfo:
+async def session_info(
+    user: CurrentUser, impersonator: Impersonator, scope: TokenScopeDep
+) -> SessionInfo:
     """The effective user, plus the real admin when an admin is impersonating someone — drives the
-    account switcher and the impersonation banner."""
+    account switcher and the impersonation banner. Also reports the token's bounded-agency `scope`
+    (§A6) so an agent session can see its own limits (proposals: stage yes, apply no)."""
     return SessionInfo(
         user=UserRead.model_validate(user),
         impersonator=UserRead.model_validate(impersonator) if impersonator is not None else None,
+        scope=scope.value,
     )
 
 

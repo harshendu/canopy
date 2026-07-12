@@ -18,6 +18,13 @@ maps into the connection's configured project, so a partial pull can't shrink ca
 - the architect asks you to sync from Jira/GitHub and the direct sync isn't available, **or**
 - you're running on a schedule (see "Scheduled sync" below).
 
+**Mirror, not judgment.** Ingest is the *verbatim* lane: it upserts what the external
+system says, field for field, with no review step — that's safe because it carries no
+interpretation. The moment you're **inferring** something (a blocker from a Slack thread,
+a risk from an email, scope from meeting notes), that's not ingest — stage it as a change
+proposal instead (`harvesting-signals` / `updating-canopy`), so a human reviews the
+judgment before it lands.
+
 ## Ingest Jira issues → tasks
 1. `canopy:list_connections` → find the Jira connection id and note its project mapping.
 2. Read the issues you need with your **own** Jira tools (the issues you have access to).

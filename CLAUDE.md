@@ -94,6 +94,20 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   via `JiraConnector.create_issue`/`update_issue` (story points use the connection's
   `story_point_field`). MCP: `create_draft_plan`/`add_draft_task`/`push_draft_to_jira` (skill:
   `drafting-jira-tickets`). USER_FLOWS §C10.
+- **Change proposals (agent → human review queue):** `Proposal`/`ProposalItem`
+  (`app/models/proposal.py`) stage **inbound canopy writes** an agent inferred (from
+  Slack/email/meetings/docs) for a human to review and apply in the UI — the inbound twin of
+  draft plans. Items are whitelisted per entity×action (task/dependency/milestone/blocker/
+  risk/outcome/decision/doc_reference; Jira-mirrored `status` never stageable), scope-contained
+  to one project/initiative, may reference each other via `ref`/`*_ref` handles, and carry
+  provenance (`source_kind/label/url`) + a stage-time `before` snapshot. Apply is
+  **all-or-nothing** + auto-replan (`app/services/proposals.py`); staging/withdraw are open to
+  agent tokens, review/apply/reject are planner + `HumanOnly` (`app/api/v1/proposals.py`, gate
+  `ai.proposals`). UI: `/reviews` (+ nav badge, project-cockpit banner). MCP:
+  `propose_changes`/`list_proposals`/`get_proposal`/`withdraw_proposal` +
+  `get_workspace_context` (session orientation: persona, token scope, features, open
+  proposals). Skills: `updating-canopy` (the write-ladder contract), `harvesting-signals`,
+  `persona-playbooks`; subagent `signal-harvester`. USER_FLOWS §AA.
 - **Flow board:** `GET /projects/{id}/board` groups leaf tasks into status lanes with WIP per lane,
   and flags **aging** tasks (in-status age > the team's cycle-time P85) — pure logic in
   `app/services/flow.py`; age/cycle dates derived from `TaskStatusHistory`. WIP limits are a
@@ -244,11 +258,15 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   - **Postgres/MySQL enforce foreign keys; SQLite does not by default.** Don't rely on SQLite's lax
     enforcement — handle cascade/ordering explicitly (e.g. clear self-references before bulk-deleting).
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
-  REST routes (~50 across projects/planning/connectors/team/architecture). Skills are runbooks
-  (`planning-roadmaps`, `writing-adrs`, `syncing-jira`, `capacity-planning`, `decision-deadline-nudger`,
-  `pr-to-adr-linker`); subagents do isolated multi-step work (`jira-sync`, `gantt-planner`,
-  `risk-analyst`, `drift-sentinel`). Add a tool when Claude needs a new verb; register it in
-  `mcp_server/server.py`.
+  REST routes (~125 across projects/planning/proposals/connectors/team/architecture/scenarios/
+  specs/docs/delivery/outcomes). Skills are runbooks (`updating-canopy` — the session operating
+  guide every canopy session starts from, `harvesting-signals`, `persona-playbooks`,
+  `planning-roadmaps`, `writing-adrs`, `syncing-jira`, `mcp-ingest`, `capacity-planning`,
+  `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-jira-tickets`, `mapping-epic-docs`,
+  `spec-driven-development`, `daily-standup`); subagents do isolated multi-step work
+  (`jira-sync`, `gantt-planner`, `risk-analyst`, `drift-sentinel`, `scenario-architect`,
+  `delivery-enricher`, `signal-harvester`). Add a tool when Claude needs a new verb; register it
+  in `mcp_server/server.py`.
 - **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the Jira
   reconciliation poll and a **nightly risk-snapshot sweep** (`capture_risk_snapshots` → `run_risk_snapshots`)
   so the risk timeline is a real trend. Drift carries a **scan log** (`DriftScan`): `GET .../drift`

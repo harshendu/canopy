@@ -1044,3 +1044,69 @@ export interface TaskExternalLinks {
   pull_requests: PullRequest[];
   docs: DocReference[];
 }
+
+// --- Change proposals (agent-staged writes, human-reviewed) ---
+export type ProposalScopeLevel = "project" | "initiative";
+export type ProposalStatus = "open" | "applied" | "rejected" | "withdrawn";
+export type ProposalEntityType =
+  | "task"
+  | "dependency"
+  | "milestone"
+  | "blocker"
+  | "risk"
+  | "outcome"
+  | "decision"
+  | "doc_reference";
+export type ProposalActionType = "create" | "update" | "resolve";
+
+export interface ProposalItem {
+  id: number;
+  sort_order: number;
+  entity_type: ProposalEntityType;
+  action: ProposalActionType;
+  entity_id: number | null;
+  ref: string | null;
+  payload: Record<string, unknown>;
+  before: Record<string, unknown> | null;
+  reason: string | null;
+  source_kind: string | null;
+  source_label: string | null;
+  source_url: string | null;
+  excluded: boolean;
+  applied_entity_id: number | null;
+  error: string | null;
+  /** live values recomputed at read time (open proposals, update/resolve items) */
+  current?: Record<string, unknown> | null;
+  /** the target moved (or vanished) since the before-snapshot was taken */
+  stale?: boolean;
+}
+
+export interface Proposal {
+  id: number;
+  scope_level: ProposalScopeLevel;
+  scope_id: number;
+  title: string;
+  summary: string | null;
+  origin: string | null;
+  status: ProposalStatus;
+  created_by_user_id: number | null;
+  reviewed_by_user_id: number | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  applied_count: number;
+  created_at: string;
+  item_count: number;
+  excluded_count: number;
+  scope_label: string | null;
+}
+
+export interface ProposalDetail extends Proposal {
+  items: ProposalItem[];
+}
+
+export interface ProposalApplyResult {
+  proposal: Proposal;
+  applied: number;
+  skipped: number;
+  replanned_projects: number[];
+}

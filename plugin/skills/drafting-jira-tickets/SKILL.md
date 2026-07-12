@@ -12,6 +12,12 @@ the architect reviews first, then writes it to Jira.
 **Boundary:** canopy writes ticket **content** (summary, description, story points) and the
 epic→story parent link — it **never** writes ticket status. Jira stays the owner of status.
 
+**Two staging lanes — pick the right one.** A **draft plan** (this skill) stages work that
+will become *Jira tickets*; the push to Jira is the human-approved commit. A **change
+proposal** (`propose_changes`, see `updating-canopy`) stages changes to *canopy itself*
+(tasks/milestones/risks/…), committed from the Reviews queue. Plan → tickets = here;
+plan/signal → canopy = proposals. Don't route one through the other.
+
 ## Workflow
 
 1. **Gather the inputs.**

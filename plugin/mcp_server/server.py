@@ -45,6 +45,7 @@ from tools import (  # noqa: E402
     outcomes,
     planning,
     projects,
+    proposals,
     scenarios,
     specs,
     team,
@@ -54,6 +55,7 @@ mcp = FastMCP("canopy")
 client = CanopyClient()
 
 projects.register(mcp, client)
+proposals.register(mcp, client)
 planning.register(mcp, client)
 connectors.register(mcp, client)
 team.register(mcp, client)

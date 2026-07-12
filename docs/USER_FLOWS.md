@@ -132,10 +132,13 @@ forbidden from **one-way-door / external-write** actions; **two-way-door** actio
 - **What an agent token is blocked from (403):** accepting a **one-way-door** decision
   (`PATCH /architecture/adrs/{id}` → `accepted` when `reversibility=one_way`, §G2); **pushing a
   draft plan to Jira** (`POST /draft-plans/{id}/push-to-jira`, §C10 — an external write);
-  **applying a scenario** to the live plan (`POST /scenarios/{id}/apply`, §T5). Everything else
-  (creating/updating tasks, proposing/refining decisions, accepting *two-way* doors, specs,
-  blockers, risks, draft authoring) stays open. Enforced in `app/api/deps.py`
-  (`require_human` / `HumanOnly`); the scope rides in the JWT (`app/core/security.py`).
+  **applying a scenario** to the live plan (`POST /scenarios/{id}/apply`, §T5); and
+  **reviewing/applying/rejecting a change proposal** (§AA — the agent stages, the human
+  commits). Everything else (creating/updating tasks, proposing/refining decisions, accepting
+  *two-way* doors, specs, blockers, risks, draft authoring, **staging + withdrawing
+  proposals**) stays open. Enforced in `app/api/deps.py`
+  (`require_human` / `HumanOnly`); the scope rides in the JWT (`app/core/security.py`), and
+  `GET /auth/session` reports it so a session can see its own limits.
 - **Not built:** auto-running the coherence guardrails (drift + PR-to-ADR + fitness) on an
   agent-authored PR via webhook — the server can't crawl code itself (§N4), so that scan stays
   agent-driven; the webhook→agent trigger is the remaining piece of roadmap gap #4.
@@ -226,7 +229,8 @@ entire install — e.g. run canopy as "plan + Jira sync + Gantt only" by disabli
 - **Catalog (two levels, defaults all-on):** `planning` (whatif · baselines · scenarios ·
   draft_plans) · `tracking` (board · burndown · forecast · alerts · blockers · delivery ·
   capacity) · `architecture` (drift) · `portfolio` (initiatives · outcomes) · `governance` (risk ·
-  retros · specs · docs) · `integrations` (webhooks) · `reporting` (exports) · `ai` (agent_tokens).
+  retros · specs · docs) · `integrations` (webhooks) · `reporting` (exports) · `ai`
+  (agent_tokens · proposals).
   **Core flows are not gateable** (auth, projects, tasks/deps/milestones, Gantt + CPM replan, team,
   /me, activity, live events). A feature is effectively on iff its toggle **and** its group's are on.
 - **API:** `GET /api/v1/features` (any authenticated user — the effective map every client reads),
@@ -1321,14 +1325,102 @@ pipeline — an honest manual signal, like the weekly health note). `status`:
 
 ---
 
+## AA. Change proposals — the agent→human review queue **[new]**
+
+The write path for **agent judgment**. When a Claude session (or a teammate) wants to
+change canopy based on something it *inferred* — a Slack thread, an email, meeting notes, a
+document, or its own analysis — it does not touch the live plan. It **stages a proposal**:
+a batch of typed changes with per-item **provenance** (where each fact came from) that a
+human reviews, prunes, and **applies from the UI**. Nothing staged is visible to the
+Gantt/CPM/board/alerts until applied. This completes the bounded-agency posture (§A6) with
+a *structural* human-in-the-loop: an `agent` token can stage and withdraw but is **403 on
+apply/reject** — committing the change is reserved for a person. (Two staging lanes now
+exist: **draft plans** stage *outbound* plan→Jira tickets (§C10); **proposals** stage
+*inbound* changes to canopy itself.)
+
+### AA1. Stage a proposal (agent or contributor)
+- **What an item can do:** `task.create/update` (planning fields; Jira-mirrored `status`
+  is **not stageable**), `dependency.create`, `milestone.create/update`,
+  `blocker.create/resolve`, `risk.create/update`, `outcome.create/update`,
+  `decision.create` (lands as a **proposed** ADR — the §G lifecycle takes over),
+  `doc_reference.create` (deduped per scope+url). Payloads are **whitelisted per
+  entity/action** and validated through the same schemas as the REST API — no
+  mass-assignment; a create item may declare a `ref` handle that later items point at
+  (`parent_ref`, `predecessor_ref`, `task_ref`, …), so one proposal can stage "create
+  phase → tasks under it → wire dependencies" before any ids exist.
+- **Scope containment:** a proposal targets one **project or initiative**; every item must
+  stay inside that scope (validated — a proposal reviewed under project A cannot mutate
+  project B; initiative scope allows cross-sub-project items, e.g. a hand-off dependency).
+- **Provenance:** each item carries `source_kind` (slack | email | calendar | meeting |
+  jira | github | drive | document | chat), `source_label`, `source_url`, and a one-line
+  `reason` — the reviewer can audit every line.
+- **Strict at the door:** staging validates every item (shape, refs, targets exist, scope)
+  and rejects the whole batch with per-item errors (400) so the author fixes it now, not
+  the reviewer later. For `update`/`resolve` items a **before-snapshot** of the touched
+  fields is captured at stage time.
+- **API:** `POST /api/v1/proposals` (contributor+; **agent tokens allowed** — staging is a
+  reversible two-way door) · **MCP:** `propose_changes` (returns a `review_url`).
+- **Read:** `GET /api/v1/proposals?scope_level=&scope_id=&status=`,
+  `GET /api/v1/proposals/{id}` (items + before/current values + `stale` flags) · **MCP:**
+  `list_proposals`, `get_proposal`.
+
+### AA2. Review & commit (human, in the UI)
+- **UI:** **`/reviews`** (sidebar, with an **open-count badge**; deep-linkable
+  `/reviews/:id` — the link the plugin hands the user). Each proposal shows the author's
+  rationale, scope chip, and per-item cards: action badge, field **diff**
+  (before → proposed, plus the **live value** when it moved after staging — "changed since
+  staged"), provenance link, and reason. The project cockpit (§B3) shows an amber
+  **"staged change proposals await your review"** banner when any target it.
+- **Review actions (planner + human-only — an agent token gets 403):**
+  - **Exclude items** — untick any line before applying
+    (`PATCH /api/v1/proposals/{id}/items/{item_id}` `{excluded}`).
+  - **Apply** — `POST /api/v1/proposals/{id}/apply`: re-validates every included item,
+    executes **all-or-nothing** in one transaction (per-item failures report inline and
+    nothing lands), **auto-replans** the affected projects (a staged dependency cycle →
+    409), stamps reviewer + `applied_count`, and publishes SSE (§K) so every open view
+    refreshes. Items record their `applied_entity_id`.
+  - **Reject** — `POST /api/v1/proposals/{id}/reject` `{note}`: the note is the feedback
+    the author (usually the agent) reads back before restaging.
+- **Withdraw:** the author (or a planner) can pull an open proposal back —
+  `POST /api/v1/proposals/{id}/withdraw` (**agent-allowed**: cleaning up your own staged,
+  never-applied change is reversible) · **MCP:** `withdraw_proposal`.
+- **Lifecycle:** `open → applied | rejected | withdrawn` (terminal states are immutable
+  history; re-applying an already-applied proposal → 409).
+
+### AA3. Where it's enforced / wired
+- Feature gate **`ai.proposals`** (§A10) on the router + the sidebar entry + banners.
+- Human-only via `HumanOnly` (§A6) on apply/reject/item-review; roles via
+  `ContributorWriter`/`PlannerWriter` (§A3a). `GET /api/v1/auth/session` now reports the
+  token's `scope` so a session can see its own limits.
+- Logic: `app/models/proposal.py` + `app/services/proposals.py` (whitelists, scope checks,
+  ref resolution, snapshots, all-or-nothing apply + replan) + `app/api/v1/proposals.py`;
+  UI `frontend/src/pages/Reviews.tsx` (+ pure `src/lib/proposals.ts`, unit-tested).
+
+### AA4. Not built (deliberate limits)
+- **No apply MCP tool by design** — the commit click lives in the UI only. (A human's
+  full token *could* call the apply endpoint directly; the tool surface simply doesn't
+  offer it.)
+- **No inline edit of a staged payload** in the UI (exclude + reject-with-note + restage
+  covers the loop); **no per-item partial apply** (apply is all-or-nothing over the
+  included set); **no auto-expiry** of stale open proposals; **no engineer/assignee
+  notification** when a proposal touches their work.
+- Estimates/tags/health writes have no proposal lane (they stay direct, advisory,
+  low-risk); Jira ticket **status** is never stageable anywhere (§Source-of-truth).
+
+---
+
 ## L. Claude plugin (agentic flows)
 
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
-  `api_base_url` (e.g. `http://localhost:8000`) and either `api_token` (a JWT from
-  `POST /auth/login`) or `api_email`+`api_password` (a service account the server logs in as,
-  **auto-refreshing its JWT** when it expires — the zero-maintenance choice for long-lived
-  services). The MCP server then exposes curated tools that call the REST API.
+  `api_base_url` (e.g. `http://localhost:8000`), `dashboard_url` (where the React app lives —
+  used to build the **review links** the plugin hands the user, §AA; defaults to
+  `http://localhost:5173` for dev, and in production is usually the same origin as the API),
+  and either `api_token` (a JWT from `POST /auth/login` — or better, a bounded **agent token**
+  §A6, which structurally cannot commit its own proposals) or `api_email`+`api_password` (a
+  service account the server logs in as, **auto-refreshing its JWT** when it expires — the
+  zero-maintenance choice for long-lived services). The MCP server then exposes curated tools
+  that call the REST API.
 - **Transport.** Locally the plugin launches the MCP server over **stdio** (`plugin/.mcp.json`).
   For production / cloud Claude sessions, run the server as a long-lived service over
   **streamable HTTP** (`CANOPY_MCP_TRANSPORT=http` + `CANOPY_MCP_HOST`/`PORT`/`PATH`, default path
@@ -1345,7 +1437,10 @@ pipeline — an honest manual signal, like the weekly health note). `status`:
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**
   subagent for heavier work) create projects/phases/tasks/dependencies and run `replan_schedule`,
-  reporting the critical path and end date.
+  reporting the critical path and end date. Two landing lanes: a **fresh project dictated
+  live** is built directly; a **re-shape of an existing live plan** (or a plan derived from
+  docs/threads) is staged as one `propose_changes` batch the architect applies from the
+  review queue (§AA — apply replans automatically).
 
 ### L3. Sync from Jira (skill + subagent)
 - Ask Claude to "sync Jira". The **`syncing-jira`** skill / **`jira-sync`** subagent find the Jira
@@ -1416,8 +1511,10 @@ pipeline — an honest manual signal, like the weekly health note). `status`:
   (`add_risk` / `update_risk` / `close_risk`, kept separate from the computed score), tags work
   (`add_tags`), flags impediments (`raise_blocker` with category/severity/needed-by), and sets a
   weekly health headline (`set_project_health`). Estimates/risks are proposals the architect
-  confirms; Jira status is never written. This is the agentic surface behind §C1a / §Q3a. (The
-  read-only **`risk-analyst`** §L6 still owns assessment of the computed score.)
+  confirms; Jira status is never written. When the enrichment is broad or unsolicited (a
+  scheduled pass), it stages the risk/blocker items as a change proposal (§AA) instead of
+  writing them directly. This is the agentic surface behind §C1a / §Q3a. (The read-only
+  **`risk-analyst`** §L6 still owns assessment of the computed score.)
 
 ### L14. Map epic documents into the doc graph (skill) **[new]**
 - The **`mapping-epic-docs`** skill runs the one-time, AI-driven setup behind §V: it samples a
@@ -1439,8 +1536,40 @@ pipeline — an honest manual signal, like the weekly health note). `status`:
   `get_initiative_digest` for the spine (headline + attention list + status + outcomes), drills the
   exceptions (`list_blockers`, `decision_queue`, `get_drift`, `get_forecast`,
   `get_initiative_critical_path`, `list_outcomes`), and writes a tight, exception-first update.
-  Composes existing read tools, writes nothing — safe on any cadence (pair with `/loop`). Delivery
-  to Slack/email is a hook over the digest content.
+  Composes existing read tools; its only write is **optional staging** of the follow-ups it
+  surfaced (blockers/risks/decisions) as a change proposal (§AA) — safe on any cadence (pair
+  with `/loop`). Delivery to Slack/email is a hook over the digest content.
+
+### L17. Session orientation + the write ladder (skill + tool) **[new]**
+- **`get_workspace_context`** is the orientation verb every canopy session calls first: the
+  user + their **persona** (`function`, §A7) and role, the token's **scope** (§A6), the
+  feature-gate map (§A10), the projects/initiatives to anchor ids against, the **open
+  proposals** already awaiting review (§AA), and the dashboard/review URLs.
+- The **`updating-canopy`** skill is the plugin's operating contract for *any* session that
+  writes canopy: orient first, then place every intended change on the **write ladder** —
+  read-only → small explicit reversible edits (direct tools) → anything **inferred from
+  external sources / multi-entity / schedule-shaping** (stage a proposal, §AA) → one-way-door
+  and external-write actions (human-only, hand over the review link). It also carries the
+  provenance discipline (every harvested fact cites its source) and the source-of-truth rules
+  (Jira status never written; structured mirror-sync ≠ proposals).
+
+### L18. Harvest external signals → proposals (skill + subagent) **[new]**
+- The **`harvesting-signals`** skill is the cross-connector pipeline: sweep the session's
+  *other* tools — **Slack, Gmail, Google Calendar, meeting notes, Jira comments, GitHub PRs,
+  Drive docs** — for the seven signal types canopy can hold (blockers, risks, decisions,
+  status/progress, date+scope commitments, outcome movements, documents), **dedupe against
+  canopy's current state**, and stage one reviewable proposal per scope with per-item
+  provenance (§AA). The **`signal-harvester`** subagent runs the same pipeline as isolated
+  multi-step work (it deliberately has no direct-write lane; safe on a schedule with an
+  agent token — everything it stages waits in the review queue).
+
+### L19. Persona playbooks (skill) **[new]**
+- The **`persona-playbooks`** skill tailors a session to who the user is (§A7): per function
+  (architecture · product · management · leadership · engineering · design) it maps what to
+  read first, the core verbs, what gets staged vs written directly, and which sibling
+  skills/agents to chain — so the same plugin serves the architect re-planning a WBS, the PM
+  recording outcomes from an inbox sweep, the EM clearing blockers after standup, and the
+  exec who only reads digests.
 
 ---
 

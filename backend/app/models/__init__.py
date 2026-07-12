@@ -40,6 +40,7 @@ from app.models.project import (
     Task,
     TaskStatusHistory,
 )
+from app.models.proposal import Proposal, ProposalItem
 from app.models.retro import Retrospective, RetrospectiveComment
 from app.models.risk_register import RiskItem
 from app.models.scenario import (
@@ -87,6 +88,8 @@ __all__ = [
     "Milestone",
     "Outcome",
     "Project",
+    "Proposal",
+    "ProposalItem",
     "PullRequest",
     "Retrospective",
     "RetrospectiveComment",

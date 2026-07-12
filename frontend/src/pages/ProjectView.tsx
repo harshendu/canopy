@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
@@ -9,6 +9,7 @@ import type {
   ForecastResponse,
   GanttResponse,
   Project,
+  Proposal,
   ReplanResult,
   Task,
   TaskType,
@@ -197,6 +198,15 @@ export default function ProjectView() {
 
   const baselinesOn = featureOn(features, "planning.baselines");
   const forecastOn = featureOn(features, "tracking.forecast");
+  // Staged changes awaiting review for THIS project (agent proposals — §AA).
+  const openProposals = useQuery({
+    queryKey: ["proposals", "open", "project", id],
+    queryFn: () =>
+      api.get<Proposal[]>(`/proposals?status=open&scope_level=project&scope_id=${id}`),
+    enabled: featureOn(features, "ai.proposals"),
+    staleTime: 30 * 1000,
+  });
+  const pendingReviews = openProposals.data?.length ?? 0;
   const baselines = useQuery({
     queryKey: ["baselines", id],
     queryFn: () => api.get<Baseline[]>(`/projects/${id}/baselines`),
@@ -288,6 +298,19 @@ export default function ProjectView() {
           )}
         </div>
       </div>
+
+      {pendingReviews > 0 && (
+        <Link
+          to="/reviews"
+          className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 hover:bg-amber-100"
+        >
+          <span className="rounded-full bg-amber-500 px-1.5 text-xs font-semibold text-white">
+            {pendingReviews}
+          </span>
+          staged change {pendingReviews === 1 ? "proposal" : "proposals"} for this project
+          await your review — nothing touches the plan until you apply them.
+        </Link>
+      )}
 
       {project.data && (
         <DeliveryMetaBar

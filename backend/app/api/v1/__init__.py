@@ -26,6 +26,7 @@ from app.api.v1 import (
     milestones,
     outcomes,
     projects,
+    proposals,
     retros,
     risk,
     risk_register,
@@ -82,6 +83,12 @@ api_router.include_router(
 )
 api_router.include_router(
     outcomes.router, tags=["outcomes"], dependencies=[FeatureGate("portfolio.outcomes")]
+)
+api_router.include_router(
+    proposals.router,
+    prefix="/proposals",
+    tags=["proposals"],
+    dependencies=[FeatureGate("ai.proposals")],
 )
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])
