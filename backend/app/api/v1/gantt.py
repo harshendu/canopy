@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, PlannerWriter, SessionDep
+from app.api.deps import CurrentUser, FeatureGate, PlannerWriter, SessionDep
 from app.core.events import publish
 from app.models.base import RiskScope, RiskStatus, TaskType
 from app.models.project import (
@@ -89,6 +89,11 @@ async def get_gantt(session: SessionDep, _: CurrentUser, project_id: int) -> Gan
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     tasks, deps = await _load_project_graph(session, project_id)
+    engineer_names = {
+        e.id: e.name
+        for e in (await session.execute(select(Engineer))).scalars().all()
+        if e.id is not None
+    }
     gantt_tasks = [
         GanttTask(
             id=t.id,
@@ -104,6 +109,12 @@ async def get_gantt(session: SessionDep, _: CurrentUser, project_id: int) -> Gan
             type=t.type,
             is_critical=t.is_critical,
             total_float=t.total_float,
+            assignee_engineer_id=t.assignee_engineer_id,
+            assignee_name=(
+                engineer_names.get(t.assignee_engineer_id)
+                if t.assignee_engineer_id is not None
+                else None
+            ),
         )
         for t in tasks
     ]
@@ -126,7 +137,11 @@ async def replan(session: SessionDep, _: PlannerWriter, project_id: int) -> Repl
     return _to_result(project_id, outcome)
 
 
-@router.post("/projects/{project_id}/whatif", response_model=ReplanResult)
+@router.post(
+    "/projects/{project_id}/whatif",
+    response_model=ReplanResult,
+    dependencies=[FeatureGate("planning.whatif")],
+)
 async def whatif(
     session: SessionDep, _: CurrentUser, project_id: int, payload: WhatIfRequest
 ) -> ReplanResult:
@@ -146,6 +161,7 @@ async def whatif(
     "/projects/{project_id}/baseline",
     response_model=BaselineRead,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[FeatureGate("planning.baselines")],
 )
 async def set_baseline(
     session: SessionDep,
@@ -183,7 +199,11 @@ async def set_baseline(
     return baseline
 
 
-@router.get("/projects/{project_id}/baselines", response_model=list[BaselineRead])
+@router.get(
+    "/projects/{project_id}/baselines",
+    response_model=list[BaselineRead],
+    dependencies=[FeatureGate("planning.baselines")],
+)
 async def list_baselines(
     session: SessionDep, _: CurrentUser, project_id: int
 ) -> list[Baseline]:
@@ -196,7 +216,11 @@ async def list_baselines(
     return list(rows.scalars().all())
 
 
-@router.get("/projects/{project_id}/burndown", response_model=BurndownResponse)
+@router.get(
+    "/projects/{project_id}/burndown",
+    response_model=BurndownResponse,
+    dependencies=[FeatureGate("tracking.burndown")],
+)
 async def burndown(session: SessionDep, _: CurrentUser, project_id: int) -> BurndownResponse:
     project = await session.get(Project, project_id)
     if project is None:
@@ -232,7 +256,11 @@ async def burndown(session: SessionDep, _: CurrentUser, project_id: int) -> Burn
     return BurndownResponse(project_id=project_id, points=points)
 
 
-@router.get("/projects/{project_id}/forecast", response_model=ForecastResponse)
+@router.get(
+    "/projects/{project_id}/forecast",
+    response_model=ForecastResponse,
+    dependencies=[FeatureGate("tracking.forecast")],
+)
 async def project_forecast(
     session: SessionDep, _: CurrentUser, project_id: int
 ) -> ForecastResponse:
@@ -271,7 +299,11 @@ async def project_forecast(
     )
 
 
-@router.get("/projects/{project_id}/board", response_model=BoardResponse)
+@router.get(
+    "/projects/{project_id}/board",
+    response_model=BoardResponse,
+    dependencies=[FeatureGate("tracking.board")],
+)
 async def board(session: SessionDep, _: CurrentUser, project_id: int) -> BoardResponse:
     """Flow board: leaf tasks in status lanes, with WIP per lane and aging vs cycle-time P85."""
     project = await session.get(Project, project_id)
@@ -349,7 +381,11 @@ async def board(session: SessionDep, _: CurrentUser, project_id: int) -> BoardRe
     )
 
 
-@router.get("/projects/{project_id}/alerts", response_model=AlertsResponse)
+@router.get(
+    "/projects/{project_id}/alerts",
+    response_model=AlertsResponse,
+    dependencies=[FeatureGate("tracking.alerts")],
+)
 async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> AlertsResponse:
     project = await session.get(Project, project_id)
     if project is None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -18,6 +19,7 @@ from app.connectors.base import SyncResult
 from app.models.base import Provider, TaskType
 from app.models.integration import Connection, PullRequest
 from app.models.project import Task
+from app.models.team import Engineer
 from app.schemas.entities import IngestIssue, IngestPullRequest
 from app.services import mapping
 
@@ -34,6 +36,40 @@ def epic_type_names(config: dict) -> set[str]:
     return names
 
 
+async def resolve_assignee_engineer(
+    session: AsyncSession, account_id: str | None, display_name: str | None
+) -> int | None:
+    """Map an external (Jira) assignee onto an Engineer, creating one when unknown.
+
+    Match order: exact `jira_account_id`, then exact display name (case-insensitive, which
+    also back-fills the account id on the existing row), else a new active Engineer — the
+    assignee is a real team member in Jira, so ownership lands on a real row here too.
+    """
+    if not account_id and not display_name:
+        return None
+    engineer: Engineer | None = None
+    if account_id:
+        engineer = (
+            await session.execute(select(Engineer).where(Engineer.jira_account_id == account_id))
+        ).scalars().first()
+    if engineer is None and display_name:
+        engineer = (
+            await session.execute(
+                select(Engineer).where(func.lower(Engineer.name) == display_name.lower())
+            )
+        ).scalars().first()
+        if engineer is not None and account_id and engineer.jira_account_id is None:
+            engineer.jira_account_id = account_id
+    if engineer is None:
+        engineer = Engineer(
+            name=display_name or f"jira:{account_id}", jira_account_id=account_id
+        )
+        session.add(engineer)
+        await session.flush()
+    assert engineer.id is not None  # guaranteed after flush
+    return engineer.id
+
+
 async def upsert_task_from_external(
     session: AsyncSession,
     *,
@@ -46,6 +82,8 @@ async def upsert_task_from_external(
     is_epic: bool,
     updated: str | None,
     force_leaf: bool = False,
+    assignee_account_id: str | None = None,
+    assignee_name: str | None = None,
 ) -> tuple[str, int]:
     """Idempotently upsert one external item as a canopy Task (via `ExternalRef`). Returns
     `(action, task_id)` where action is created|updated|skipped. Shared by the direct Jira sync
@@ -68,6 +106,11 @@ async def upsert_task_from_external(
     task.name = summary
     task.status = status
     task.type = task_type
+    # Ownership mirrors the upstream assignee when one is set; an unassigned upstream issue
+    # leaves any locally-set owner alone (assignment stays usable for canopy-only workflows).
+    engineer_id = await resolve_assignee_engineer(session, assignee_account_id, assignee_name)
+    if engineer_id is not None:
+        task.assignee_engineer_id = engineer_id
     await session.flush()
     assert task.id is not None  # guaranteed after flush
 
@@ -129,6 +172,8 @@ async def ingest_issues(
             status=issue.status,
             is_epic=(issue.issue_type or "") in epics,
             updated=issue.updated,
+            assignee_account_id=issue.assignee_account_id,
+            assignee_name=issue.assignee_name,
         )
         setattr(result, action, getattr(result, action) + 1)
         if issue.parent_external_id:

@@ -1,6 +1,8 @@
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models.base import UserFunction, UserRole
+
+MIN_PASSWORD_LENGTH = 8
 
 
 class Token(BaseModel):
@@ -21,7 +23,7 @@ class AgentToken(BaseModel):
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH)
     full_name: str | None = None
     role: UserRole = UserRole.member
     function: UserFunction = UserFunction.engineering
@@ -32,6 +34,19 @@ class UserUpdate(BaseModel):
     role: UserRole | None = None
     function: UserFunction | None = None
     is_active: bool | None = None
+
+
+class PasswordReset(BaseModel):
+    """Admin sets a new (temporary) password for a user."""
+
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH)
+
+
+class PasswordChange(BaseModel):
+    """A user rotates their own password (current one required)."""
+
+    current_password: str
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH)
 
 
 class UserRead(BaseModel):

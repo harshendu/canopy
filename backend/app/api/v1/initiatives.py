@@ -6,7 +6,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
-from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
+from app.api.deps import ArchitectWriter, CurrentUser, FeatureGate, SessionDep
 from app.api.v1.projects import open_project_risk_counts, summarize_project
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
@@ -404,7 +404,11 @@ async def initiative_critical_path(
     )
 
 
-@router.get("/{initiative_id}/forecast", response_model=ForecastResponse)
+@router.get(
+    "/{initiative_id}/forecast",
+    response_model=ForecastResponse,
+    dependencies=[FeatureGate("tracking.forecast")],
+)
 async def initiative_forecast(
     session: SessionDep, _: CurrentUser, initiative_id: int
 ) -> ForecastResponse:

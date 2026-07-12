@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, PlannerWriter, SessionDep
+from app.api.deps import CurrentUser, FeatureGate, PlannerWriter, SessionDep
 from app.models.project import Project
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.schemas.entities import (
@@ -115,7 +115,11 @@ async def create_allocation(
     return allocation
 
 
-@router.get("/capacity", response_model=CapacityResponse)
+@router.get(
+    "/capacity",
+    response_model=CapacityResponse,
+    dependencies=[FeatureGate("tracking.capacity")],
+)
 async def capacity(
     session: SessionDep, _: CurrentUser, project_id: int | None = None
 ) -> CapacityResponse:

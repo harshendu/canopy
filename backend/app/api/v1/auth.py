@@ -8,17 +8,20 @@ from app.api.deps import (
     AdminActor,
     AdminUser,
     CurrentUser,
+    FeatureGate,
     HumanOnly,
     Impersonator,
     PlannerWriter,
     SessionDep,
 )
 from app.core.security import create_access_token, hash_password, verify_password
-from app.models.base import TokenScope
+from app.models.base import TokenScope, UserRole
 from app.models.user import User
 from app.schemas.auth import (
     AgentToken,
     AgentTokenRequest,
+    PasswordChange,
+    PasswordReset,
     SessionInfo,
     Token,
     UserCreate,
@@ -86,7 +89,9 @@ async def impersonate(
     return Token(access_token=create_access_token(target.email, actor=actor.email))
 
 
-@router.post("/agent-token", response_model=AgentToken)
+@router.post(
+    "/agent-token", response_model=AgentToken, dependencies=[FeatureGate("ai.agent_tokens")]
+)
 async def issue_agent_token(user: PlannerWriter, payload: AgentTokenRequest) -> AgentToken:
     """Mint a bounded **agent** token for the current planner to hand to Claude. It acts as the
     issuer but is restricted from one-way-door / external-write actions (accepting a one-way-door
@@ -124,6 +129,17 @@ async def list_users(session: SessionDep, _: AdminActor) -> list[User]:
     return list(result.scalars().all())
 
 
+async def _other_active_admins_exist(session: SessionDep, user: User) -> bool:
+    result = await session.execute(
+        select(User).where(
+            User.role == UserRole.admin,
+            col(User.is_active).is_(True),
+            col(User.id) != user.id,
+        )
+    )
+    return result.scalars().first() is not None
+
+
 @router.patch("/users/{user_id}", response_model=UserRead)
 async def update_user(
     session: SessionDep, admin: AdminUser, user_id: int, payload: UserUpdate
@@ -135,8 +151,49 @@ async def update_user(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="You can't deactivate yourself"
         )
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    # Lockout guard: never leave the install with zero active admins.
+    loses_admin = user.role == UserRole.admin and user.is_active and (
+        changes.get("role", user.role) != UserRole.admin
+        or changes.get("is_active", user.is_active) is False
+    )
+    if loses_admin and not await _other_active_admins_exist(session, user):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This is the last active admin; promote another admin first",
+        )
+    for field, value in changes.items():
         setattr(user, field, value)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+@router.post("/users/{user_id}/password", response_model=UserRead)
+async def reset_password(
+    session: SessionDep, _: AdminUser, __: HumanOnly, user_id: int, payload: PasswordReset
+) -> User:
+    """Admin sets a new (temporary) password for a user — the recovery path when someone is
+    locked out. Human-only: an agent token must not be able to rotate credentials."""
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user.hashed_password = hash_password(payload.new_password)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+@router.post("/me/password", response_model=UserRead)
+async def change_password(
+    session: SessionDep, user: CurrentUser, _: HumanOnly, payload: PasswordChange
+) -> User:
+    """A signed-in user rotates their own password (e.g. after an admin-issued temporary one)."""
+    if not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect"
+        )
+    user.hashed_password = hash_password(payload.new_password)
     await session.commit()
     await session.refresh(user)
     return user

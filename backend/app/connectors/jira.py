@@ -28,7 +28,7 @@ from app.models.integration import ExternalRef
 from app.models.project import Project, Task, TaskStatusHistory
 from app.services import ingest, mapping
 
-_FIELDS = ["summary", "status", "issuetype", "parent", "updated"]
+_FIELDS = ["summary", "status", "issuetype", "parent", "updated", "assignee"]
 _EPIC_TYPES = {"Epic"}
 _CHILD_BATCH = 50  # max parent keys per `parent in (...)` JQL page
 
@@ -117,6 +117,7 @@ class JiraConnector(Connector):
         updated = fields.get("updated")
         parent = fields.get("parent")
         parent_ext_id = parent.get("id") if parent else None
+        assignee = fields.get("assignee") or {}
 
         # Shared upsert core (also used by MCP ingest) keeps the two paths from drifting.
         action, _ = await ingest.upsert_task_from_external(
@@ -130,6 +131,8 @@ class JiraConnector(Connector):
             is_epic=issuetype in self._epic_type_names(),
             updated=updated,
             force_leaf=force_leaf,
+            assignee_account_id=assignee.get("accountId"),
+            assignee_name=assignee.get("displayName"),
         )
         return action, parent_ext_id, ext_id
 

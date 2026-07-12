@@ -6,6 +6,7 @@ import { useCurrentUser } from "./lib/useCurrentUser";
 import { canContribute } from "./lib/permissions";
 import { personaHome } from "./lib/persona";
 import { useEventStream } from "./lib/useEventStream";
+import { featureOn, useFeatures } from "./lib/useFeatures";
 import Login from "./pages/Login";
 import Projects from "./pages/Projects";
 import ProjectView from "./pages/ProjectView";
@@ -19,8 +20,10 @@ import MyWorkspace from "./pages/MyWorkspace";
 import MyToday from "./pages/MyToday";
 import AdminUsers from "./pages/AdminUsers";
 import AdminIntegrations from "./pages/AdminIntegrations";
+import AdminFeatures from "./pages/AdminFeatures";
 import DemoData from "./pages/DemoData";
 import Team from "./pages/Team";
+import ChangePassword from "./components/ChangePassword";
 import ImpersonationBanner from "./components/ImpersonationBanner";
 import UserSwitcher from "./components/UserSwitcher";
 
@@ -35,6 +38,7 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   useEventStream(isAuthenticated); // live-refresh caches on backend change events
   const { data: me } = useCurrentUser(isAuthenticated);
+  const features = useFeatures(isAuthenticated);
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
@@ -55,19 +59,23 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
             <NavLink to="/portfolio" className={navClass}>
               Portfolio
             </NavLink>
-            <NavLink to="/initiatives" className={navClass}>
-              Initiatives
-            </NavLink>
+            {featureOn(features, "portfolio.initiatives") && (
+              <NavLink to="/initiatives" className={navClass}>
+                Initiatives
+              </NavLink>
+            )}
             <NavLink to="/projects" className={navClass}>
               Projects
             </NavLink>
-            <NavLink to="/decisions" className={navClass}>
-              Decisions
-            </NavLink>
+            {featureOn(features, "architecture") && (
+              <NavLink to="/decisions" className={navClass}>
+                Decisions
+              </NavLink>
+            )}
             <NavLink to="/team" className={navClass}>
               Team
             </NavLink>
-            {canContribute(me?.role) && (
+            {canContribute(me?.role) && featureOn(features, "integrations") && (
               <NavLink to="/connectors" className={navClass}>
                 Connectors
               </NavLink>
@@ -75,6 +83,11 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
             {me?.role === "admin" && (
               <NavLink to="/admin/users" className={navClass}>
                 Users
+              </NavLink>
+            )}
+            {me?.role === "admin" && (
+              <NavLink to="/admin/features" className={navClass}>
+                Features
               </NavLink>
             )}
             {me?.role === "admin" && (
@@ -88,12 +101,15 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
               </NavLink>
             )}
           </nav>
-          <button
-            onClick={logout}
-            className="mt-8 self-start text-xs text-slate-400 hover:text-slate-600"
-          >
-            Sign out
-          </button>
+          <div className="mt-8 flex flex-col items-start gap-1.5">
+            <ChangePassword />
+            <button
+              onClick={logout}
+              className="text-xs text-slate-400 hover:text-slate-600"
+            >
+              Sign out
+            </button>
+          </div>
           <div className="mt-auto">
             <UserSwitcher />
           </div>
@@ -107,8 +123,9 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
 /** Land each persona on their default surface (a lens, not a wall — see lib/persona). */
 function PersonaHome() {
   const { data: me, isLoading } = useCurrentUser();
+  const features = useFeatures();
   if (isLoading) return <Loading />;
-  return <Navigate to={personaHome(me?.function)} replace />;
+  return <Navigate to={personaHome(me?.function, features)} replace />;
 }
 
 export default function App() {
@@ -210,6 +227,14 @@ export default function App() {
         element={
           <ProtectedLayout>
             <AdminUsers />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/admin/features"
+        element={
+          <ProtectedLayout>
+            <AdminFeatures />
           </ProtectedLayout>
         }
       />

@@ -27,6 +27,7 @@ import JiraLinksPanel from "../components/JiraLinksPanel";
 import TaskDetailPanel from "../components/TaskDetailPanel";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
+import { featureOn, useFeatures } from "../lib/useFeatures";
 
 // Heavy (React Flow / Recharts) — code-split.
 const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
@@ -79,6 +80,24 @@ const TABS: Tab[] = [
   "activity",
 ];
 
+/** The feature gate each tab sits behind (absent = core, always on). A gated-off tab
+ *  disappears from the tab bar and an active one snaps back to the Gantt. */
+const TAB_FEATURES: Partial<Record<Tab, string>> = {
+  board: "tracking.board",
+  specs: "governance.specs",
+  capacity: "tracking.capacity",
+  decisions: "architecture",
+  docs: "governance.docs",
+  architecture: "architecture",
+  drift: "architecture.drift",
+  drafts: "planning.draft_plans",
+  jiralinks: "integrations",
+  burndown: "tracking.burndown",
+  delivery: "tracking.delivery",
+  risk: "governance.risk",
+  retros: "governance.retros",
+};
+
 export default function ProjectView() {
   const { projectId } = useParams();
   const id = Number(projectId);
@@ -96,9 +115,16 @@ export default function ProjectView() {
   const [lastReplan, setLastReplan] = useState<ReplanResult | null>(null);
   const [baselining, setBaselining] = useState(false);
   const [baselineNote, setBaselineNote] = useState("");
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const [activeTab, setTab] = useState<Tab>(initialTab);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const { data: me } = useCurrentUser();
+  const features = useFeatures();
+  const tabOn = (key: Tab) => {
+    const gate = TAB_FEATURES[key];
+    return gate === undefined || featureOn(features, gate);
+  };
+  // If an admin turns the active tab's feature off mid-session, snap back to the Gantt.
+  const tab: Tab = tabOn(activeTab) ? activeTab : "gantt";
   const mayPlan = isPlanner(me?.role);
   const mayWriteProject = canWriteProjects(me?.role);
   const mayContribute = canContribute(me?.role);
@@ -169,15 +195,17 @@ export default function ProjectView() {
     },
   });
 
+  const baselinesOn = featureOn(features, "planning.baselines");
+  const forecastOn = featureOn(features, "tracking.forecast");
   const baselines = useQuery({
     queryKey: ["baselines", id],
     queryFn: () => api.get<Baseline[]>(`/projects/${id}/baselines`),
-    enabled: tab === "gantt",
+    enabled: tab === "gantt" && baselinesOn,
   });
   const forecast = useQuery({
     queryKey: ["forecast", id],
     queryFn: () => api.get<ForecastResponse>(`/projects/${id}/forecast`),
-    enabled: tab === "gantt",
+    enabled: tab === "gantt" && forecastOn,
   });
 
   const baseline = useMutation({
@@ -198,7 +226,7 @@ export default function ProjectView() {
           {project.data ? project.data.name : "Project"}
         </h1>
         <div className="flex items-center gap-3">
-          <ExportMenu scope="project" id={id} />
+          {featureOn(features, "reporting.exports") && <ExportMenu scope="project" id={id} />}
           {mayWriteProject && (
             <label className="flex items-center gap-1 text-sm text-slate-600">
               <input
@@ -211,7 +239,7 @@ export default function ProjectView() {
           )}
           {mayPlan && (
             <>
-              {baselining ? (
+              {!baselinesOn ? null : baselining ? (
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -276,9 +304,11 @@ export default function ProjectView() {
         />
       )}
 
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <OutcomesPanel scope="project" scopeId={id} mayWrite={mayPlan} />
-      </div>
+      {featureOn(features, "portfolio.outcomes") && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <OutcomesPanel scope="project" scopeId={id} mayWrite={mayPlan} />
+        </div>
+      )}
 
       {lastReplan && (
         <div className="space-y-1">
@@ -315,19 +345,21 @@ export default function ProjectView() {
           ["risk", "Risk"],
           ["retros", "Retros"],
           ["activity", "Activity"],
-        ] as [Tab, string][]).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-              tab === key
-                ? "border-canopy-500 text-canopy-700"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+        ] as [Tab, string][])
+          .filter(([key]) => tabOn(key))
+          .map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+                tab === key
+                  ? "border-canopy-500 text-canopy-700"
+                  : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
       </div>
 
       {tab === "gantt" && (

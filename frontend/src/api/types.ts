@@ -180,6 +180,8 @@ export interface GanttTask {
   type: TaskType;
   is_critical: boolean;
   total_float: number;
+  assignee_engineer_id: number | null;
+  assignee_name: string | null;
 }
 
 export interface Milestone {
@@ -504,6 +506,7 @@ export interface Engineer {
   user_id: number | null;
   skill_tags: string[];
   github_login: string | null;
+  jira_account_id: string | null;
   timezone: string | null;
   committed_hours_per_week: number | null;
 }
@@ -536,6 +539,21 @@ export interface User {
 export interface Token {
   access_token: string;
   token_type?: string;
+}
+
+/** The effective feature map every client reads to hide gated surfaces (GET /features). */
+export interface FeatureMap {
+  features: Record<string, boolean>;
+}
+
+/** One feature gate row on the admin panel (GET/PATCH /admin/features). */
+export interface FeatureGate {
+  key: string;
+  label: string;
+  description: string;
+  group: string | null;
+  enabled: boolean;
+  effective: boolean;
 }
 
 /** The active session: the effective (possibly impersonated) user plus, when an admin is

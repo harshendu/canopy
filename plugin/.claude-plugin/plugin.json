@@ -5,7 +5,13 @@
   "description": "Manage software architecture, projects, milestones, teams, Jira sync, and Gantt scheduling from Claude.",
   "author": "Canopy",
   "license": "MIT",
-  "keywords": ["architecture", "project-management", "gantt", "jira", "adr"],
+  "keywords": [
+    "architecture",
+    "project-management",
+    "gantt",
+    "jira",
+    "adr"
+  ],
   "userConfig": {
     "api_base_url": {
       "type": "string",
@@ -15,6 +21,15 @@
     "api_token": {
       "type": "string",
       "description": "JWT for the canopy API (obtain from POST /api/v1/auth/login)",
+      "sensitive": true
+    },
+    "api_email": {
+      "type": "string",
+      "description": "Alternative to api_token: canopy account email the MCP server logs in as (auto-refreshes the JWT)"
+    },
+    "api_password": {
+      "type": "string",
+      "description": "Password for api_email (used to mint/refresh the JWT automatically)",
       "sensitive": true
     }
   }
