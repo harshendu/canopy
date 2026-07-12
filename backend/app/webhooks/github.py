@@ -8,6 +8,7 @@ from app.core.db import async_session_factory
 from app.models.base import Provider
 from app.models.integration import Connection
 from app.services import integration_policy
+from app.services.features import feature_enabled
 from app.webhooks.security import verify_hmac_sha256
 from app.workers.queue import enqueue
 
@@ -28,6 +29,10 @@ async def github_webhook(request: Request) -> dict[str, Any]:
     # processing (verify-before-parse, ACK fast, never process inline).
     enqueued = 0
     async with async_session_factory() as session:
+        if not await feature_enabled(session, "integrations.webhooks"):
+            # Webhook intake is feature-gated off — ACK (so the sender doesn't disable the
+            # hook) but ignore.
+            return {"enqueued": 0, "ignored": "webhook intake is disabled by feature gate"}
         if not integration_policy.reads_direct(
             await integration_policy.get_setting(session, Provider.github)
         ):

@@ -20,6 +20,43 @@ function formatTick(dayIndex: number): string {
   return `${date.getUTCMonth() + 1}/${date.getUTCDate()}`;
 }
 
+/** "Dana Lee" -> "DL" (owner chip in the label column). */
+export function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join("");
+}
+
+/** The task ids visible under an owner filter: matching tasks plus their WBS ancestors, so
+ *  the tree above a person's work stays readable. Exported for unit tests. */
+export function visibleTaskIds(tasks: GanttTask[], ownerFilter: string): Set<number> {
+  const keep = new Set<number>();
+  if (!ownerFilter) {
+    for (const t of tasks) keep.add(t.id);
+    return keep;
+  }
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const matches = (t: GanttTask) =>
+    ownerFilter === "none"
+      ? t.assignee_engineer_id === null && t.type !== "summary"
+      : t.assignee_engineer_id === Number(ownerFilter);
+  for (const t of tasks) {
+    if (!matches(t)) continue;
+    keep.add(t.id);
+    let cur = t.parent ? byId.get(t.parent) : undefined;
+    const seen = new Set<number>([t.id]);
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      keep.add(cur.id);
+      cur = cur.parent ? byId.get(cur.parent) : undefined;
+    }
+  }
+  return keep;
+}
+
 interface Geom {
   task: GanttTask;
   row: number;
@@ -40,8 +77,19 @@ export default function GanttChart({
   onTaskClick?: (taskId: number) => void;
 }) {
   const [dayW, setDayW] = useState(DEFAULT_DAY_W);
+  const [ownerFilter, setOwnerFilter] = useState("");
+  const owners = useMemo(() => {
+    const seen = new Map<number, string>();
+    for (const t of data.tasks) {
+      if (t.assignee_engineer_id !== null && t.assignee_name) {
+        seen.set(t.assignee_engineer_id, t.assignee_name);
+      }
+    }
+    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [data]);
   const { geoms, width, height, gridDays, minDay } = useMemo(() => {
-    const tasks = data.tasks;
+    const visible = visibleTaskIds(data.tasks, ownerFilter);
+    const tasks = data.tasks.filter((t) => visible.has(t.id));
     const byId = new Map(tasks.map((t) => [t.id, t]));
     const depthOf = (t: GanttTask): number => {
       let depth = 0;
@@ -85,13 +133,29 @@ export default function GanttChart({
       width: LABEL_W + span * dayW + 20,
       height: HEADER_H + tasks.length * ROW_H + 10,
     };
-  }, [data, dayW]);
+  }, [data, dayW, ownerFilter]);
 
   const geomById = new Map(geoms.map((g) => [g.task.id, g]));
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white">
       <div className="flex items-center justify-end gap-1 border-b border-slate-100 px-3 py-1.5">
+        <label className="mr-auto flex items-center gap-1.5 text-xs text-slate-400">
+          owner
+          <select
+            value={ownerFilter}
+            onChange={(e) => setOwnerFilter(e.target.value)}
+            className="rounded border border-slate-300 px-1.5 py-0.5 text-xs text-slate-600"
+          >
+            <option value="">Everyone</option>
+            <option value="none">Unassigned</option>
+            {owners.map(([id, name]) => (
+              <option key={id} value={String(id)}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
         <span className="mr-1 text-xs text-slate-400">zoom</span>
         <button
           onClick={() => setDayW((w) => Math.max(MIN_DAY_W, w - 6))}
@@ -155,6 +219,7 @@ export default function GanttChart({
         {geoms.map((g) => {
           const isMilestone = g.task.type === "milestone";
           const isSummary = g.task.type === "summary";
+          const maxLabel = g.task.assignee_name ? 26 : 30;
           const barFill = g.task.is_critical
             ? "fill-red-500"
             : isSummary
@@ -199,8 +264,22 @@ export default function GanttChart({
                 y={cy + 4}
                 className={`fill-slate-700 ${isSummary ? "font-semibold" : ""}`}
               >
-                {g.task.text.length > 30 ? g.task.text.slice(0, 29) + "…" : g.task.text}
+                {g.task.text.length > maxLabel ? g.task.text.slice(0, maxLabel - 1) + "…" : g.task.text}
               </text>
+              {g.task.assignee_name && (
+                <g>
+                  <circle cx={LABEL_W - 18} cy={cy} r={9} className="fill-slate-200" />
+                  <text
+                    x={LABEL_W - 18}
+                    y={cy + 3}
+                    textAnchor="middle"
+                    className="fill-slate-600 text-[9px] font-semibold"
+                  >
+                    {initials(g.task.assignee_name)}
+                  </text>
+                  <title>owner: {g.task.assignee_name}</title>
+                </g>
+              )}
 
               {g.x === null ? (
                 <text x={LABEL_W + 6} y={cy + 4} className="fill-slate-300 italic">
@@ -242,6 +321,7 @@ export default function GanttChart({
                     <title>
                       {g.task.text} — {g.task.start_date} → {g.task.end_date}
                       {g.task.is_critical ? " (critical)" : ` (float ${g.task.total_float}d)`}
+                      {g.task.assignee_name ? ` — ${g.task.assignee_name}` : ""}
                     </title>
                   </rect>
                   {g.task.progress > 0 && !isSummary && (

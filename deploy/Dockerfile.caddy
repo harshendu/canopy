@@ -1,0 +1,14 @@
+# The single front door for production: Caddy terminates TLS, serves the built React
+# app, and reverse-proxies /api, /webhooks, and /mcp to the backend / MCP services.
+# Build context is the repo root (see compose.prod.yml).
+
+FROM node:20-alpine AS webbuild
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install
+COPY frontend .
+RUN npm run build
+
+FROM caddy:2-alpine
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
+COPY --from=webbuild /app/dist /srv/www

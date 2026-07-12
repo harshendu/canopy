@@ -1,7 +1,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, params, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -114,6 +114,38 @@ async def require_demo_mode() -> None:
 
 
 DemoModeGuard = Annotated[None, Depends(require_demo_mode)]
+
+
+def require_feature(key: str) -> Callable[[AsyncSession], Awaitable[None]]:
+    """Dependency factory: reject the request (403) when the feature gate `key` is off.
+
+    Attached per-router (see `app/api/v1/__init__.py`) or per-endpoint for sub-features that
+    live inside a core router. The detail is machine-readable so clients (React, MCP) can
+    distinguish "admin turned this off" from a permissions problem.
+    """
+
+    async def _dependency(session: SessionDep) -> None:
+        from app.services.features import FEATURES_BY_KEY, feature_enabled
+
+        if await feature_enabled(session, key):
+            return
+        feature = FEATURES_BY_KEY.get(key)
+        label = feature.label if feature is not None else key
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "feature_disabled",
+                "feature": key,
+                "message": f"'{label}' is disabled by the administrator.",
+            },
+        )
+
+    return _dependency
+
+
+def FeatureGate(key: str) -> params.Depends:  # noqa: N802 - reads as a marker at call sites
+    """`Depends(require_feature(key))`, for `dependencies=[...]` lists."""
+    return params.Depends(dependency=require_feature(key))
 
 
 def _effective_role(role: UserRole) -> UserRole:

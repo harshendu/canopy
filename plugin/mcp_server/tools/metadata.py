@@ -19,6 +19,17 @@ def register(mcp, client) -> None:
         return f"{base}/{entity_id}"
 
     @mcp.tool
+    async def get_enabled_features() -> dict:
+        """The effective feature-gate map (key -> on/off) the admin has configured.
+
+        Check this before driving a gated surface (scenarios, draft plans, exports, risk,
+        retros, specs, docs, delivery metrics, forecast/board/burndown, drift, outcomes,
+        initiatives, agent tokens...). A gated-off surface returns 403 with code
+        `feature_disabled` — prefer telling the user the admin turned it off over retrying.
+        """
+        return await client.get("/features")
+
+    @mcp.tool
     async def set_task_estimates(
         task_id: int,
         optimistic: int | None = None,

@@ -7,10 +7,12 @@ import type {
   BlockerCategory,
   BlockerSeverity,
   DocSource,
+  Engineer,
   Task,
   TaskExternalLinks,
 } from "../api/types";
 import { spreadConfidence, spreadTone } from "../lib/estimates";
+import { featureOn, useFeatures } from "../lib/useFeatures";
 import RiskRegister from "./RiskRegister";
 import TagEditor from "./TagEditor";
 
@@ -42,6 +44,7 @@ export default function TaskDetailPanel({
     queryKey: ["task", taskId],
     queryFn: () => api.get<Task>(`/tasks/${taskId}`),
   });
+  const features = useFeatures();
 
   return (
     <>
@@ -79,14 +82,18 @@ export default function TaskDetailPanel({
             <ExternalLinksSection taskId={taskId} />
           </section>
 
-          <section>
-            <h3 className="mb-2 text-sm font-semibold text-slate-700">Blockers</h3>
-            <BlockerSection taskId={taskId} projectId={projectId} mayContribute={mayContribute} />
-          </section>
+          {featureOn(features, "tracking.blockers") && (
+            <section>
+              <h3 className="mb-2 text-sm font-semibold text-slate-700">Blockers</h3>
+              <BlockerSection taskId={taskId} projectId={projectId} mayContribute={mayContribute} />
+            </section>
+          )}
 
-          <section>
-            <RiskRegister scope="task" scopeId={taskId} mayWrite={mayPlan} />
-          </section>
+          {featureOn(features, "governance.risk") && (
+            <section>
+              <RiskRegister scope="task" scopeId={taskId} mayWrite={mayPlan} />
+            </section>
+          )}
         </div>
       </aside>
     </>
@@ -109,6 +116,7 @@ function TaskFields({
   const [likely, setLikely] = useState(t.estimate_likely?.toString() ?? "");
   const [pess, setPess] = useState(t.estimate_pessimistic?.toString() ?? "");
   const [tags, setTags] = useState<string[]>(t.tags);
+  const [assignee, setAssignee] = useState(t.assignee_engineer_id?.toString() ?? "");
 
   useEffect(() => {
     setProgress(String(t.percent_complete));
@@ -117,7 +125,13 @@ function TaskFields({
     setLikely(t.estimate_likely?.toString() ?? "");
     setPess(t.estimate_pessimistic?.toString() ?? "");
     setTags(t.tags);
+    setAssignee(t.assignee_engineer_id?.toString() ?? "");
   }, [t]);
+
+  const engineers = useQuery({
+    queryKey: ["engineers"],
+    queryFn: () => api.get<Engineer[]>("/team/engineers"),
+  });
 
   const save = useMutation({
     mutationFn: () =>
@@ -128,11 +142,13 @@ function TaskFields({
         estimate_likely: numOrNull(likely),
         estimate_pessimistic: numOrNull(pess),
         tags,
+        assignee_engineer_id: assignee === "" ? null : Number(assignee),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["task", t.id] });
       qc.invalidateQueries({ queryKey: ["tasks", projectId] });
       qc.invalidateQueries({ queryKey: ["gantt", projectId] });
+      qc.invalidateQueries({ queryKey: ["board", projectId] });
     },
   });
 
@@ -150,6 +166,25 @@ function TaskFields({
       }}
       className="space-y-4"
     >
+      <label className="block text-xs text-slate-500">
+        Owner
+        <select
+          value={assignee}
+          disabled={!canEdit}
+          onChange={(e) => setAssignee(e.target.value)}
+          className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm disabled:bg-slate-50"
+        >
+          <option value="">Unassigned</option>
+          {(engineers.data ?? [])
+            .filter((e) => e.active || e.id === t.assignee_engineer_id)
+            .map((e) => (
+              <option key={e.id} value={String(e.id)}>
+                {e.name}
+              </option>
+            ))}
+        </select>
+      </label>
+
       <div className="grid grid-cols-2 gap-3">
         <label className="text-xs text-slate-500">
           Progress %

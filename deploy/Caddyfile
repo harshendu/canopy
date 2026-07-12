@@ -1,0 +1,69 @@
+# Canopy production front door (single machine).
+#
+# Caddy terminates TLS and maps every public path onto the internal services:
+#   /api/*       -> backend:8000   (REST API + SSE live-refresh stream)
+#   /webhooks/*  -> backend:8000   (GitHub / Jira webhook intake)
+#   /mcp         -> mcp:8765       (Claude MCP server, streamable HTTP)
+#   everything else -> the built React app (SPA fallback to index.html)
+#
+# Ports:
+#   :80   plain HTTP — what the ngrok tunnel forwards to (ngrok provides public TLS),
+#         and a LAN convenience. No HTTPS redirect so the tunnel never bounces.
+#   :443  TLS. Out of the box CANOPY_DOMAIN is unset, so this serves any hostname with
+#         a locally-trusted (self-signed) certificate — fine for LAN use. If you point
+#         a real domain at this machine, set in .env:
+#           CANOPY_DOMAIN=canopy.example.com   (the hostname to serve)
+#           CANOPY_TLS=you@example.com         (ACME contact -> Let's Encrypt certs)
+#         No file edits needed — CANOPY_TLS defaults to "internal" (self-signed).
+
+{
+	# :80 must keep serving plain HTTP for the ngrok tunnel — disable auto-redirects.
+	auto_https disable_redirects
+}
+
+(canopy) {
+	encode gzip zstd
+
+	# REST API. The SSE stream (/api/v1/events/stream) needs unbuffered flushing.
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+		}
+	}
+
+	# Signed webhook intake (GitHub / Jira point at https://<public-host>/webhooks/...).
+	handle /webhooks/* {
+		reverse_proxy backend:8000
+	}
+
+	# FastAPI's interactive API docs (handy for admins; auth still required for data).
+	handle /docs* {
+		reverse_proxy backend:8000
+	}
+	handle /openapi.json {
+		reverse_proxy backend:8000
+	}
+
+	# Claude MCP server — streamable HTTP at /mcp (long-lived, keep buffering off).
+	handle /mcp* {
+		reverse_proxy mcp:8765 {
+			flush_interval -1
+		}
+	}
+
+	# The React dashboard (static build), with SPA client-side routing.
+	handle {
+		root * /srv/www
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+:80 {
+	import canopy
+}
+
+{$CANOPY_DOMAIN::443} {
+	tls {$CANOPY_TLS:internal}
+	import canopy
+}

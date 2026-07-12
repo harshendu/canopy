@@ -1,0 +1,140 @@
+# Production stack for a single machine (see docs/PRODUCTION.md for the full guide):
+#
+#   [Claude / browser / webhooks]
+#            |
+#         (ngrok)  ── public HTTPS tunnel (optional `ngrok` profile)
+#            |
+#          caddy   ── TLS termination + port mapping (80/443): serves the built React
+#            |        app and routes /api + /webhooks -> backend, /mcp -> mcp
+#      ┌─────┼──────────┐
+#   backend  mcp      (static files)
+#      |  \    \
+#      |   \    └─ calls the REST API over the internal network
+#     db  redis ── worker (arq cron: Jira poll, risk snapshots, file drops)
+#
+# Only caddy (and optionally ngrok's inspector) publish host ports; everything else
+# stays on the internal network. Run with:
+#
+#   docker compose -f compose.prod.yml up -d --build
+#   docker compose -f compose.prod.yml --profile ngrok up -d --build   # with the tunnel
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-canopy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-canopy}
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-canopy}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-canopy}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-canopy}
+      REDIS_URL: redis://redis:6379/0
+      DEMO_MODE: "false" # never in production
+      # OAuth redirects + links back into the app go through the public URL (Caddy/ngrok).
+      OAUTH_REDIRECT_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
+      FRONTEND_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Single uvicorn process: the SSE live-refresh broker is in-process (Redis pub/sub
+    # is the multi-process upgrade path — see CLAUDE.md "Live refresh").
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-canopy}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-canopy}
+      REDIS_URL: redis://redis:6379/0
+      DEMO_MODE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: arq app.workers.worker.WorkerSettings
+    restart: unless-stopped
+
+  # Claude MCP server (streamable HTTP at /mcp). It authenticates to the API as a
+  # canopy service account and refreshes its own JWT; CANOPY_MCP_AUTH_TOKEN gates who
+  # may call the (publicly reachable) MCP endpoint.
+  mcp:
+    build: ./plugin
+    environment:
+      CANOPY_API_BASE_URL: http://backend:8000
+      CANOPY_API_TOKEN: ${CANOPY_API_TOKEN:-}
+      CANOPY_API_EMAIL: ${CANOPY_API_EMAIL:-}
+      CANOPY_API_PASSWORD: ${CANOPY_API_PASSWORD:-}
+      CANOPY_MCP_TRANSPORT: http
+      CANOPY_MCP_HOST: 0.0.0.0
+      CANOPY_MCP_PORT: "8765"
+      CANOPY_MCP_PATH: /mcp
+      CANOPY_MCP_AUTH_TOKEN: ${CANOPY_MCP_AUTH_TOKEN:?set CANOPY_MCP_AUTH_TOKEN in .env}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # The single front door: TLS termination + port mapping + static frontend.
+  caddy:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CANOPY_DOMAIN: ${CANOPY_DOMAIN:-}
+      CANOPY_TLS: ${CANOPY_TLS:-internal}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - mcp
+    restart: unless-stopped
+
+  # Public access without opening ports: `--profile ngrok`. ngrok terminates public
+  # TLS at its edge and forwards to Caddy's plain-HTTP :80 listener.
+  ngrok:
+    image: ngrok/ngrok:3
+    profiles: ["ngrok"]
+    command: ["http", "http://caddy:80", "--log", "stdout"]
+    # With a reserved ngrok domain, pin the public hostname instead:
+    #   command: ["http", "--url", "${NGROK_DOMAIN}", "http://caddy:80", "--log", "stdout"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    ports:
+      - "4040:4040" # ngrok inspector (http://localhost:4040 shows the public URL)
+    depends_on:
+      - caddy
+    restart: unless-stopped
+
+volumes:
+  pgdata_prod:
+  caddy_data:
+  caddy_config:

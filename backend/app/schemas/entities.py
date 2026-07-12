@@ -253,6 +253,7 @@ class EngineerCreate(BaseModel):
     user_id: int | None = None
     skill_tags: list[str] = []
     github_login: str | None = None
+    jira_account_id: str | None = None
     timezone: str | None = None
     committed_hours_per_week: float | None = None
 
@@ -266,6 +267,7 @@ class EngineerUpdate(BaseModel):
     user_id: int | None = None
     skill_tags: list[str] | None = None
     github_login: str | None = None
+    jira_account_id: str | None = None
     timezone: str | None = None
     committed_hours_per_week: float | None = None
 
@@ -281,6 +283,7 @@ class EngineerRead(BaseModel):
     user_id: int | None = None
     skill_tags: list[str] = []
     github_login: str | None = None
+    jira_account_id: str | None = None
     timezone: str | None = None
     committed_hours_per_week: float | None = None
 
@@ -600,6 +603,9 @@ class GanttTask(BaseModel):
     type: TaskType
     is_critical: bool
     total_float: int
+    # Ownership, resolved server-side so the chart can label bars without a second query.
+    assignee_engineer_id: int | None = None
+    assignee_name: str | None = None
 
 
 class GanttLink(BaseModel):
@@ -1266,6 +1272,9 @@ class IngestIssue(BaseModel):
     issue_type: str | None = None  # epic types become summary tasks
     parent_external_id: str | None = None
     updated: str | None = None  # remote "updated" timestamp, for staleness checks
+    # Upstream assignee → canopy Engineer (matched/created); omitted = leave ownership alone.
+    assignee_account_id: str | None = None
+    assignee_name: str | None = None
 
 
 class IngestIssuesRequest(BaseModel):

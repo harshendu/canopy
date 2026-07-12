@@ -17,6 +17,7 @@ from app.models.architecture import (
 )
 from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
+from app.models.feature import FeatureFlag
 from app.models.integration import (
     Connection,
     ExternalRef,
@@ -78,6 +79,7 @@ __all__ = [
     "Engineer",
     "EngineerAvailability",
     "ExternalRef",
+    "FeatureFlag",
     "Holiday",
     "Initiative",
     "IntegrationSetting",

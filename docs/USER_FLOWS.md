@@ -54,12 +54,18 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 ### A3. User & role management *(admin)*
 - **Roles:** `admin`, `architect`, `engineering_manager`, `engineer`, `viewer` (plus a legacy
   `member` ≈ architect, kept for back-compat and not offered in the UI).
-- **UI:** `/admin/users` (admin only, shown in the sidebar only for admins) — invite by email
-  (email + temp password + role + name), change a user's role, and deactivate / reactivate.
-  Closes v1's API-only registration gap.
+- **UI:** `/admin/users` (admin only, shown in the sidebar only for admins) — provision by email
+  (email + temp password + role + **function** + name), change a user's role or function,
+  **reset a password** (inline per-row form), and deactivate / reactivate. Closes v1's API-only
+  registration gap.
 - **API:** `POST /api/v1/auth/register` (admin), `GET /api/v1/auth/users` (admin),
-  `PATCH /api/v1/auth/users/{id}` (admin; role / is_active / full_name — you can't deactivate
-  yourself).
+  `PATCH /api/v1/auth/users/{id}` (admin; role / function / is_active / full_name — you can't
+  deactivate yourself, and the **last active admin** can't be demoted or deactivated, so an
+  install can't lock itself out), `POST /api/v1/auth/users/{id}/password` (admin resets;
+  **human-only** — an agent token (§A6) can't rotate credentials).
+- **Self-service password:** every user can rotate their own password from the sidebar
+  ("Change password", current password required) — `POST /api/v1/auth/me/password` (human-only).
+  Passwords are min 8 chars (enforced on register/reset/change).
 ### A3a. Role enforcement (Roles × flows) **[new]**
 Write access is now enforced server-side per the v2 matrix; **reads stay open to any
 authenticated user** (viewers included). Enforced via role-group dependencies in
@@ -207,6 +213,34 @@ user's behalf.
   configurable **short expiry** for impersonation tokens (they currently inherit the normal login
   TTL).
 
+### A10. Feature gates — admin on/off switches per surface **[new]**
+An admin can turn whole product surfaces (a **group**) or single **features** on and off for the
+entire install — e.g. run canopy as "plan + Jira sync + Gantt only" by disabling `architecture`,
+`governance`, and `portfolio`.
+- **UI:** `/admin/features` (admin only) — grouped toggles with descriptions. A child whose own
+  toggle is on but whose **group** is off shows an "off via group" badge (its own choice is
+  remembered). Gated surfaces vanish **live** everywhere: sidebar items (Initiatives / Decisions /
+  Connectors), ProjectView tabs (board/burndown/…), header buttons (Set baseline, Export), and
+  panels (outcomes, blockers, task risk register) — every toggle publishes an SSE event (§K) that
+  refetches the map, no reload or restart.
+- **Catalog (two levels, defaults all-on):** `planning` (whatif · baselines · scenarios ·
+  draft_plans) · `tracking` (board · burndown · forecast · alerts · blockers · delivery ·
+  capacity) · `architecture` (drift) · `portfolio` (initiatives · outcomes) · `governance` (risk ·
+  retros · specs · docs) · `integrations` (webhooks) · `reporting` (exports) · `ai` (agent_tokens).
+  **Core flows are not gateable** (auth, projects, tasks/deps/milestones, Gantt + CPM replan, team,
+  /me, activity, live events). A feature is effectively on iff its toggle **and** its group's are on.
+- **API:** `GET /api/v1/features` (any authenticated user — the effective map every client reads),
+  `GET /api/v1/admin/features`, `PATCH /api/v1/admin/features/{key}` `{enabled}` · **MCP:**
+  `get_enabled_features`.
+- **Enforcement is server-side:** gated routers/endpoints return **403** with a machine-readable
+  detail `{code:"feature_disabled", feature:"…"}` (`require_feature`/`FeatureGate` in
+  `app/api/deps.py`; catalog + resolution in `app/services/features.py`; stored as `FeatureFlag`
+  rows — a missing row means enabled, so existing installs are unaffected). Webhook intake ACKs
+  but ignores deliveries while `integrations.webhooks` is off (so GitHub/Jira don't disable the
+  hook). The UI mirror is `useFeatures`/`featureOn` (`src/lib/useFeatures.ts`).
+- **Not built:** per-user / per-project gates (gates are install-wide), and a "who toggled what
+  when" audit trail.
+
 ---
 
 ## R. Initiatives (the program layer above projects) **[new — v2 §R / C1]**
@@ -327,12 +361,14 @@ projects and rolls up their health.
   deadline/percent_complete/parent — **status stays Jira-mirrored, read-only**) and `assign_task`
   (set/clear `assignee_engineer_id`). Re-run `replan_schedule` after duration/structure changes.
 
-### C1a. Task detail panel — estimates, tags, progress, blockers, risks, external links **[new]**
+### C1a. Task detail panel — owner, estimates, tags, progress, blockers, risks, external links **[new]**
 - **UI:** click a task bar in the **Gantt** (or a card on the **Board**) to open a right-side
-  **detail panel**. It edits the task's **progress** + **duration**, a **3-point estimate**
-  (aggressive / practical / buffered, with the computed PERT mean + spread + a confidence badge),
-  **tags**, the task's **blockers** (raise/resolve with category + severity + needed-by), and the
-  task-scoped **risk register** (RAID). An **External links** section shows the task's links out to
+  **detail panel**. It edits the task's **owner** (an "Owner" select over the team's engineers —
+  the click-through home of individual ownership), **progress** + **duration**, a **3-point
+  estimate** (aggressive / practical / buffered, with the computed PERT mean + spread + a
+  confidence badge), **tags**, the task's **blockers** (raise/resolve with category + severity +
+  needed-by; hidden when `tracking.blockers` is gated off §A10), and the task-scoped
+  **risk register** (RAID; hidden when `governance.risk` is off). An **External links** section shows the task's links out to
   the systems that own the work: its **Jira issue** (clickable when the connection exposes a
   browsable site), the **GitHub PRs** implementing it (with open/closed state), and its
   task-scoped **design docs** (GitHub / Drive / Jira / manual, badged by source). Read-only —
@@ -389,6 +425,16 @@ projects and rolls up their health.
 ### C6. Zoom the Gantt
 - **UI:** Gantt tab → the `−` / `+` controls change the day-width.
 
+### C6a. Ownership on the Gantt — owner chips + filter **[new]**
+- **UI:** each assigned row shows the owner's **initials chip** in the label column (full name in
+  the bar tooltip, next to dates/float). An **owner** dropdown in the Gantt toolbar filters the
+  chart to one person's work — **Everyone · Unassigned · each engineer with work here** — keeping
+  the WBS readable by retaining a matching task's phase ancestors. The **Board** (§C9) shows the
+  same chips on cards plus its own owner filter, so ownership reads consistently across both views.
+- **API:** `GET /api/v1/projects/{id}/gantt` now returns `assignee_engineer_id` +
+  server-resolved `assignee_name` per task; assignment itself is §C1/C1a (`PATCH /tasks/{id}`,
+  MCP `assign_task`). Jira-synced tasks arrive with ownership already mapped (§J3).
+
 ### C7. Working calendar (weekends + holidays)
 - **UI:** "5-day week" toggle (weekends). **Holidays** are API-only:
   `GET/POST/DELETE /api/v1/projects/{id}/holidays`. Both feed the CPM scheduler.
@@ -411,7 +457,9 @@ projects and rolls up their health.
 ## C9. Flow board (Kanban + WIP + aging) **[new — v2 §C-R2]**
 - **UI:** project → **Board** tab → leaf tasks grouped into **status lanes** (from the Jira-mirrored
   `status`; done lanes sort last). Each lane shows **WIP** (count of not-done tasks); set a **WIP
-  limit** (client-side) and lanes over it turn red. Cards show **age in status**; a card **aging**
+  limit** (client-side) and lanes over it turn red. Cards show **age in status** and the **owner's
+  initials chip** (hover for the name), with an **owner filter** (Everyone / Unassigned / per
+  engineer) beside the WIP knob — mirroring the Gantt's ownership view (§C6a). A card **aging**
   beyond the team's **cycle-time P85** is highlighted amber (the leading "this is stuck" signal).
 - **API:** `GET /api/v1/projects/{id}/board` (lanes with per-task `age_days`/`aging`, `wip`, plus
   `cycle_time_p85_days` and `aging_count`) · **MCP:** `get_board`. Logic is pure in
@@ -519,7 +567,8 @@ surfaces where decisions get made — the engineer workspace and the project ale
   hours/week**, **skill tags**), link an engineer to a **login** (per-row select, admins only),
   add functional roles, and remove engineers. Engineer rows show skills / GitHub / committed hours.
 - **API:** `GET/POST /api/v1/team/engineers`, `PATCH/DELETE /api/v1/team/engineers/{id}`
-  (engineer payload now includes `user_id`, `skill_tags`, `github_login`, `timezone`,
+  (engineer payload now includes `user_id`, `skill_tags`, `github_login`, `jira_account_id` —
+  the Jira-assignee identity match for §J3 ownership sync — `timezone`,
   `committed_hours_per_week`), `GET/POST /api/v1/team/roles` · **MCP:** `list_engineers`,
   `add_engineer` (extended).
 - **Not built (v2 §F1):** on-call schedule (needs the PagerDuty connector §J7).
@@ -866,6 +915,12 @@ attach their **own** OAuth credential to it — canopy then reads/writes **as th
 - **UI:** on a Jira connection → **Sync now** (full sync). Imports epics→summary tasks and
   stories→leaf tasks (idempotently, via `ExternalRef`), tags tasks with their active sprint, and
   **auto-replans** the project when new tasks are created. The result shows created/updated/skipped.
+- **Ownership (assignee → Engineer):** each issue's Jira **assignee** is mapped onto a canopy
+  **Engineer** — matched by `jira_account_id`, then by exact name (case-insensitive, which
+  back-fills the account id), else **auto-created** — and set as the task's owner, so synced work
+  arrives with clear individual ownership on the Gantt/Board/workspace (§C6a, §M). An issue that is
+  **unassigned in Jira leaves a locally-set owner untouched** (local assignment stays usable);
+  a set Jira assignee wins over a local one. Status stays read-only as ever.
 - **API:** `POST /api/v1/connectors/connections/{id}/sync` (full) and `.../sync/incremental` ·
   **MCP:** `trigger_jira_sync`.
 - **Background:** an arq worker runs an incremental reconciliation poll on a cron as the correctness
@@ -881,7 +936,9 @@ ingest upserts via `ExternalRef` (never deletes), maps into the connection's con
 and (issues) replans on new tasks; ingest does **not** advance the connection watermark.
 - **Issues → tasks:** `POST /api/v1/connectors/connections/{id}/ingest/issues`
   (`{issues:[{external_id, external_key, summary, status, issue_type, parent_external_id,
-  updated}]}`) · **MCP:** `ingest_jira_issues`. Epics→summary; re-ingest updates, never duplicates.
+  updated, assignee_account_id?, assignee_name?}]}`) · **MCP:** `ingest_jira_issues`.
+  Epics→summary; re-ingest updates, never duplicates; assignees map to Engineers exactly like the
+  direct sync (§J3 — shared upsert core).
 - **PRs → cache:** `POST .../ingest/pull-requests` · **MCP:** `ingest_github_pull_requests`.
 - **Draft push write-back (writes=`mcp`):** when `push_draft_to_jira` is disabled by policy, Claude
   creates the tickets itself then `POST /api/v1/draft-plans/{id}/record-push`
@@ -1268,14 +1325,22 @@ pipeline — an honest manual signal, like the weekly health note). `status`:
 
 ### L1. Install & configure the plugin
 - Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`). Configure
-  `api_base_url` (e.g. `http://localhost:8000`) and `api_token` (a JWT from `POST /auth/login`). The
-  MCP server then exposes ~85 curated tools that call the REST API.
+  `api_base_url` (e.g. `http://localhost:8000`) and either `api_token` (a JWT from
+  `POST /auth/login`) or `api_email`+`api_password` (a service account the server logs in as,
+  **auto-refreshing its JWT** when it expires — the zero-maintenance choice for long-lived
+  services). The MCP server then exposes curated tools that call the REST API.
 - **Transport.** Locally the plugin launches the MCP server over **stdio** (`plugin/.mcp.json`).
-  For production / cloud Claude sessions, run the server as a long-lived service over **SSE**
-  (`CANOPY_MCP_TRANSPORT=sse` + `CANOPY_MCP_HOST`/`CANOPY_MCP_PORT`/`CANOPY_MCP_PATH`) and point the
-  session at the SSE URL. Backend connection (`CANOPY_API_BASE_URL`, `CANOPY_API_TOKEN`) and transport
-  are all read from **environment variables**, so a headless cloud session needs no interactive
-  plugin config. See README → *Production deployment*.
+  For production / cloud Claude sessions, run the server as a long-lived service over
+  **streamable HTTP** (`CANOPY_MCP_TRANSPORT=http` + `CANOPY_MCP_HOST`/`PORT`/`PATH`, default path
+  `/mcp`; **SSE remains as a legacy option**) and point the session at
+  `https://<host>/mcp` with `"type": "http"`. Set `CANOPY_MCP_AUTH_TOKEN` whenever the endpoint is
+  reachable beyond localhost — clients must then send `Authorization: Bearer <token>`. Backend
+  connection and transport are all read from **environment variables**, so a headless cloud
+  session needs no interactive plugin config. See README → *Production deployment* and
+  `docs/PRODUCTION.md` (Caddy routes `/mcp` and ngrok exposes it publicly).
+- **Feature awareness.** `get_enabled_features` returns the admin's feature-gate map (§A10);
+  gated-off surfaces answer 403 with `{code:"feature_disabled"}` — Claude should report the gate
+  rather than retry.
 
 ### L2. Plan a roadmap (skill + subagent)
 - Ask Claude to plan/break down/sequence work. The **`planning-roadmaps`** skill (and **`gantt-planner`**

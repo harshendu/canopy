@@ -58,7 +58,9 @@ services:
   frontend:
     build: ./frontend
     environment:
-      VITE_API_BASE_URL: http://localhost:8000
+      # The vite dev server proxies /api + /webhooks here (see frontend/vite.config.ts);
+      # inside compose the backend is a service, not localhost.
+      VITE_PROXY_TARGET: http://backend:8000
     ports:
       - "5173:5173"
     depends_on:

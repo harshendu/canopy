@@ -22,6 +22,9 @@ class Engineer(TimestampMixin, table=True):
     user_id: int | None = Field(default=None, foreign_key="app_user.id")
     skill_tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     github_login: str | None = None
+    # Jira account id of this person, so synced issue assignees map onto the same Engineer
+    # (matched by id first, then by exact display name, else auto-created on sync).
+    jira_account_id: str | None = Field(default=None, index=True)
     timezone: str | None = None
     committed_hours_per_week: float | None = None
 

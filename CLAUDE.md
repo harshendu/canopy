@@ -69,6 +69,9 @@ Plugin (run from `plugin/`, venv at `plugin/.venv`):
 pip install -r mcp_server/requirements.txt
 ```
 Whole stack: `docker compose up --build` (postgres, redis, backend, worker, frontend).
+Production (single machine): `docker compose -f compose.prod.yml up -d --build` — Caddy terminates
+TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mcp`→MCP server
+(streamable HTTP); optional `--profile ngrok` adds a public tunnel. Guide: `docs/PRODUCTION.md`.
 
 ## Conventions / where logic lives
 - A `Task` is the Gantt unit; a `summary` task is a phase/workstream (WBS tree via `parent_id`).
@@ -180,13 +183,26 @@ Whole stack: `docker compose up --build` (postgres, redis, backend, worker, fron
   is the human-in-the-loop policy. Enforced via `require_human`/`HumanOnly` in `app/api/deps.py`
   (scope in `app/core/security.py`). USER_FLOWS §A6; roadmap gap #4 in AI_NATIVE_EXECUTION.md (the
   webhook that auto-runs guardrails on agent PRs stays agent-driven — the server can't crawl code, §N).
+- **Feature gates (admin on/off per surface):** two-level catalog (group → feature, e.g.
+  `tracking` → `tracking.board`) in `app/services/features.py`; overrides are `FeatureFlag` rows
+  (missing row = enabled; effective = own AND group). Enforced via `require_feature`/`FeatureGate`
+  (`app/api/deps.py`) attached per-router in `app/api/v1/__init__.py` or per-endpoint
+  (gantt/team/auth) → 403 `{code:"feature_disabled", feature}`; webhook intake ACKs-but-ignores
+  when `integrations.webhooks` is off. Clients read `GET /features` (admin CRUD `/admin/features`);
+  each toggle publishes an SSE `features` event so the React nav/tabs (`useFeatures`,
+  `TAB_FEATURES` in ProjectView) update live. Core flows (auth/projects/tasks/gantt/team/me) are
+  deliberately ungated. **When adding a feature, pick its gate (or call it core)** and gate new
+  routers at include time. USER_FLOWS §A10.
 - Connectors implement the ABC in `app/connectors/base.py` and self-register via `@register`. Sync is
   idempotent through the `ExternalRef` table (`app/services/mapping.py`). Connector tokens are
   encrypted at rest with Fernet (`app/core/crypto.py`). All outbound HTTP goes through
   `app/connectors/http.py:request_with_retry` (Retry-After + backoff/jitter on 429/5xx).
 - Jira (`app/connectors/jira.py`): enhanced JQL search + Agile API (`sync_active_sprints` tags tasks
   with their sprint when `board_id` is configured) + changelog → `TaskStatusHistory`
-  (`sync_status_history`). Jira status stays read-only.
+  (`sync_status_history`). Jira status stays read-only. **Assignee → ownership:** sync maps the
+  issue assignee to an `Engineer` (match `jira_account_id`, then exact name + back-fill, else
+  auto-create — `resolve_assignee_engineer` in `app/services/ingest.py`) and sets
+  `Task.assignee_engineer_id`; an issue unassigned in Jira leaves a locally-set owner alone.
 - **Decision fitness functions:** an ADR can carry machine-checkable dependency rules
   (`ADRFitnessFunction`: forbid|require between two components). The drift scan evaluates accepted
   ADRs' rules against the observed edges (`FitnessRule` in `app/services/drift.py`); a violation is a
