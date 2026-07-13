@@ -31,8 +31,9 @@ and a Claude Code plugin (FastMCP server + skills + subagents).
 backend/   FastAPI + SQLModel + Alembic + arq. API in app/api/v1, models in app/models,
            business logic in app/services, integrations in app/connectors + app/webhooks.
 frontend/  Vite + React + TS + Tailwind v4 + TanStack Query. Pages in src/pages
-           (Portfolio dashboard, Initiatives + InitiativeView cockpit, Projects, ProjectView with
-           Gantt/Board/Dependencies/Capacity/Architecture/Roadmap/Burndown tabs, Connectors). Views in
+           (Portfolio dashboard, Initiatives + InitiativeView cockpit, Projects, ProjectView cockpit
+           — an Overview entry + Schedule/Execution/Architecture/Governance/Integrations workspaces
+           that group the detail views; two-level nav model in lib/projectNav.ts, Connectors). Views in
            src/components:
            GanttChart (custom SVG, with zoom + baseline/variance overlay), DependencyGraph +
            ArchitectureView (React Flow), CapacityHeatmap + RoadmapView (custom),
@@ -210,7 +211,7 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   (gantt/team/auth) → 403 `{code:"feature_disabled", feature}`; webhook intake ACKs-but-ignores
   when `integrations.webhooks` is off. Clients read `GET /features` (admin CRUD `/admin/features`);
   each toggle publishes an SSE `features` event so the React nav/tabs (`useFeatures`,
-  `TAB_FEATURES` in ProjectView) update live. Core flows (auth/projects/tasks/gantt/team/me) are
+  `TAB_FEATURES` in `lib/projectNav`) update live. Core flows (auth/projects/tasks/gantt/team/me) are
   deliberately ungated. **When adding a feature, pick its gate (or call it core)** and gate new
   routers at include time. USER_FLOWS §A10.
 - Connectors implement the ABC in `app/connectors/base.py` and self-register via `@register`. Sync is

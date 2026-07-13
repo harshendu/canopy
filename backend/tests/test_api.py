@@ -136,6 +136,42 @@ async def test_portfolio_endpoint(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_project_summary_endpoint(client, db_session):
+    await _seed_admin(db_session)
+    token = await _token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    project_id = (
+        await client.post(
+            "/api/v1/projects", json={"key": "PLAT", "name": "Platform"}, headers=headers
+        )
+    ).json()["id"]
+    await client.post(
+        "/api/v1/tasks",
+        json={"project_id": project_id, "name": "Done", "percent_complete": 100},
+        headers=headers,
+    )
+    await client.post(
+        "/api/v1/tasks",
+        json={"project_id": project_id, "name": "WIP", "percent_complete": 0},
+        headers=headers,
+    )
+
+    resp = await client.get(f"/api/v1/projects/{project_id}/summary", headers=headers)
+    assert resp.status_code == 200, resp.text
+    summary = resp.json()
+    # Numbers match the portfolio rollup exactly (both go through summarize_project).
+    assert summary["id"] == project_id
+    assert summary["total_tasks"] == 2
+    assert summary["completed_tasks"] == 1
+    assert summary["avg_percent_complete"] == 50.0
+    assert "risk_score" in summary and "drift_score" in summary
+
+    missing = await client.get("/api/v1/projects/999999/summary", headers=headers)
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_capacity_endpoint(client, db_session):
     await _seed_admin(db_session)
     token = await _token(client)

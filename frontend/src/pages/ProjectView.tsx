@@ -22,12 +22,21 @@ import SpecsView from "../components/SpecsView";
 import DocsView from "../components/DocsView";
 import ExportMenu from "../components/ExportMenu";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
-import OutcomesPanel from "../components/OutcomesPanel";
+import ProjectOverview from "../components/ProjectOverview";
 import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
 import TaskDetailPanel from "../components/TaskDetailPanel";
 import { PageHeader } from "../components/PageHeader";
-import { Icon, type IconName } from "../components/icons";
+import { Icon } from "../components/icons";
+import {
+  TAB_ICONS,
+  TAB_LABELS,
+  defaultTabForGroup,
+  resolveProjectTab,
+  visibleProjectNav,
+  type ProjectGroupKey,
+  type ProjectTab,
+} from "../lib/projectNav";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
 import { featureOn, useFeatures } from "../lib/useFeatures";
@@ -44,90 +53,11 @@ const ActivityView = lazy(() => import("../components/ActivityView"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
 const DraftPlanView = lazy(() => import("../components/DraftPlanView"));
 
-type Tab =
-  | "gantt"
-  | "board"
-  | "specs"
-  | "deps"
-  | "capacity"
-  | "decisions"
-  | "docs"
-  | "architecture"
-  | "drift"
-  | "roadmap"
-  | "drafts"
-  | "jiralinks"
-  | "burndown"
-  | "delivery"
-  | "risk"
-  | "retros"
-  | "activity";
-
-const TABS: Tab[] = [
-  "gantt",
-  "board",
-  "specs",
-  "deps",
-  "capacity",
-  "decisions",
-  "docs",
-  "architecture",
-  "drift",
-  "roadmap",
-  "drafts",
-  "jiralinks",
-  "burndown",
-  "delivery",
-  "risk",
-  "retros",
-  "activity",
-];
-
-/** The feature gate each tab sits behind (absent = core, always on). A gated-off tab
- *  disappears from the tab bar and an active one snaps back to the Gantt. */
-const TAB_FEATURES: Partial<Record<Tab, string>> = {
-  board: "tracking.board",
-  specs: "governance.specs",
-  capacity: "tracking.capacity",
-  decisions: "architecture",
-  docs: "governance.docs",
-  architecture: "architecture",
-  drift: "architecture.drift",
-  drafts: "planning.draft_plans",
-  jiralinks: "integrations",
-  burndown: "tracking.burndown",
-  delivery: "tracking.delivery",
-  risk: "governance.risk",
-  retros: "governance.retros",
-};
-
-const TAB_ICONS: Record<Tab, IconName> = {
-  gantt: "gantt",
-  board: "board",
-  specs: "specs",
-  deps: "deps",
-  capacity: "capacity",
-  decisions: "decisions",
-  docs: "docs",
-  architecture: "architecture",
-  drift: "drift",
-  roadmap: "roadmap",
-  drafts: "drafts",
-  jiralinks: "jiralinks",
-  burndown: "burndown",
-  delivery: "delivery",
-  risk: "risk",
-  retros: "retros",
-  activity: "activity",
-};
-
 export default function ProjectView() {
   const { projectId } = useParams();
   const id = Number(projectId);
   const qc = useQueryClient();
-  const [searchParams] = useSearchParams();
-  const requestedTab = searchParams.get("tab");
-  const initialTab: Tab = TABS.includes(requestedTab as Tab) ? (requestedTab as Tab) : "gantt";
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [taskName, setTaskName] = useState("");
   const [taskDuration, setTaskDuration] = useState(3);
@@ -138,16 +68,29 @@ export default function ProjectView() {
   const [lastReplan, setLastReplan] = useState<ReplanResult | null>(null);
   const [baselining, setBaselining] = useState(false);
   const [baselineNote, setBaselineNote] = useState("");
-  const [activeTab, setTab] = useState<Tab>(initialTab);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const { data: me } = useCurrentUser();
   const features = useFeatures();
-  const tabOn = (key: Tab) => {
-    const gate = TAB_FEATURES[key];
-    return gate === undefined || featureOn(features, gate);
+  const isOn = (key: string) => featureOn(features, key);
+
+  // The active workspace is derived from the URL (`?tab=<leaf>`), so tab state is deep-linkable,
+  // shareable, and survives back/forward. A known, enabled leaf selects it + its parent group;
+  // anything else (absent / unknown / gated-off) lands on the Overview. `?tab=` leaf keys are
+  // unchanged from the old flat bar, so every existing deep link keeps working.
+  const { group: activeGroup, tab: activeTab } = resolveProjectTab(searchParams.get("tab"), isOn);
+  const nav = visibleProjectNav(isOn);
+  const activeSub = nav.find((n) => n.group.key === activeGroup)?.tabs ?? [];
+
+  const goToTab = (t: ProjectTab) => setSearchParams({ tab: t }, { replace: true });
+  const goToGroup = (key: ProjectGroupKey) => {
+    if (key === "overview") {
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    const def = defaultTabForGroup(key, isOn);
+    if (def) goToTab(def);
   };
-  // If an admin turns the active tab's feature off mid-session, snap back to the Gantt.
-  const tab: Tab = tabOn(activeTab) ? activeTab : "gantt";
+
   const mayPlan = isPlanner(me?.role);
   const mayWriteProject = canWriteProjects(me?.role);
   const mayContribute = canContribute(me?.role);
@@ -167,7 +110,7 @@ export default function ProjectView() {
   const burndown = useQuery({
     queryKey: ["burndown", id],
     queryFn: () => api.get<BurndownResponse>(`/projects/${id}/burndown`),
-    enabled: tab === "burndown",
+    enabled: activeTab === "burndown",
   });
 
   const invalidate = () => {
@@ -232,12 +175,12 @@ export default function ProjectView() {
   const baselines = useQuery({
     queryKey: ["baselines", id],
     queryFn: () => api.get<Baseline[]>(`/projects/${id}/baselines`),
-    enabled: tab === "gantt" && baselinesOn,
+    enabled: activeTab === "gantt" && baselinesOn,
   });
   const forecast = useQuery({
     queryKey: ["forecast", id],
     queryFn: () => api.get<ForecastResponse>(`/projects/${id}/forecast`),
-    enabled: tab === "gantt" && forecastOn,
+    enabled: activeTab === "gantt" && forecastOn,
   });
 
   const baseline = useMutation({
@@ -353,12 +296,6 @@ export default function ProjectView() {
         />
       )}
 
-      {featureOn(features, "portfolio.outcomes") && (
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <OutcomesPanel scope="project" scopeId={id} mayWrite={mayPlan} />
-        </div>
-      )}
-
       {lastReplan && (
         <div className="space-y-1">
           <div className="rounded border border-canopy-500/30 bg-canopy-50 px-4 py-2 text-sm text-canopy-700">
@@ -375,44 +312,58 @@ export default function ProjectView() {
         </div>
       )}
 
-      <div className="flex gap-1 overflow-x-auto border-b border-slate-200">
-        {([
-          ["gantt", "Gantt"],
-          ["board", "Board"],
-          ["specs", "Specs"],
-          ["deps", "Dependencies"],
-          ["capacity", "Capacity"],
-          ["decisions", "Decisions"],
-          ["docs", "Docs"],
-          ["architecture", "Architecture"],
-          ["drift", "Drift"],
-          ["roadmap", "Roadmap"],
-          ["drafts", "Plan → Jira"],
-          ["jiralinks", "Jira Links"],
-          ["burndown", "Burndown"],
-          ["delivery", "Delivery"],
-          ["risk", "Risk"],
-          ["retros", "Retros"],
-          ["activity", "Activity"],
-        ] as [Tab, string][])
-          .filter(([key]) => tabOn(key))
-          .map(([key, label]) => (
+      {/* Two-level workspace navigation: the six domain groups (primary), then the active group's
+          views (secondary). Collapses to Miller's ~7 primary choices instead of a 17-tab scroll. */}
+      <div>
+        <div
+          role="tablist"
+          aria-label="Project workspaces"
+          className="flex gap-1 overflow-x-auto border-b border-slate-200"
+        >
+          {nav.map(({ group }) => (
             <button
-              key={key}
-              onClick={() => setTab(key)}
+              key={group.key}
+              role="tab"
+              aria-selected={activeGroup === group.key}
+              onClick={() => goToGroup(group.key)}
               className={`-mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium ${
-                tab === key
+                activeGroup === group.key
                   ? "border-canopy-500 text-canopy-700"
                   : "border-transparent text-slate-500 hover:text-slate-700"
               }`}
             >
-              <Icon name={TAB_ICONS[key]} size={15} />
-              {label}
+              <Icon name={group.icon} size={15} />
+              {group.label}
             </button>
           ))}
+        </div>
+        {activeSub.length > 0 && (
+          <div role="tablist" aria-label="Views" className="mt-2 flex flex-wrap gap-1">
+            {activeSub.map((t) => (
+              <button
+                key={t}
+                role="tab"
+                aria-selected={activeTab === t}
+                onClick={() => goToTab(t)}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium ${
+                  activeTab === t
+                    ? "bg-canopy-50 text-canopy-700"
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                }`}
+              >
+                <Icon name={TAB_ICONS[t]} size={14} />
+                {TAB_LABELS[t]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {tab === "gantt" && (
+      {activeGroup === "overview" && (
+        <ProjectOverview projectId={id} mayPlan={mayPlan} isOn={isOn} onOpenTab={goToTab} />
+      )}
+
+      {activeTab === "gantt" && (
         <>
           {gantt.data && gantt.data.tasks.length > 0 ? (
             <GanttChart data={gantt.data} onTaskClick={setSelectedTaskId} />
@@ -484,13 +435,13 @@ export default function ProjectView() {
         </>
       )}
 
-      {tab === "board" && (
+      {activeTab === "board" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading board…</p>}>
           <FlowBoard projectId={id} onTaskClick={setSelectedTaskId} />
         </Suspense>
       )}
 
-      {tab === "deps" &&
+      {activeTab === "deps" &&
         (gantt.data && gantt.data.tasks.length > 0 ? (
           <Suspense fallback={<p className="text-sm text-slate-500">Loading graph…</p>}>
             <DependencyGraph data={gantt.data} />
@@ -499,45 +450,45 @@ export default function ProjectView() {
           <p className="text-sm text-slate-500">No tasks to graph yet.</p>
         ))}
 
-      {tab === "specs" && (
+      {activeTab === "specs" && (
         <SpecsView projectId={id} mayPlan={mayPlan} mayContribute={mayContribute} />
       )}
 
-      {tab === "docs" && <DocsView scope="project" scopeId={id} mayWrite={mayPlan} />}
+      {activeTab === "docs" && <DocsView scope="project" scopeId={id} mayWrite={mayPlan} />}
 
-      {tab === "delivery" && <DeliveryView scope="project" id={id} />}
+      {activeTab === "delivery" && <DeliveryView scope="project" id={id} />}
 
-      {tab === "capacity" && <CapacityView projectId={id} />}
+      {activeTab === "capacity" && <CapacityView projectId={id} />}
 
-      {tab === "decisions" && (
+      {activeTab === "decisions" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading decisions…</p>}>
           <DecisionsView projectId={id} />
         </Suspense>
       )}
 
-      {tab === "architecture" && (
+      {activeTab === "architecture" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading architecture…</p>}>
           <ArchitectureView projectId={id} />
         </Suspense>
       )}
 
-      {tab === "drift" && (
+      {activeTab === "drift" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading drift…</p>}>
           <DriftView projectId={id} />
         </Suspense>
       )}
 
-      {tab === "roadmap" && <RoadmapView projectId={id} />}
+      {activeTab === "roadmap" && <RoadmapView projectId={id} />}
 
-      {tab === "drafts" && (
+      {activeTab === "drafts" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading drafts…</p>}>
           <DraftPlanView projectId={id} />
         </Suspense>
       )}
 
-      {tab === "jiralinks" && <JiraLinksPanel targetType="project" targetId={id} />}
+      {activeTab === "jiralinks" && <JiraLinksPanel targetType="project" targetId={id} />}
 
-      {tab === "burndown" &&
+      {activeTab === "burndown" &&
         (burndown.data ? (
           <Suspense fallback={<p className="text-sm text-slate-500">Loading chart…</p>}>
             <BurndownChart data={burndown.data} />
@@ -546,7 +497,7 @@ export default function ProjectView() {
           <p className="text-sm text-slate-500">Loading burndown…</p>
         ))}
 
-      {tab === "risk" && (
+      {activeTab === "risk" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading risk…</p>}>
           <div className="space-y-6">
             <RiskView projectId={id} />
@@ -555,19 +506,21 @@ export default function ProjectView() {
         </Suspense>
       )}
 
-      {tab === "retros" && (
+      {activeTab === "retros" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading retros…</p>}>
           <RetrosView projectId={id} />
         </Suspense>
       )}
 
-      {tab === "activity" && (
+      {activeTab === "activity" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading activity…</p>}>
           <ActivityView projectId={id} />
         </Suspense>
       )}
 
-      {mayPlan && (
+      {/* The plan-editing forms live with the schedule they edit (the Gantt view), not on every
+          workspace. Planner-only. */}
+      {mayPlan && activeTab === "gantt" && (
       <div className="grid grid-cols-2 gap-6">
         <form
           onSubmit={(e) => {

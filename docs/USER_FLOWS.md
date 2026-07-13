@@ -67,9 +67,10 @@ that navigates must follow them.
   **breadcrumbs** + a **back arrow** to the logical parent (derived from the breadcrumb trail):
   Projects → *Project*; Initiatives → *Initiative* (→ Scenarios → *Scenario*); My work → Today;
   Reviews → *Review*. Top-level list pages show title + subtitle only (no back/breadcrumbs).
-- **Iconized tabs:** the project cockpit (`ProjectView`) and the scenario workspace
-  (`ScenarioWorkspace`) prefix each tab with its SVG glyph; the project tab strip scrolls
-  horizontally rather than wrapping.
+- **Iconized tabs:** the project cockpit (`ProjectView`) uses a **two-level** icon nav — six domain
+  workspaces (primary) over the active group's views (secondary), replacing the old single
+  horizontal-scroll strip of 17 tabs (§B3). The scenario workspace (`ScenarioWorkspace`) still
+  prefixes each tab with its SVG glyph in one wrapping strip.
 
 ---
 
@@ -265,7 +266,8 @@ entire install — e.g. run canopy as "plan + Jira sync + Gantt only" by disabli
 - **UI:** `/admin/features` (admin only) — grouped toggles with descriptions. A child whose own
   toggle is on but whose **group** is off shows an "off via group" badge (its own choice is
   remembered). Gated surfaces vanish **live** everywhere: sidebar items (Initiatives / Decisions /
-  Connectors), ProjectView tabs (board/burndown/…), header buttons (Set baseline, Export), and
+  Connectors), ProjectView workspaces + their sub-views (a whole group collapses when all its
+  features are off, §B3), header buttons (Set baseline, Export), and
   panels (outcomes, blockers, task risk register) — every toggle publishes an SSE event (§K) that
   refetches the map, no reload or restart.
 - **Catalog (two levels, defaults all-on):** `planning` (whatif · baselines · scenarios ·
@@ -392,14 +394,42 @@ projects and rolls up their health.
   (§R) via `initiative_id`.
 
 ### B3. Open a project (the cockpit)
-- **UI:** `/projects/:id` — a tabbed workspace: **Gantt · Board · Specs · Dependencies · Capacity ·
-  Decisions · Docs · Architecture · Drift · Roadmap · Plan → Jira · Jira Links · Burndown ·
-  Delivery · Risk · Retros · Activity** (the **Specs** tab is §W, **Docs** is §V, **Delivery** is
-  §X, and the **Jira Links** tab links Jira tickets into the project — §J9).
-  The header has an **Export ▾** menu (PDF/CSV snapshot, §S), a **5-day week** toggle, **Set
-  baseline**, and **Schedule (CPM)** (the planning controls and the add-task/dependency forms are
-  hidden for roles that can't use them — §A3a). A tab can be deep-linked with `?tab=` (e.g.
-  `/projects/:id?tab=drift`).
+- **UI:** `/projects/:id` — a **two-level workspace** (the pure nav model is `lib/projectNav.ts`).
+  The default landing is the **Overview** (§B3a); the 17 detail views are grouped into **six
+  top-level workspaces** that mirror the backend feature domains, each with a secondary sub-nav:
+  - **Overview** — at-a-glance health + "needs attention" (§B3a)
+  - **Schedule** *(planning)* — **Gantt** · **Dependencies** · **Roadmap** (the add-task /
+    dependency forms live under Gantt, §C1/§C2)
+  - **Execution** *(tracking)* — **Board** · **Capacity** · **Delivery** (§X) · **Burndown** ·
+    **Activity**
+  - **Architecture** *(architecture)* — **Decisions** · **Architecture** (map) · **Drift**
+  - **Governance** *(governance)* — **Risk** · **Specs** (§W) · **Docs** (§V) · **Retros**
+  - **Integrations** *(integrations)* — **Plan → Jira** · **Jira Links** (§J9)
+
+  A whole workspace disappears when *every* one of its features is gated off (§A10); a group that
+  still has a core child (Schedule, Execution) always shows. The header has an **Export ▾** menu
+  (PDF/CSV snapshot, §S), a **5-day week** toggle, **Set baseline**, and **Schedule (CPM)** (the
+  planning controls are hidden for roles that can't use them — §A3a).
+- **Deep-linking / URL state:** the active view lives in the URL as `?tab=<leaf>` (leaf keys are
+  unchanged from the old flat tab bar, e.g. `/projects/:id?tab=drift`) and is **written on every
+  switch**, so a view is shareable and back/forward works. The parent workspace is derived from the
+  leaf, so every existing deep link (the preview drawer, the Drift Sentinel) keeps working and lands
+  in the right group; an absent / unknown / gated-off tab lands on the Overview.
+
+### B3a. Project Overview — the at-a-glance entry **[new]**
+- **UI:** the default project landing (`components/ProjectOverview.tsx`). It answers "is this
+  project on track, and what needs me?" in one screen, surfacing signals that used to be buried:
+  - a **"Needs attention"** exception list (green is silent) from `GET /projects/{id}/alerts` —
+    blocked tasks, deadline misses, overdue milestones, over-allocations, unscheduled work — each
+    row drilling into the workspace that owns it;
+  - a **stat grid** (progress, latest CPM end vs target, **forecast** P50/P85, computed **risk** and
+    **drift** score+level, open RAID risks) from `GET /projects/{id}/summary`, which reuses the same
+    `summarize_project` as the portfolio (§B1) so the numbers match everywhere — each tile drills
+    into its workspace;
+  - the **Outcomes** panel (§Y), relocated here so the measurable bet leads the entry rather than
+    sitting above every workspace.
+- **API:** `GET /api/v1/projects/{id}/summary` (per-project `ProjectSummary`, reuses the portfolio
+  rollup), `GET …/alerts`, `GET …/forecast`.
 
 ### B4. Edit / archive a project · toggle working week · status & tags
 - **UI:** the "5-day week" checkbox in the project header toggles weekend-aware scheduling. A

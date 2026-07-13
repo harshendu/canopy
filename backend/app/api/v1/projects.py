@@ -189,6 +189,69 @@ async def get_project(session: SessionDep, _: CurrentUser, project_id: int) -> P
     return project
 
 
+@router.get("/{project_id}/summary", response_model=ProjectSummary)
+async def project_summary(
+    session: SessionDep, _: CurrentUser, project_id: int
+) -> ProjectSummary:
+    """One project's portfolio summary (risk + drift + progress), computed the same way as the
+    portfolio rollup so the project cockpit's Overview matches the portfolio numbers exactly."""
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    assert project.id is not None
+    tasks = list(
+        (await session.execute(select(Task).where(Task.project_id == project.id))).scalars().all()
+    )
+    allocations = list(
+        (
+            await session.execute(select(Allocation).where(Allocation.project_id == project.id))
+        ).scalars().all()
+    )
+    adrs = list(
+        (
+            await session.execute(
+                select(ArchitectureDecision).where(ArchitectureDecision.project_id == project.id)
+            )
+        ).scalars().all()
+    )
+    drift_events = list(
+        (
+            await session.execute(select(DriftEvent).where(DriftEvent.project_id == project.id))
+        ).scalars().all()
+    )
+    activity_events = list(
+        (
+            await session.execute(
+                select(ActivityEvent).where(ActivityEvent.project_id == project.id)
+            )
+        ).scalars().all()
+    )
+    engineer_names = {
+        e.id: e.name
+        for e in (await session.execute(select(Engineer))).scalars().all()
+        if e.id is not None
+    }
+    availability = [
+        AvailabilitySpan(a.engineer_id, a.capacity_factor, a.start_date, a.end_date)
+        for a in (await session.execute(select(EngineerAvailability))).scalars().all()
+    ]
+    open_risks = open_project_risk_counts(
+        list((await session.execute(select(RiskItem))).scalars().all())
+    ).get(project.id, 0)
+    return summarize_project(
+        project,
+        tasks=tasks,
+        allocations=allocations,
+        engineer_names=engineer_names,
+        adrs=adrs,
+        drift_events=drift_events,
+        activity_events=activity_events,
+        today=date.today(),
+        availability=availability,
+        open_risks=open_risks,
+    )
+
+
 @router.patch("/{project_id}", response_model=ProjectRead)
 async def update_project(
     session: SessionDep, _: ArchitectWriter, project_id: int, payload: ProjectUpdate
