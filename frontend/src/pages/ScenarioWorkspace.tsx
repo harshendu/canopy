@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
@@ -9,6 +9,7 @@ import type {
   CapacityResponse,
   ForecastResponse,
   GanttResponse,
+  Initiative,
   InitiativeCriticalPath,
   Project,
   ScenarioDetail,
@@ -17,6 +18,8 @@ import CapacityHeatmap from "../components/CapacityHeatmap";
 import GanttChart from "../components/GanttChart";
 import ScenarioCompare from "../components/ScenarioCompare";
 import ScenarioEditor from "../components/ScenarioEditor";
+import { PageHeader } from "../components/PageHeader";
+import { Icon, type IconName } from "../components/icons";
 
 const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
@@ -46,6 +49,18 @@ const LABELS: Record<Tab, string> = {
   edit: "Edit",
   compare: "Compare to live",
 };
+const TAB_ICONS: Record<Tab, IconName> = {
+  gantt: "gantt",
+  deps: "deps",
+  capacity: "capacity",
+  criticalpath: "criticalpath",
+  board: "board",
+  burndown: "burndown",
+  forecast: "forecast",
+  alerts: "alerts",
+  edit: "edit",
+  compare: "compare",
+};
 
 function Loading() {
   return <p className="text-sm text-slate-400">Loading…</p>;
@@ -65,6 +80,12 @@ export default function ScenarioWorkspace() {
     queryKey: ["projects"],
     queryFn: () => api.get<Project[]>("/projects"),
   });
+  const { data: initiatives = [] } = useQuery({
+    queryKey: ["initiatives"],
+    queryFn: () => api.get<Initiative[]>("/initiatives"),
+  });
+  const initiativeName =
+    initiatives.find((i) => i.id === Number(initiativeId))?.name ?? "Initiative";
   const projects = (projectsQuery.data ?? []).filter(
     (p) => p.initiative_id === Number(initiativeId),
   );
@@ -75,18 +96,18 @@ export default function ScenarioWorkspace() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <Link
-            to={`/initiatives/${initiativeId}/scenarios`}
-            className="text-xs text-slate-400 hover:text-slate-600"
-          >
-            ← Scenarios
-          </Link>
-          <h1 className="text-2xl font-bold">{scenario.data?.title ?? "Scenario"}</h1>
-          {scenario.data && (
+      <PageHeader
+        breadcrumbs={[
+          { label: "Initiatives", to: "/initiatives" },
+          { label: initiativeName, to: `/initiatives/${initiativeId}` },
+          { label: "Scenarios", to: `/initiatives/${initiativeId}/scenarios` },
+          { label: scenario.data?.title ?? "Scenario" },
+        ]}
+        title={scenario.data?.title ?? "Scenario"}
+        titleAdornment={
+          scenario.data && (
             <span
-              className={`mt-1 inline-block rounded px-2 py-0.5 text-xs font-medium ${
+              className={`rounded px-2 py-0.5 text-xs font-medium ${
                 scenario.data.status === "applied"
                   ? "bg-canopy-100 text-canopy-700"
                   : "bg-slate-100 text-slate-600"
@@ -94,34 +115,37 @@ export default function ScenarioWorkspace() {
             >
               {scenario.data.status}
             </span>
-          )}
-        </div>
-        {showPicker && activeProject != null && (
-          <select
-            value={activeProject}
-            onChange={(e) => setProjectId(Number(e.target.value))}
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.key} · {p.name}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+          )
+        }
+        actions={
+          showPicker && activeProject != null ? (
+            <select
+              value={activeProject}
+              onChange={(e) => setProjectId(Number(e.target.value))}
+              className="rounded border border-slate-300 px-3 py-2 text-sm"
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.key} · {p.name}
+                </option>
+              ))}
+            </select>
+          ) : undefined
+        }
+      />
 
       <div className="flex flex-wrap gap-1 border-b border-slate-200">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`rounded-t px-3 py-2 text-sm font-medium ${
+            className={`flex items-center gap-1.5 rounded-t px-3 py-2 text-sm font-medium ${
               tab === t
                 ? "border-b-2 border-canopy-500 text-canopy-700"
                 : "text-slate-500 hover:text-slate-700"
             }`}
           >
+            <Icon name={TAB_ICONS[t]} size={15} />
             {LABELS[t]}
           </button>
         ))}

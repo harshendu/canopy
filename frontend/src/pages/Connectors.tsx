@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import type { Connection, Provider } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
+import { PageHeader } from "../components/PageHeader";
 
 const CONFIG_HINTS: Record<Provider, string> = {
   jira: '{"base_url":"https://you.atlassian.net","email":"you@co.com","project_id":1,"jira_project_key":"PLAT"}',
@@ -114,7 +115,7 @@ export default function Connectors() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Connectors</h1>
+      <PageHeader title="Connectors" />
 
       {justConnected && (
         <div className="rounded border border-canopy-500/30 bg-canopy-50 px-4 py-2 text-sm text-canopy-700">

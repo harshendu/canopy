@@ -7,6 +7,9 @@ import type { ADR, MyWorkspace as Workspace } from "../api/types";
 import { STATUS_LABELS } from "../lib/decisions";
 import { roleLabel } from "../lib/roles";
 import { functionLabel } from "../lib/persona";
+import { PageHeader } from "../components/PageHeader";
+import { PreviewLink } from "../components/PreviewLink";
+import { Icon } from "../components/icons";
 
 const adrLabel = (n: number) => `ADR-${String(n).padStart(4, "0")}`;
 
@@ -20,8 +23,8 @@ function DecisionList({ title, decisions }: { title: string; decisions: ADR[] })
         <ul className="space-y-1 text-sm">
           {decisions.map((a) => (
             <li key={a.id}>
-              <Link
-                to={`/projects/${a.project_id}?tab=decisions`}
+              <PreviewLink
+                target={{ kind: "project", id: a.project_id, tab: "decisions" }}
                 className="flex items-center gap-2 rounded px-2 py-1 hover:bg-slate-50"
               >
                 <span className="font-mono text-xs text-slate-400">{adrLabel(a.number)}</span>
@@ -29,7 +32,7 @@ function DecisionList({ title, decisions }: { title: string; decisions: ADR[] })
                 <span className="ml-auto shrink-0 text-xs text-slate-400">
                   {STATUS_LABELS[a.status]}
                 </span>
-              </Link>
+              </PreviewLink>
             </li>
           ))}
         </ul>
@@ -71,14 +74,19 @@ export default function MyWorkspace() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">{user.full_name || user.email}</h1>
-          <Link to="/me/today" className="text-sm text-canopy-700 hover:underline">
-            Today →
+      <PageHeader
+        title={user.full_name || user.email}
+        actions={
+          <Link
+            to="/me/today"
+            className="inline-flex items-center gap-1 rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+          >
+            Today
+            <Icon name="arrow-right" size={15} />
           </Link>
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+        }
+        subtitle={
+          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
           <span className="rounded bg-slate-100 px-2 py-0.5 text-xs">{roleLabel(user.role)}</span>
           <span className="rounded bg-canopy-50 px-2 py-0.5 text-xs text-canopy-700">
             {functionLabel(user.function)}
@@ -106,8 +114,9 @@ export default function MyWorkspace() {
               page so your assigned work shows up here.
             </span>
           )}
-        </div>
-      </div>
+          </div>
+        }
+      />
 
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="mb-2 font-semibold">My tasks</h2>
@@ -117,8 +126,8 @@ export default function MyWorkspace() {
           <ul className="space-y-1 text-sm">
             {assigned_tasks.map((t) => (
               <li key={t.id}>
-                <Link
-                  to={`/projects/${t.project_id}`}
+                <PreviewLink
+                  target={{ kind: "project", id: t.project_id }}
                   className="flex items-center gap-2 rounded px-2 py-1 hover:bg-slate-50"
                 >
                   {t.is_critical && (
@@ -130,7 +139,7 @@ export default function MyWorkspace() {
                   <span className="ml-auto shrink-0 text-xs text-slate-400">
                     {t.end ? `due ${t.end}` : "unscheduled"}
                   </span>
-                </Link>
+                </PreviewLink>
               </li>
             ))}
           </ul>

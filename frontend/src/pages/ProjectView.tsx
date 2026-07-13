@@ -26,6 +26,8 @@ import OutcomesPanel from "../components/OutcomesPanel";
 import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
 import TaskDetailPanel from "../components/TaskDetailPanel";
+import { PageHeader } from "../components/PageHeader";
+import { Icon, type IconName } from "../components/icons";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
 import { featureOn, useFeatures } from "../lib/useFeatures";
@@ -97,6 +99,26 @@ const TAB_FEATURES: Partial<Record<Tab, string>> = {
   delivery: "tracking.delivery",
   risk: "governance.risk",
   retros: "governance.retros",
+};
+
+const TAB_ICONS: Record<Tab, IconName> = {
+  gantt: "gantt",
+  board: "board",
+  specs: "specs",
+  deps: "deps",
+  capacity: "capacity",
+  decisions: "decisions",
+  docs: "docs",
+  architecture: "architecture",
+  drift: "drift",
+  roadmap: "roadmap",
+  drafts: "drafts",
+  jiralinks: "jiralinks",
+  burndown: "burndown",
+  delivery: "delivery",
+  risk: "risk",
+  retros: "retros",
+  activity: "activity",
 };
 
 export default function ProjectView() {
@@ -231,11 +253,14 @@ export default function ProjectView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">
-          {project.data ? project.data.name : "Project"}
-        </h1>
-        <div className="flex items-center gap-3">
+      <PageHeader
+        breadcrumbs={[
+          { label: "Projects", to: "/projects" },
+          { label: project.data ? project.data.name : "Project" },
+        ]}
+        title={project.data ? project.data.name : "Project"}
+        actions={
+          <>
           {featureOn(features, "reporting.exports") && <ExportMenu scope="project" id={id} />}
           {mayWriteProject && (
             <label className="flex items-center gap-1 text-sm text-slate-600">
@@ -296,8 +321,9 @@ export default function ProjectView() {
               </button>
             </>
           )}
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {pendingReviews > 0 && (
         <Link
@@ -349,7 +375,7 @@ export default function ProjectView() {
         </div>
       )}
 
-      <div className="flex gap-1 border-b border-slate-200">
+      <div className="flex gap-1 overflow-x-auto border-b border-slate-200">
         {([
           ["gantt", "Gantt"],
           ["board", "Board"],
@@ -374,12 +400,13 @@ export default function ProjectView() {
             <button
               key={key}
               onClick={() => setTab(key)}
-              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+              className={`-mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium ${
                 tab === key
                   ? "border-canopy-500 text-canopy-700"
                   : "border-transparent text-slate-500 hover:text-slate-700"
               }`}
             >
+              <Icon name={TAB_ICONS[key]} size={15} />
               {label}
             </button>
           ))}

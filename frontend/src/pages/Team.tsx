@@ -7,6 +7,7 @@ import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
 import AvailabilityEditor from "../components/AvailabilityEditor";
 import CapacityHeatmap from "../components/CapacityHeatmap";
+import { PageHeader } from "../components/PageHeader";
 
 export default function Team() {
   const qc = useQueryClient();
@@ -86,7 +87,10 @@ export default function Team() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Team</h1>
+      <PageHeader
+        title="Team"
+        subtitle="Engineers and their profiles — skills, committed capacity, time zones, and the accounts linked to them."
+      />
 
       {mayWrite && (
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">

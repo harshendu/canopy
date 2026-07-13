@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bar,
@@ -15,6 +14,8 @@ import type { PortfolioResponse } from "../api/types";
 import { riskTone } from "../lib/risk";
 import { healthTone } from "../lib/health";
 import ExportMenu from "../components/ExportMenu";
+import { PageHeader } from "../components/PageHeader";
+import { PreviewLink } from "../components/PreviewLink";
 
 export default function Portfolio() {
   const { data, isLoading } = useQuery({
@@ -26,10 +27,11 @@ export default function Portfolio() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Portfolio</h1>
-        <ExportMenu scope="portfolio" />
-      </div>
+      <PageHeader
+        title="Portfolio"
+        subtitle="Every project at a glance — completion, risk, and drift. Open one for the full cockpit."
+        actions={<ExportMenu scope="portfolio" />}
+      />
 
       {isLoading ? (
         <p className="text-sm text-slate-500">Loading…</p>
@@ -54,9 +56,9 @@ export default function Portfolio() {
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => (
-              <Link
+              <PreviewLink
                 key={p.id}
-                to={`/projects/${p.id}`}
+                target={{ kind: "project", id: p.id }}
                 className="block rounded-lg border border-slate-200 bg-white p-4 hover:border-canopy-500"
               >
                 <div className="flex items-center justify-between gap-2">
@@ -119,7 +121,7 @@ export default function Portfolio() {
                   </span>
                   <span>{p.project_end ? `ends ${p.project_end}` : "unscheduled"}</span>
                 </div>
-              </Link>
+              </PreviewLink>
             ))}
           </div>
         </>

@@ -15,6 +15,9 @@ import OutcomesPanel from "../components/OutcomesPanel";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
 import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
+import { PageHeader } from "../components/PageHeader";
+import { PreviewLink } from "../components/PreviewLink";
+import { Icon } from "../components/icons";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canWriteProjects, isPlanner } from "../lib/permissions";
 
@@ -60,48 +63,50 @@ export default function InitiativeView() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs text-slate-400">{r.initiative.key}</span>
-          <h1 className="text-2xl font-bold">{r.initiative.name}</h1>
-          {r.on_track != null && (
-            <span
-              className={`rounded px-2 py-0.5 text-xs font-medium ${
-                r.on_track
-                  ? "bg-canopy-100 text-canopy-700"
-                  : "bg-red-100 text-red-700"
-              }`}
+      <PageHeader
+        breadcrumbs={[
+          { label: "Initiatives", to: "/initiatives" },
+          { label: r.initiative.name },
+        ]}
+        title={r.initiative.name}
+        titleAdornment={
+          <>
+            <span className="font-mono text-xs text-slate-400">{r.initiative.key}</span>
+            {r.on_track != null && (
+              <span
+                className={`rounded px-2 py-0.5 text-xs font-medium ${
+                  r.on_track ? "bg-canopy-100 text-canopy-700" : "bg-red-100 text-red-700"
+                }`}
+              >
+                {r.on_track ? "on track" : "behind target"}
+              </span>
+            )}
+          </>
+        }
+        subtitle={r.initiative.outcome_statement || undefined}
+        actions={
+          <>
+            <Link
+              to={`/initiatives/${id}/scenarios`}
+              className="inline-flex items-center gap-1.5 rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
             >
-              {r.on_track ? "on track" : "behind target"}
-            </span>
-          )}
-        </div>
-        {r.initiative.outcome_statement && (
-          <p className="mt-1 text-sm text-slate-500">{r.initiative.outcome_statement}</p>
-        )}
-        <div className="mt-2">
-          <DeliveryMetaBar
-            scope="initiative"
-            id={id}
-            health={r.initiative.health}
-            statusNote={r.initiative.status_note}
-            tags={r.initiative.tags}
-            mayWrite={mayWriteInitiative}
-            onSaved={() => qc.invalidateQueries({ queryKey: ["initiative-rollup", id] })}
-          />
-        </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            to={`/initiatives/${id}/scenarios`}
-            className="rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
-          >
-            Scenarios
-          </Link>
-          <ExportMenu scope="initiative" id={id} />
-        </div>
-      </div>
+              <Icon name="scenarios" size={15} />
+              Scenarios
+            </Link>
+            <ExportMenu scope="initiative" id={id} />
+          </>
+        }
+      />
+
+      <DeliveryMetaBar
+        scope="initiative"
+        id={id}
+        health={r.initiative.health}
+        statusNote={r.initiative.status_note}
+        tags={r.initiative.tags}
+        mayWrite={mayWriteInitiative}
+        onSaved={() => qc.invalidateQueries({ queryKey: ["initiative-rollup", id] })}
+      />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <Stat
@@ -204,8 +209,8 @@ export default function InitiativeView() {
           <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {r.projects.map((p) => (
               <li key={p.id}>
-                <Link
-                  to={`/projects/${p.id}`}
+                <PreviewLink
+                  target={{ kind: "project", id: p.id }}
                   className="block rounded-lg border border-slate-200 bg-white p-4 hover:bg-slate-50"
                 >
                   <div className="flex items-center justify-between">
@@ -230,7 +235,7 @@ export default function InitiativeView() {
                     {p.avg_percent_complete}% · {p.completed_tasks}/{p.total_tasks} tasks ·{" "}
                     {p.critical_tasks} critical · {p.project_end ? `ends ${p.project_end}` : "unscheduled"}
                   </div>
-                </Link>
+                </PreviewLink>
               </li>
             ))}
           </ul>

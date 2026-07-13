@@ -18,8 +18,8 @@ function initials(label: string): string {
 
 /** Current user at the bottom of the left panel. For an admin (incl. the real admin behind an
  *  impersonation) it expands into a switcher over every account — switch to anyone, or back to
- *  yourself. */
-export default function UserSwitcher() {
+ *  yourself. In the collapsed rail it shrinks to an avatar with the menu flying out to the side. */
+export default function UserSwitcher({ collapsed = false }: { collapsed?: boolean }) {
   const { data: session } = useSession();
   const { impersonate } = useAuth();
   const [open, setOpen] = useState(false);
@@ -51,28 +51,37 @@ export default function UserSwitcher() {
   }
 
   return (
-    <div className="relative border-t border-slate-200 pt-3">
+    <div className="relative">
       <button
         type="button"
         onClick={() => canSwitch && setOpen((o) => !o)}
-        className={`flex w-full items-center gap-2 rounded px-2 py-2 text-left ${
-          canSwitch ? "hover:bg-slate-100" : "cursor-default"
-        }`}
+        title={collapsed ? `${label} · ${roleLabel(user.role)}` : undefined}
+        className={`flex w-full items-center rounded text-left ${
+          collapsed ? "justify-center py-1" : "gap-2 px-2 py-2"
+        } ${canSwitch ? "hover:bg-slate-100" : "cursor-default"}`}
         aria-haspopup={canSwitch ? "listbox" : undefined}
         aria-expanded={canSwitch ? open : undefined}
       >
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-canopy-100 text-xs font-semibold text-canopy-700">
           {initials(label)}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-slate-700">{label}</span>
-          <span className="block truncate text-xs text-slate-400">{roleLabel(user.role)}</span>
-        </span>
-        {canSwitch && <span className="text-slate-400">⇅</span>}
+        {!collapsed && (
+          <>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-slate-700">{label}</span>
+              <span className="block truncate text-xs text-slate-400">{roleLabel(user.role)}</span>
+            </span>
+            {canSwitch && <span className="text-slate-400">⇅</span>}
+          </>
+        )}
       </button>
 
       {open && canSwitch && (
-        <div className="absolute bottom-full left-0 z-20 mb-2 max-h-80 w-full overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+        <div
+          className={`absolute z-20 max-h-80 overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg ${
+            collapsed ? "bottom-0 left-full ml-2 w-56" : "bottom-full left-0 mb-2 w-full"
+          }`}
+        >
           <p className="px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
             Switch user
           </p>

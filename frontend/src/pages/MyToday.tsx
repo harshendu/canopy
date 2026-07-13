@@ -1,9 +1,10 @@
-import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { MyToday as Today } from "../api/types";
 import { STATUS_LABELS } from "../lib/decisions";
+import { PageHeader } from "../components/PageHeader";
+import { PreviewLink } from "../components/PreviewLink";
 
 const adrLabel = (n: number) => `ADR-${String(n).padStart(4, "0")}`;
 
@@ -19,15 +20,11 @@ export default function MyToday() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Today</h1>
-        <Link to="/me" className="text-sm text-canopy-700 hover:underline">
-          ← My work
-        </Link>
-      </div>
-      <p className="text-sm text-slate-500">
-        Your daily focus: the most-pressing assigned work, and the decisions to push on.
-      </p>
+      <PageHeader
+        title="Today"
+        breadcrumbs={[{ label: "My work", to: "/me" }, { label: "Today" }]}
+        subtitle="Your daily focus: the most-pressing assigned work, and the decisions to push on."
+      />
 
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="mb-2 font-semibold">Focus — critical or due soon</h2>
@@ -37,8 +34,8 @@ export default function MyToday() {
           <ul className="space-y-1 text-sm">
             {data.focus_tasks.map((t) => (
               <li key={t.id}>
-                <Link
-                  to={`/projects/${t.project_id}`}
+                <PreviewLink
+                  target={{ kind: "project", id: t.project_id }}
                   className="flex items-center gap-2 rounded px-2 py-1 hover:bg-slate-50"
                 >
                   {t.is_critical && (
@@ -50,7 +47,7 @@ export default function MyToday() {
                   <span className="ml-auto shrink-0 text-xs text-slate-400">
                     {t.end ? `due ${t.end}` : "unscheduled"}
                   </span>
-                </Link>
+                </PreviewLink>
               </li>
             ))}
           </ul>
@@ -65,8 +62,8 @@ export default function MyToday() {
           <ul className="space-y-1 text-sm">
             {data.decisions_to_push.map((a) => (
               <li key={a.id}>
-                <Link
-                  to={`/projects/${a.project_id}?tab=decisions`}
+                <PreviewLink
+                  target={{ kind: "project", id: a.project_id, tab: "decisions" }}
                   className="flex items-center gap-2 rounded px-2 py-1 hover:bg-slate-50"
                 >
                   <span className="font-mono text-xs text-slate-400">{adrLabel(a.number)}</span>
@@ -74,7 +71,7 @@ export default function MyToday() {
                   <span className="ml-auto shrink-0 text-xs text-slate-400">
                     {STATUS_LABELS[a.status]}
                   </span>
-                </Link>
+                </PreviewLink>
               </li>
             ))}
           </ul>

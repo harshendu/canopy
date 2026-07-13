@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
@@ -10,6 +9,8 @@ import type {
   Reversibility,
 } from "../api/types";
 import { groupQueue } from "../lib/decisions";
+import { PageHeader } from "../components/PageHeader";
+import { PreviewLink } from "../components/PreviewLink";
 
 const adrLabel = (n: number) => `ADR-${String(n).padStart(4, "0")}`;
 
@@ -35,11 +36,10 @@ export default function Decisions() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Decisions</h1>
-      <p className="text-sm text-slate-500">
-        The team-wide decision queue — proposals awaiting triage, decisions stuck in
-        discussion, and deferred decisions coming due, across every project.
-      </p>
+      <PageHeader
+        title="Decisions"
+        subtitle="The team-wide decision queue — proposals awaiting triage, decisions stuck in discussion, and deferred decisions coming due, across every project."
+      />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
@@ -57,8 +57,8 @@ export default function Decisions() {
                   <ul className="space-y-1">
                     {g.items.map((it) => (
                       <li key={it.id}>
-                        <Link
-                          to={`/projects/${it.project_id}?tab=decisions`}
+                        <PreviewLink
+                          target={{ kind: "project", id: it.project_id, tab: "decisions" }}
                           className="flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-slate-50"
                         >
                           {it.overdue && (
@@ -76,7 +76,7 @@ export default function Decisions() {
                           <span className="ml-auto shrink-0 text-xs text-slate-400">
                             {it.reason}
                           </span>
-                        </Link>
+                        </PreviewLink>
                       </li>
                     ))}
                   </ul>

@@ -7,6 +7,7 @@ import type {
   ReadStrategy,
   WriteStrategy,
 } from "../api/types";
+import { PageHeader } from "../components/PageHeader";
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   jira: "Jira",
@@ -41,20 +42,22 @@ export default function AdminIntegrations() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Integrations</h1>
-        <p className="mt-1 max-w-3xl text-sm text-slate-500">
-          Choose, per provider, how canopy moves data — this governs every role.{" "}
-          <strong>Reads:</strong> <code>direct</code> polls with canopy's credentials;{" "}
-          <code>mcp</code> stands the poll/webhooks down and waits for Claude to ingest;{" "}
-          <code>file</code> loads from an upload or watched folder. <strong>Writes:</strong>{" "}
-          <code>direct</code> writes with canopy's credentials; <code>mcp</code> disables the
-          in-app push/export (Claude does the write); <code>disabled</code> blocks writes. Choosing{" "}
-          <code>mcp</code>/<code>disabled</code> writes will disable push-to-Jira and
-          export-to-Drive for users. <strong>Per-user SSO</strong> lets each contributor connect
-          their own account so canopy acts as them. Defaults are direct/direct, SSO off.
-        </p>
-      </div>
+      <PageHeader
+        title="Integrations"
+        subtitle={
+          <span className="block max-w-3xl">
+            Choose, per provider, how canopy moves data — this governs every role.{" "}
+            <strong>Reads:</strong> <code>direct</code> polls with canopy's credentials;{" "}
+            <code>mcp</code> stands the poll/webhooks down and waits for Claude to ingest;{" "}
+            <code>file</code> loads from an upload or watched folder. <strong>Writes:</strong>{" "}
+            <code>direct</code> writes with canopy's credentials; <code>mcp</code> disables the
+            in-app push/export (Claude does the write); <code>disabled</code> blocks writes.
+            Choosing <code>mcp</code>/<code>disabled</code> writes will disable push-to-Jira and
+            export-to-Drive for users. <strong>Per-user SSO</strong> lets each contributor connect
+            their own account so canopy acts as them. Defaults are direct/direct, SSO off.
+          </span>
+        }
+      />
 
       <div className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
         {(settings.data ?? []).map((s) => (

@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { User, UserFunction, UserRole } from "../api/types";
 import { functionLabel } from "../lib/persona";
 import { ASSIGNABLE_ROLES, roleLabel } from "../lib/roles";
+import { PageHeader } from "../components/PageHeader";
 
 const FUNCTIONS: UserFunction[] = [
   "engineering",
@@ -121,13 +122,10 @@ export default function AdminUsers() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Users</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Provision accounts with a temporary password, set their access role (gates writes)
-          and function (sets their landing page), reset passwords, and deactivate leavers.
-        </p>
-      </div>
+      <PageHeader
+        title="Users"
+        subtitle="Provision accounts with a temporary password, set their access role (gates writes) and function (sets their landing page), reset passwords, and deactivate leavers."
+      />
 
       <form
         onSubmit={(e) => {
