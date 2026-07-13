@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
@@ -19,48 +19,20 @@ import GanttChart from "../components/GanttChart";
 import ScenarioCompare from "../components/ScenarioCompare";
 import ScenarioEditor from "../components/ScenarioEditor";
 import { PageHeader } from "../components/PageHeader";
-import { Icon, type IconName } from "../components/icons";
+import { Icon } from "../components/icons";
+import {
+  SCENARIO_GROUPS,
+  SCENARIO_NEEDS_PROJECT,
+  SCENARIO_VIEW_ICONS,
+  SCENARIO_VIEW_LABELS,
+  defaultScenarioView,
+  resolveScenarioView,
+  type ScenarioGroupKey,
+  type ScenarioView,
+} from "../lib/scenarioNav";
 
 const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
-
-const TABS = [
-  "gantt",
-  "deps",
-  "capacity",
-  "criticalpath",
-  "board",
-  "burndown",
-  "forecast",
-  "alerts",
-  "edit",
-  "compare",
-] as const;
-type Tab = (typeof TABS)[number];
-const LABELS: Record<Tab, string> = {
-  gantt: "Gantt",
-  deps: "Dependencies",
-  capacity: "Capacity",
-  criticalpath: "Critical path",
-  board: "Board",
-  burndown: "Burndown",
-  forecast: "Forecast",
-  alerts: "Alerts",
-  edit: "Edit",
-  compare: "Compare to live",
-};
-const TAB_ICONS: Record<Tab, IconName> = {
-  gantt: "gantt",
-  deps: "deps",
-  capacity: "capacity",
-  criticalpath: "criticalpath",
-  board: "board",
-  burndown: "burndown",
-  forecast: "forecast",
-  alerts: "alerts",
-  edit: "edit",
-  compare: "compare",
-};
 
 function Loading() {
   return <p className="text-sm text-slate-400">Loading…</p>;
@@ -69,8 +41,12 @@ function Loading() {
 export default function ScenarioWorkspace() {
   const { initiativeId, scenarioId } = useParams();
   const sid = Number(scenarioId);
-  const [tab, setTab] = useState<Tab>("compare");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { group: activeGroup, view } = resolveScenarioView(searchParams.get("tab"));
   const [projectId, setProjectId] = useState<number | null>(null);
+
+  const goToView = (v: ScenarioView) => setSearchParams({ tab: v }, { replace: true });
+  const goToGroup = (key: ScenarioGroupKey) => goToView(defaultScenarioView(key));
 
   const scenario = useQuery({
     queryKey: ["scenario", sid],
@@ -91,8 +67,8 @@ export default function ScenarioWorkspace() {
   );
   const activeProject = projectId ?? projects[0]?.id ?? null;
 
-  const needsProject: Tab[] = ["gantt", "deps", "board", "burndown", "alerts"];
-  const showPicker = needsProject.includes(tab) && projects.length > 0;
+  const activeSub = SCENARIO_GROUPS.find((g) => g.key === activeGroup)?.tabs ?? [];
+  const showPicker = SCENARIO_NEEDS_PROJECT.includes(view) && projects.length > 0;
 
   return (
     <div className="space-y-4">
@@ -134,28 +110,58 @@ export default function ScenarioWorkspace() {
         }
       />
 
-      <div className="flex flex-wrap gap-1 border-b border-slate-200">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex items-center gap-1.5 rounded-t px-3 py-2 text-sm font-medium ${
-              tab === t
-                ? "border-b-2 border-canopy-500 text-canopy-700"
-                : "text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            <Icon name={TAB_ICONS[t]} size={15} />
-            {LABELS[t]}
-          </button>
-        ))}
+      {/* Two-level nav: scenario workspaces (primary) + the active group's views (secondary),
+          matching the project cockpit (§B3). */}
+      <div>
+        <div
+          role="tablist"
+          aria-label="Scenario workspaces"
+          className="flex gap-1 overflow-x-auto border-b border-slate-200"
+        >
+          {SCENARIO_GROUPS.map((g) => (
+            <button
+              key={g.key}
+              role="tab"
+              aria-selected={activeGroup === g.key}
+              onClick={() => goToGroup(g.key)}
+              className={`-mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium ${
+                activeGroup === g.key
+                  ? "border-canopy-500 text-canopy-700"
+                  : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              <Icon name={g.icon} size={15} />
+              {g.label}
+            </button>
+          ))}
+        </div>
+        {activeSub.length > 0 && (
+          <div role="tablist" aria-label="Views" className="mt-2 flex flex-wrap gap-1">
+            {activeSub.map((v) => (
+              <button
+                key={v}
+                role="tab"
+                aria-selected={view === v}
+                onClick={() => goToView(v)}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium ${
+                  view === v
+                    ? "bg-canopy-50 text-canopy-700"
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                }`}
+              >
+                <Icon name={SCENARIO_VIEW_ICONS[v]} size={14} />
+                {SCENARIO_VIEW_LABELS[v]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div>
-        {tab === "compare" && (
+        {view === "compare" && (
           <ScenarioCompare scenarioId={sid} status={scenario.data?.status ?? "draft"} />
         )}
-        {tab === "edit" && activeProject != null && (
+        {view === "edit" && activeProject != null && (
           <ScenarioEditor
             scenarioId={sid}
             projects={projects}
@@ -163,25 +169,25 @@ export default function ScenarioWorkspace() {
             onProjectChange={setProjectId}
           />
         )}
-        {tab === "criticalpath" && <CriticalPathPanel scenarioId={sid} />}
-        {tab === "capacity" && <CapacityPanel scenarioId={sid} />}
-        {tab === "forecast" && <ForecastPanel scenarioId={sid} />}
-        {tab === "gantt" && activeProject != null && (
+        {view === "criticalpath" && <CriticalPathPanel scenarioId={sid} />}
+        {view === "capacity" && <CapacityPanel scenarioId={sid} />}
+        {view === "forecast" && <ForecastPanel scenarioId={sid} />}
+        {view === "gantt" && activeProject != null && (
           <GanttPanel scenarioId={sid} projectId={activeProject} />
         )}
-        {tab === "deps" && activeProject != null && (
+        {view === "deps" && activeProject != null && (
           <DepsPanel scenarioId={sid} projectId={activeProject} />
         )}
-        {tab === "board" && activeProject != null && (
+        {view === "board" && activeProject != null && (
           <BoardPanel scenarioId={sid} projectId={activeProject} />
         )}
-        {tab === "burndown" && activeProject != null && (
+        {view === "burndown" && activeProject != null && (
           <BurndownPanel scenarioId={sid} projectId={activeProject} />
         )}
-        {tab === "alerts" && activeProject != null && (
+        {view === "alerts" && activeProject != null && (
           <AlertsPanel scenarioId={sid} projectId={activeProject} />
         )}
-        {needsProject.includes(tab) && projects.length === 0 && (
+        {SCENARIO_NEEDS_PROJECT.includes(view) && projects.length === 0 && (
           <p className="text-sm text-slate-500">This initiative has no projects.</p>
         )}
       </div>
