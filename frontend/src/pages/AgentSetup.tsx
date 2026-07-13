@@ -1,33 +1,69 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { AgentToken, AgentTokenInfo } from "../api/types";
+import type { AgentToken, AgentTokenInfo, SetupMeta } from "../api/types";
 import { featureOn, useFeatures } from "../lib/useFeatures";
 import {
   EXPIRY_OPTIONS,
   TOKEN_PLACEHOLDER,
+  cloneSnippet,
   expiryPhrase,
   formatDate,
   mcpJsonSnippet,
+  mcpServerDisplayPath,
   statusChipClass,
 } from "../lib/agentSetup";
 import { PageHeader } from "../components/PageHeader";
 
-/** Copy-to-clipboard button with a brief "Copied" confirmation. */
+/** Best-effort clipboard write that works off HTTPS too. Returns whether it actually copied.
+ *  `navigator.clipboard` is undefined on insecure/non-localhost origins, so we fall back to a
+ *  hidden-textarea `execCommand("copy")`. Either path can still fail — the caller must not claim
+ *  success blindly (BUG-13: the agent token is shown once, so a false "Copied" loses the secret). */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Copy-to-clipboard button that reflects the *real* result — "Copied" only on success, and a
+ *  "Copy failed — select & ⌘C" hint when the write is refused, so a one-time secret is never lost. */
 function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState<"idle" | "ok" | "fail">("idle");
   return (
     <button
       type="button"
-      onClick={() => {
-        void navigator.clipboard?.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
+      onClick={async () => {
+        const ok = await copyToClipboard(text);
+        setState(ok ? "ok" : "fail");
+        setTimeout(() => setState("idle"), ok ? 1500 : 4000);
       }}
-      className="shrink-0 rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+      className={`shrink-0 rounded border px-2 py-1 text-xs font-medium ${
+        state === "fail"
+          ? "border-red-300 bg-red-50 text-red-700"
+          : "border-slate-300 text-slate-600 hover:bg-slate-50"
+      }`}
     >
-      {copied ? "Copied" : label}
+      {state === "ok" ? "Copied" : state === "fail" ? "Copy failed — select & ⌘C" : label}
     </button>
   );
 }
@@ -62,6 +98,18 @@ export default function AgentSetup() {
     queryFn: () => api.get<AgentTokenInfo[]>("/auth/agent-tokens"),
   });
 
+  // Deployment-configured repo/marketplace refs so the snippets point at THIS install's repo
+  // (a fork overrides them via env — §GET /meta), not a hardcoded upstream. Sensible upstream
+  // defaults keep the page usable while the request is in flight.
+  const meta = useQuery({
+    queryKey: ["setup-meta"],
+    queryFn: () => api.get<SetupMeta>("/meta"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const marketplaceRef = meta.data?.plugin_marketplace_ref ?? "harshendu/canopy";
+  const repoUrl = meta.data?.plugin_repo_url ?? "https://github.com/harshendu/canopy.git";
+  const serverPathInRepo = meta.data?.plugin_mcp_server_path ?? "plugin/mcp_server/server.py";
+
   const generate = useMutation({
     mutationFn: () =>
       api.post<AgentToken>("/auth/agent-token", {
@@ -86,7 +134,7 @@ export default function AgentSetup() {
   const now = Date.now();
   const apiBaseUrl = window.location.origin;
   const activeToken = justMinted?.access_token ?? TOKEN_PLACEHOLDER;
-  const serverPath = "/path/to/canopy/plugin/mcp_server/server.py";
+  const serverPath = mcpServerDisplayPath(repoUrl, serverPathInRepo);
 
   return (
     <div className="max-w-3xl space-y-8">
@@ -102,6 +150,14 @@ export default function AgentSetup() {
           </>
         }
       />
+
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-600">
+        This connects <strong>Claude Code</strong> to canopy. To connect canopy's{" "}
+        <strong>data sources</strong> — Jira, GitHub, Drive — head to{" "}
+        <Link to="/connectors" className="font-medium text-canopy-700 hover:underline">
+          Connectors →
+        </Link>
+      </div>
 
       {/* --- Token management --- */}
       <section className="space-y-4">
@@ -264,7 +320,7 @@ export default function AgentSetup() {
               <p className="mb-1 text-slate-500">
                 In Claude Code, run this slash command (use your own repository if you forked it):
               </p>
-              <CodeBlock code="/plugin marketplace add harshendu/canopy" />
+              <CodeBlock code={`/plugin marketplace add ${marketplaceRef}`} />
             </li>
             <li>
               <p className="font-medium">2. Install the plugin</p>
@@ -295,14 +351,7 @@ export default function AgentSetup() {
               <p className="mb-1 text-slate-500">
                 The server ships in the canopy repo. Clone it and install its Python deps:
               </p>
-              <CodeBlock
-                code={
-                  "git clone https://github.com/harshendu/canopy.git\n" +
-                  "cd canopy/plugin\n" +
-                  "python -m venv .venv && . .venv/bin/activate\n" +
-                  "pip install -r mcp_server/requirements.txt"
-                }
-              />
+              <CodeBlock code={cloneSnippet(repoUrl)} />
             </li>
             <li>
               <p className="font-medium">2. Register the server with Claude Code</p>

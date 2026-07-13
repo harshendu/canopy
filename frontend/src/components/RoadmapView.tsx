@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Milestone } from "../api/types";
 import { horizon, type Horizon } from "../lib/horizon";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { isPlanner } from "../lib/permissions";
 
 const COLUMNS: { key: Horizon; label: string; hint: string }[] = [
   { key: "now", label: "Now", hint: "≤ 30 days / overdue" },
@@ -13,6 +15,8 @@ const COLUMNS: { key: Horizon; label: string; hint: string }[] = [
 
 export default function RoadmapView({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
+  const { data: me } = useCurrentUser();
+  const mayWrite = isPlanner(me?.role); // milestone writes are planner-gated (§A3a)
   const [name, setName] = useState("");
   const [targetDate, setTargetDate] = useState("");
 
@@ -38,6 +42,7 @@ export default function RoadmapView({ projectId }: { projectId: number }) {
 
   return (
     <div className="space-y-4">
+      {mayWrite && (
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -61,6 +66,7 @@ export default function RoadmapView({ projectId }: { projectId: number }) {
           Add milestone
         </button>
       </form>
+      )}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {COLUMNS.map((col) => {

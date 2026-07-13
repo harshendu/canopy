@@ -4,9 +4,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { CapacityResponse, Engineer } from "../api/types";
 import CapacityHeatmap from "./CapacityHeatmap";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { isPlanner } from "../lib/permissions";
 
 export default function CapacityView({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
+  const { data: me } = useCurrentUser();
+  const mayWrite = isPlanner(me?.role); // capacity writes are planner-gated (§A3a)
   const [engineerId, setEngineerId] = useState<number | "">("");
   const [percent, setPercent] = useState(100);
   const [start, setStart] = useState("");
@@ -38,6 +42,7 @@ export default function CapacityView({ projectId }: { projectId: number }) {
 
   return (
     <div className="space-y-4">
+      {mayWrite && (
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -86,6 +91,7 @@ export default function CapacityView({ projectId }: { projectId: number }) {
           Add
         </button>
       </form>
+      )}
 
       {capacity.data ? (
         <CapacityHeatmap data={capacity.data} />

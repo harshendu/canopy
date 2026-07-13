@@ -83,9 +83,10 @@ async def _delivery(
     for t in leaves:
         assert t.id is not None
         rows = by_task.get(t.id, [])
+        # Last update, not created_at, when there's no matching status-history row (see gantt.py).
         entered = max(
             (h.changed_at.date() for h in rows if h.to_status == t.status),
-            default=t.created_at.date(),
+            default=t.updated_at.date(),
         )
         done_dates = [h.changed_at.date() for h in rows if is_done_status(h.to_status)]
         cycle_days = max(0, (max(done_dates) - t.created_at.date()).days) if done_dates else None

@@ -53,6 +53,24 @@ export default function ScenarioCompare({
   const stale = conflicts.length > 0;
   const isApplied = status === "applied" || applied?.status === "applied";
 
+  // Pre-flight confirm before the all-or-nothing, partly-DESTRUCTIVE apply — the removed counts are
+  // the scary part (they delete live rows), so state them explicitly rather than committing on faith.
+  const confirmApply = (force: boolean) => {
+    const removed = diff.tasks_removed + diff.deps_removed;
+    const lines = [
+      "Apply this scenario to the live plan?",
+      "",
+      `• create ${diff.tasks_added} task(s), ${diff.deps_added} dependency(ies)`,
+      `• update ${diff.tasks_changed} task(s), ${diff.milestones_changed} milestone(s), ${diff.allocations_changed} allocation(s)`,
+      removed > 0
+        ? `• DELETE ${diff.tasks_removed} live task(s) and ${diff.deps_removed} dependency(ies)`
+        : "• delete nothing",
+      "",
+      "Affected projects are re-planned. This can't be undone.",
+    ];
+    if (window.confirm(lines.join("\n"))) apply.mutate(force);
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -128,7 +146,7 @@ export default function ScenarioCompare({
         mayPlan && (
           <div className="flex items-center gap-2">
             <button
-              onClick={() => apply.mutate(false)}
+              onClick={() => confirmApply(false)}
               disabled={apply.isPending}
               className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
@@ -136,7 +154,7 @@ export default function ScenarioCompare({
             </button>
             {stale && (
               <button
-                onClick={() => apply.mutate(true)}
+                onClick={() => confirmApply(true)}
                 disabled={apply.isPending}
                 className="rounded border border-red-300 px-4 py-2 text-sm font-medium text-red-600 disabled:opacity-50"
               >

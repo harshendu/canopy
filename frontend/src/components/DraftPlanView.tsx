@@ -213,6 +213,23 @@ function DraftPlanDetailPanel({
   const tasks = detail.data.tasks;
   const summaries = tasks.filter((t) => t.type === "summary");
 
+  // Pre-flight before the outbound Jira write (the one place canopy writes *to* Jira). A task
+  // already stamped with a jira_key updates; the rest create. State the split before the
+  // irreversible external write instead of only reporting it after (§C10.3 diff-preview gap).
+  const confirmPush = () => {
+    const updates = tasks.filter((t) => t.jira_key).length;
+    const creates = tasks.length - updates;
+    const msg = [
+      `Push "${detail.data!.title}" to Jira?`,
+      "",
+      `• create ${creates} new ticket(s)`,
+      `• update ${updates} existing ticket(s)`,
+      "",
+      "This writes to Jira directly. Status is never written; new issues sync back as tasks.",
+    ].join("\n");
+    if (window.confirm(msg)) push.mutate();
+  };
+
   return (
     <div className="mt-1 space-y-3 rounded-lg border border-canopy-200 bg-white p-3 text-sm">
       {detail.data.description && <p className="text-slate-600">{detail.data.description}</p>}
@@ -331,7 +348,7 @@ function DraftPlanDetailPanel({
               </select>
             )}
             <button
-              onClick={() => push.mutate()}
+              onClick={confirmPush}
               disabled={!canPush || push.isPending}
               className="rounded bg-canopy-700 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
             >

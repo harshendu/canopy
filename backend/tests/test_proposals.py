@@ -413,3 +413,112 @@ async def test_initiative_scoped_proposal_spans_projects(client, db_session) -> 
         )
     ).json()
     assert outcomes and outcomes[0]["statement"].startswith("Checkout latency")
+
+
+@pytest.mark.asyncio
+async def test_audit_preserving_field_override(client, db_session) -> None:
+    """T17: a reviewer can edit one proposed field inline instead of rejecting the whole
+    proposal. The override is layered over the agent's payload at apply time; the payload
+    itself is preserved as the audit record, and the override is stamped who/when."""
+    await _seed_admin(db_session)
+    full = await _login(client)
+    project_id = await _project(client, full)
+
+    staged = await client.post(
+        "/api/v1/proposals",
+        json={
+            "scope_level": "project",
+            "scope_id": project_id,
+            "title": "Add a task",
+            "items": [
+                {
+                    "entity_type": "task",
+                    "action": "create",
+                    "payload": {"name": "Load test", "duration": 5},
+                }
+            ],
+        },
+        headers=full,
+    )
+    pid = staged.json()["id"]
+    item_id = staged.json()["items"][0]["id"]
+
+    # Override the duration inline (agent proposed 5 → reviewer wants 12).
+    patched = await client.patch(
+        f"/api/v1/proposals/{pid}/items/{item_id}",
+        json={"overrides": {"duration": 12}},
+        headers=full,
+    )
+    assert patched.status_code == 200, patched.text
+
+    detail = (await client.get(f"/api/v1/proposals/{pid}", headers=full)).json()
+    item = detail["items"][0]
+    assert item["payload"]["duration"] == 5  # agent's original preserved (audit)
+    assert item["overrides"]["duration"] == 12  # reviewer's edit kept separate
+    assert item["overridden_by"]  # stamped with a resolved name
+    assert item["overridden_at"]
+
+    # Apply: the OVERRIDDEN value wins over the agent's proposal.
+    applied = await client.post(f"/api/v1/proposals/{pid}/apply", headers=full)
+    assert applied.status_code == 200, applied.text
+    tasks = (
+        await client.get(f"/api/v1/tasks?project_id={project_id}", headers=full)
+    ).json()
+    load_test = next(t for t in tasks if t["name"] == "Load test")
+    assert load_test["duration"] == 12
+
+
+@pytest.mark.asyncio
+async def test_override_rejects_bad_fields_and_can_be_cleared(client, db_session) -> None:
+    await _seed_admin(db_session)
+    full = await _login(client)
+    project_id = await _project(client, full)
+    staged = await client.post(
+        "/api/v1/proposals",
+        json={
+            "scope_level": "project",
+            "scope_id": project_id,
+            "title": "Add a task",
+            "items": [
+                {
+                    "entity_type": "task",
+                    "action": "create",
+                    "payload": {"name": "Load test", "duration": 5},
+                }
+            ],
+        },
+        headers=full,
+    )
+    pid = staged.json()["id"]
+    item_id = staged.json()["items"][0]["id"]
+
+    async def override(body: dict) -> object:
+        return await client.patch(
+            f"/api/v1/proposals/{pid}/items/{item_id}", json={"overrides": body}, headers=full
+        )
+
+    # A field the proposal doesn't set can't be introduced via override.
+    assert (await override({"assignee_engineer_id": 1})).status_code == 400
+    # A bad value for a real field is rejected at edit time (not deferred to apply).
+    bad = await override({"duration": "lots"})
+    assert bad.status_code == 400
+    assert bad.json()["detail"]["code"] == "invalid_override"
+
+    # Set then clear reverts to the agent's value + wipes the audit stamps.
+    assert (await override({"duration": 9})).status_code == 200
+    cleared = await client.patch(
+        f"/api/v1/proposals/{pid}/items/{item_id}", json={"overrides": {}}, headers=full
+    )
+    assert cleared.status_code == 200
+    item = (await client.get(f"/api/v1/proposals/{pid}", headers=full)).json()["items"][0]
+    assert item["overrides"] is None
+    assert item["overridden_by"] is None
+
+    # Excluding still works alongside the override field (both optional in the patch).
+    assert (
+        await client.patch(
+            f"/api/v1/proposals/{pid}/items/{item_id}", json={"excluded": True}, headers=full
+        )
+    ).status_code == 200
+    item = (await client.get(f"/api/v1/proposals/{pid}", headers=full)).json()["items"][0]
+    assert item["excluded"] is True

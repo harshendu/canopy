@@ -78,6 +78,14 @@ export default function GanttChart({
 }) {
   const [dayW, setDayW] = useState(DEFAULT_DAY_W);
   const [ownerFilter, setOwnerFilter] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const toggleCollapse = (id: number) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const owners = useMemo(() => {
     const seen = new Map<number, string>();
     for (const t of data.tasks) {
@@ -87,9 +95,25 @@ export default function GanttChart({
     }
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [data]);
-  const { geoms, width, height, gridDays, minDay } = useMemo(() => {
+  const { geoms, width, height, gridDays, minDay, spanDays, hasChildren } = useMemo(() => {
     const visible = visibleTaskIds(data.tasks, ownerFilter);
-    const tasks = data.tasks.filter((t) => visible.has(t.id));
+    const ownerTasks = data.tasks.filter((t) => visible.has(t.id));
+    const ownerById = new Map(ownerTasks.map((t) => [t.id, t]));
+    // Which summary tasks have children (get a collapse chevron); and hide descendants of any
+    // collapsed summary so a large WBS is navigable.
+    const hasChildren = new Set<number>();
+    for (const t of ownerTasks) if (t.parent != null) hasChildren.add(t.parent);
+    const hiddenByCollapse = (t: GanttTask): boolean => {
+      let cur = t.parent != null ? ownerById.get(t.parent) : undefined;
+      const seen = new Set<number>([t.id]);
+      while (cur && !seen.has(cur.id)) {
+        if (collapsed.has(cur.id)) return true;
+        seen.add(cur.id);
+        cur = cur.parent != null ? ownerById.get(cur.parent) : undefined;
+      }
+      return false;
+    };
+    const tasks = ownerTasks.filter((t) => !hiddenByCollapse(t));
     const byId = new Map(tasks.map((t) => [t.id, t]));
     const depthOf = (t: GanttTask): number => {
       let depth = 0;
@@ -129,11 +153,20 @@ export default function GanttChart({
     return {
       geoms,
       minDay: min,
+      spanDays: span,
+      hasChildren,
       gridDays: Array.from({ length: span }, (_, i) => min + i).filter((_, i) => i % 7 === 0),
       width: LABEL_W + span * dayW + 20,
       height: HEADER_H + tasks.length * ROW_H + 10,
     };
-  }, [data, dayW, ownerFilter]);
+  }, [data, dayW, ownerFilter, collapsed]);
+
+  // "Today" marker — only drawn when it falls within the charted window.
+  const todayIndex = Math.floor(Date.now() / 86_400_000);
+  const todayX =
+    todayIndex >= minDay && todayIndex < minDay + spanDays
+      ? LABEL_W + (todayIndex - minDay) * dayW
+      : null;
 
   const geomById = new Map(geoms.map((g) => [g.task.id, g]));
 
@@ -194,6 +227,24 @@ export default function GanttChart({
         })}
         <line x1={LABEL_W} y1={0} x2={LABEL_W} y2={height} className="stroke-slate-200" />
 
+        {/* "today" marker */}
+        {todayX !== null && (
+          <g>
+            <line
+              x1={todayX}
+              y1={HEADER_H}
+              x2={todayX}
+              y2={height}
+              className="stroke-sky-400"
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+            />
+            <text x={todayX + 3} y={HEADER_H - 4} className="fill-sky-500 text-[10px]">
+              today
+            </text>
+          </g>
+        )}
+
         {/* dependency links */}
         {data.links.map((link) => {
           const from = geomById.get(link.source);
@@ -231,6 +282,15 @@ export default function GanttChart({
             g.task.end_date != null &&
             g.task.deadline != null &&
             g.task.end_date > g.task.deadline;
+          // Schedule variance vs baseline in calendar days, shown as a chip past the bar when it moved.
+          // Guard g.x !== null first so it narrows for the x position (a nested closure wouldn't).
+          const variance =
+            !isSummary && g.x !== null && g.task.baseline_end != null && g.task.end_date != null
+              ? {
+                  days: parseDay(g.task.end_date) - parseDay(g.task.baseline_end),
+                  x: LABEL_W + g.x + g.w + 4,
+                }
+              : null;
           return (
             <g
               key={g.task.id}
@@ -259,12 +319,27 @@ export default function GanttChart({
                   <title>deadline: {g.task.deadline}</title>
                 </line>
               )}
+              {/* Collapse/expand chevron on summary rows that have children. */}
+              {isSummary && hasChildren.has(g.task.id) && (
+                <text
+                  x={g.depth * 14 + 2}
+                  y={cy + 4}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleCollapse(g.task.id);
+                  }}
+                  className="cursor-pointer fill-slate-400 hover:fill-slate-700"
+                >
+                  {collapsed.has(g.task.id) ? "▸" : "▾"}
+                </text>
+              )}
               <text
-                x={8 + g.depth * 14}
+                x={(isSummary && hasChildren.has(g.task.id) ? 20 : 8) + g.depth * 14}
                 y={cy + 4}
                 className={`fill-slate-700 ${isSummary ? "font-semibold" : ""}`}
               >
                 {g.task.text.length > maxLabel ? g.task.text.slice(0, maxLabel - 1) + "…" : g.task.text}
+                <title>{g.task.text}</title>
               </text>
               {g.task.assignee_name && (
                 <g>
@@ -334,12 +409,58 @@ export default function GanttChart({
                       className="fill-black/20"
                     />
                   )}
+                  {/* Schedule variance vs baseline, shown only when the finish moved. */}
+                  {variance && variance.days !== 0 && (
+                    <text
+                      x={variance.x}
+                      y={cy + 4}
+                      className={
+                        variance.days > 0
+                          ? "fill-red-500 text-[10px]"
+                          : "fill-canopy-600 text-[10px]"
+                      }
+                    >
+                      {variance.days > 0 ? `+${variance.days}d` : `${variance.days}d`}
+                      <title>
+                        {variance.days > 0
+                          ? `${variance.days} day(s) later`
+                          : `${-variance.days} day(s) earlier`}{" "}
+                        than baseline ({g.task.baseline_end})
+                      </title>
+                    </text>
+                  )}
                 </g>
               )}
             </g>
           );
         })}
       </svg>
+      </div>
+      {/* Legend — decode the bar colors / markers so the chart reads without tribal knowledge. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 px-3 py-2 text-[11px] text-slate-500">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-4 rounded-sm bg-red-500" /> Critical path
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-4 rounded-sm bg-canopy-500" /> Task
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2 w-4 rounded-sm bg-slate-700" /> Phase / summary
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-1 w-4 rounded-sm bg-slate-300" /> Baseline
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-3 w-0 border-l-2 border-dashed border-amber-400" />{" "}
+          Deadline
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-3 w-0 border-l-2 border-dashed border-sky-400" /> Today
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="font-medium text-red-500">+d</span>/
+          <span className="font-medium text-canopy-600">−d</span> vs baseline
+        </span>
       </div>
     </div>
   );

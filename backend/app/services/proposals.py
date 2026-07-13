@@ -264,6 +264,20 @@ async def _task_in_scope(session: AsyncSession, task_id: int, projects: set[int]
     return task
 
 
+def effective_payload(item: ProposalItem) -> dict[str, Any]:
+    """The values that will actually be applied: the agent's `payload` with the reviewer's
+    `overrides` layered on top (§AA2/T17 audit-preserving override). `payload` itself is never
+    mutated — it stays the original proposal for the audit trail — so this merge is the single
+    place validation and apply read from."""
+    return {**(item.payload or {}), **(item.overrides or {})}
+
+
+def validate_effective(item: ProposalItem) -> None:
+    """Shape/whitelist/coerce-check the effective (overridden) payload so a bad inline override is
+    rejected at edit time, not deferred to apply. Raises ValueError on any problem."""
+    _validate_payload(item.entity_type, item.action, effective_payload(item))
+
+
 def _validate_payload(
     entity: ProposalEntity, action: ProposalAction, payload: dict[str, Any]
 ) -> dict[str, Any]:
@@ -368,7 +382,7 @@ async def check_items(
     for index, item in enumerate(items):
         try:
             _inject_scope_defaults(item, scope_level, scope_id)
-            fields = _validate_payload(item.entity_type, item.action, dict(item.payload or {}))
+            fields = _validate_payload(item.entity_type, item.action, effective_payload(item))
             if item.action == ProposalAction.create:
                 if item.entity_id is not None:
                     raise ValueError("a create item must not set entity_id")
@@ -749,7 +763,7 @@ async def apply_proposal(
     refs: dict[str, int] = {}
     replan: set[int] = set()
     for item in included:
-        fields = _validate_payload(item.entity_type, item.action, dict(item.payload or {}))
+        fields = _validate_payload(item.entity_type, item.action, effective_payload(item))
         fields = _resolve_refs(item, fields, refs)
         applied_id = await _apply_item(session, item, fields, replan)
         item.applied_entity_id = applied_id

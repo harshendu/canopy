@@ -90,10 +90,17 @@ class Task(TimestampMixin, table=True):
     description: str | None = Field(default=None, sa_column=Column(Text))
     type: TaskType = Field(default=TaskType.task)
 
+    # CPM *output* (computed by the scheduler each replan) — do not treat as a constraint.
     start: date | None = None
     end: date | None = None
     duration: int = 1  # working/calendar days — the authoritative CPM scheduling input
     percent_complete: float = 0.0
+
+    # CPM *input*: a user "start-no-earlier-than" (SNET) constraint, e.g. "can't begin before the
+    # vendor delivers on Mar 1". Kept SEPARATE from the computed `start` so a replan doesn't reuse
+    # last run's output as this run's pin (which made the schedule ratchet forward-only and left
+    # what-if inert — removing a dependency or cutting a duration couldn't pull successors earlier).
+    constraint_start: date | None = None
 
     # Free-form labels (area/workstream/risk-domain); see Engineer.skill_tags for the precedent.
     tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))

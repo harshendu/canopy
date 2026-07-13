@@ -5,9 +5,12 @@ import { api } from "../api/client";
 import type { CapacityResponse, Engineer, Role, User } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
+import { countOverAllocatedWeeks } from "../lib/capacityAttention";
 import AvailabilityEditor from "../components/AvailabilityEditor";
+import BlockerQueue from "../components/BlockerQueue";
 import CapacityHeatmap from "../components/CapacityHeatmap";
 import { PageHeader } from "../components/PageHeader";
+import { Icon } from "../components/icons";
 
 export default function Team() {
   const qc = useQueryClient();
@@ -40,6 +43,7 @@ export default function Team() {
     queryFn: () => api.get<User[]>("/auth/users"),
     retry: false,
   });
+  const overAllocated = countOverAllocatedWeeks(capacity.data);
 
   const skillsToArray = (s: string) =>
     s.split(",").map((x) => x.trim()).filter(Boolean);
@@ -89,8 +93,26 @@ export default function Team() {
     <div className="space-y-6">
       <PageHeader
         title="Team"
-        subtitle="Engineers and their profiles — skills, committed capacity, time zones, and the accounts linked to them."
+        subtitle="Who needs you, then engineers, capacity, and the accounts linked to them."
       />
+
+      {/* Manager attention band — the exception view a team lead actually wants first, before the
+          engineer/role admin forms below (§A7 persona landing). An actionable open-blocker queue
+          (resolve in place) plus the over-allocation summary that the capacity grid details. */}
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="mb-2 flex items-center gap-2">
+          <Icon name="alerts" size={16} />
+          <h2 className="font-semibold">Open blockers</h2>
+        </div>
+        <BlockerQueue engineers={engineers.data ?? []} />
+        {overAllocated > 0 && (
+          <p className="mt-3 flex items-start gap-2 border-t border-slate-100 pt-3 text-sm text-slate-700">
+            <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+            {overAllocated} engineer-week{overAllocated === 1 ? "" : "s"} over 100% allocated — see
+            the capacity grid below.
+          </p>
+        )}
+      </div>
 
       {mayWrite && (
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -233,7 +255,9 @@ export default function Team() {
           </li>
         ))}
         {engineers.data?.length === 0 && (
-          <li className="px-4 py-6 text-center text-sm text-slate-400">No engineers yet.</li>
+          <li className="px-4 py-6 text-center text-sm text-slate-400">
+            No engineers yet — add your first team member with the form above.
+          </li>
         )}
       </ul>
 

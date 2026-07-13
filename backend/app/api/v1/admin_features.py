@@ -9,7 +9,7 @@ surfaces live (every toggle publishes a `features` SSE event).
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from app.api.deps import AdminUser, SessionDep
+from app.api.deps import AdminUser, HumanOnly, SessionDep
 from app.core.events import publish
 from app.models.feature import FeatureFlag
 from app.schemas.admin import FeatureGateRead, FeatureGateUpdate
@@ -45,7 +45,7 @@ async def list_feature_gates(session: SessionDep, _: AdminUser) -> list[FeatureG
 
 @router.patch("/features/{key}", response_model=list[FeatureGateRead])
 async def update_feature_gate(
-    session: SessionDep, _: AdminUser, key: str, payload: FeatureGateUpdate
+    session: SessionDep, _: AdminUser, __: HumanOnly, key: str, payload: FeatureGateUpdate
 ) -> list[FeatureGateRead]:
     """Toggle one gate and return the full refreshed list (a group flip changes children's
     effective state, so the caller needs the whole picture)."""

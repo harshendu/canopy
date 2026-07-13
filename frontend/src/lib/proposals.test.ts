@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProposalItem } from "../api/types";
-import { diffRows, formatValue, includedCount, itemHeadline, targetLabel } from "./proposals";
+import {
+  coerceOverride,
+  diffRows,
+  formatValue,
+  includedCount,
+  isEditableField,
+  itemHeadline,
+  proposalShape,
+  targetLabel,
+} from "./proposals";
 
 function item(overrides: Partial<ProposalItem>): ProposalItem {
   return {
@@ -18,6 +27,10 @@ function item(overrides: Partial<ProposalItem>): ProposalItem {
     source_label: null,
     source_url: null,
     excluded: false,
+    overrides: null,
+    overridden_by_user_id: null,
+    overridden_by: null,
+    overridden_at: null,
     applied_entity_id: null,
     error: null,
     ...overrides,
@@ -75,15 +88,17 @@ describe("diffRows", () => {
         before: { name: "Build ingest", duration: 4 },
       })
     );
-    expect(rows).toEqual([{ field: "duration", before: "4", after: "8", current: null }]);
+    expect(rows).toEqual([
+      { field: "duration", before: "4", after: "8", current: null, proposed: null, editable: true },
+    ]);
   });
   it("shows creates without a before and renders refs as pointers", () => {
     const rows = diffRows(
       item({ payload: { name: "Pentest fixes", parent_ref: "phase" } })
     );
     expect(rows).toEqual([
-      { field: "name", before: null, after: "Pentest fixes", current: null },
-      { field: "parent_ref", before: null, after: "→ phase", current: null },
+      { field: "name", before: null, after: "Pentest fixes", current: null, proposed: null, editable: true },
+      { field: "parent_ref", before: null, after: "→ phase", current: null, proposed: null, editable: false },
     ]);
   });
   it("surfaces staleness when the live value moved after staging", () => {
@@ -96,7 +111,37 @@ describe("diffRows", () => {
         current: { duration: 6 },
       })
     );
-    expect(rows[0]).toEqual({ field: "duration", before: "4", after: "8", current: "6" });
+    expect(rows[0]).toEqual({
+      field: "duration",
+      before: "4",
+      after: "8",
+      current: "6",
+      proposed: null,
+      editable: true,
+    });
+  });
+  it("shows the reviewer's override as 'after' and keeps the agent's value as 'proposed'", () => {
+    const rows = diffRows(
+      item({ payload: { name: "Load test", duration: 5 }, overrides: { duration: 12 } })
+    );
+    const dur = rows.find((r) => r.field === "duration")!;
+    expect(dur.after).toBe("12"); // reviewer's edit is what applies
+    expect(dur.proposed).toBe("5"); // agent's original, preserved for the audit trail
+  });
+});
+
+describe("override helpers", () => {
+  it("isEditableField allows scalars, blocks refs and objects/arrays", () => {
+    expect(isEditableField("duration", 5)).toBe(true);
+    expect(isEditableField("name", "x")).toBe(true);
+    expect(isEditableField("parent_ref", "phase")).toBe(false);
+    expect(isEditableField("tags", ["a"])).toBe(false);
+  });
+  it("coerceOverride matches the original value's type", () => {
+    expect(coerceOverride(5, "12")).toBe(12);
+    expect(coerceOverride(5, "")).toBe(""); // empty → leave as string so the backend rejects it
+    expect(coerceOverride(true, "false")).toBe(false);
+    expect(coerceOverride("PLAT", "QAP")).toBe("QAP");
   });
 });
 
@@ -105,5 +150,19 @@ describe("includedCount", () => {
     expect(
       includedCount([item({}), item({ excluded: true }), item({ id: 3 })])
     ).toBe(2);
+  });
+});
+
+describe("proposalShape", () => {
+  it("returns non-zero create/update/resolve chips in a fixed order", () => {
+    const chips = proposalShape({ update: 2, create: 3, resolve: 1 });
+    expect(chips.map((c) => c.action)).toEqual(["create", "update", "resolve"]);
+    expect(chips.map((c) => c.count)).toEqual([3, 2, 1]);
+    expect(chips.map((c) => c.glyph)).toEqual(["+", "~", "✓"]);
+  });
+  it("omits zero and missing actions", () => {
+    expect(proposalShape({ create: 2 }).map((c) => c.action)).toEqual(["create"]);
+    expect(proposalShape({ update: 0 })).toEqual([]);
+    expect(proposalShape(undefined)).toEqual([]);
   });
 });

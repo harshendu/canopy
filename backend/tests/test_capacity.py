@@ -28,9 +28,17 @@ def test_weekly_capacity_sums_overlaps():
     assert date(2026, 1, 5) not in grid.get(2, {})
 
 
-def test_weekly_capacity_ignores_undated_spans():
+def test_weekly_capacity_counts_open_ended_spans_across_the_window():
+    # BUG-25: an open-ended allocation (no start/end) still consumes capacity every window week —
+    # dropping it made a 100%-with-no-end-date allocation invisible to the over-allocation check.
     spans = [AllocationSpan(engineer_id=1, percent=100.0, start=None, end=None)]
-    assert weekly_capacity(spans, date(2026, 1, 5), date(2026, 1, 11)) == {}
+    grid = weekly_capacity(spans, date(2026, 1, 5), date(2026, 1, 18))
+    assert grid == {1: {date(2026, 1, 5): 100.0, date(2026, 1, 12): 100.0}}
+
+    # A span with only an end date is bounded on the right, open on the left.
+    half_open = [AllocationSpan(engineer_id=2, percent=50.0, start=None, end=date(2026, 1, 11))]
+    grid2 = weekly_capacity(half_open, date(2026, 1, 5), date(2026, 1, 18))
+    assert grid2 == {2: {date(2026, 1, 5): 50.0}}
 
 
 def test_weekly_availability_takes_worst_factor_per_week():

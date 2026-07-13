@@ -513,11 +513,13 @@ async def update_adr(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only architects / engineering managers can change a decision's status",
             )
-        # Bounded agency: accepting a one-way (irreversible) door is reserved for a human.
+        # Bounded agency: accepting a one-way (irreversible) door is reserved for a human. Fail
+        # closed on an *unclassified* decision (reversibility is nullable) — an agent may accept
+        # only a decision explicitly marked two-way (reversible), never an unlabeled one.
         if (
             scope == TokenScope.agent
             and new_status == ADRStatus.accepted
-            and adr.reversibility == Reversibility.one_way
+            and adr.reversibility != Reversibility.two_way
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

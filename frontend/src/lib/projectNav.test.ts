@@ -14,10 +14,10 @@ const ALL_ON = () => true;
 const ALL_OFF = () => false;
 
 describe("PROJECT_GROUPS / TAB_GROUP", () => {
-  it("places every one of the 17 leaf views under exactly one group", () => {
+  it("places every one of the 18 leaf views under exactly one group", () => {
     const tabs = PROJECT_GROUPS.flatMap((g) => g.tabs);
-    expect(tabs).toHaveLength(17);
-    expect(new Set(tabs).size).toBe(17); // no duplicates
+    expect(tabs).toHaveLength(18);
+    expect(new Set(tabs).size).toBe(18); // no duplicates
     for (const tab of tabs) expect(TAB_GROUP[tab]).toBeTruthy();
   });
 

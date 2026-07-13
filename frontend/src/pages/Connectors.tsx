@@ -1,18 +1,13 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Connection, Provider } from "../api/types";
+import type { Connection, Project, Provider } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
+import { CONNECTOR_FIELDS, buildConnectorConfig } from "../lib/connectorFields";
 import { PageHeader } from "../components/PageHeader";
-
-const CONFIG_HINTS: Record<Provider, string> = {
-  jira: '{"base_url":"https://you.atlassian.net","email":"you@co.com","project_id":1,"jira_project_key":"PLAT"}',
-  github: '{"owner":"acme","repo":"platform"}',
-  gdrive: "{}",
-};
 
 export default function Connectors() {
   const qc = useQueryClient();
@@ -25,13 +20,25 @@ export default function Connectors() {
   const [provider, setProvider] = useState<Provider>("jira");
   const [name, setName] = useState("");
   const [token, setToken] = useState("");
-  const [config, setConfig] = useState(CONFIG_HINTS.jira);
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const [advanced, setAdvanced] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null);
+  const setField = (key: string, value: string) =>
+    setFields((prev) => ({ ...prev, [key]: value }));
 
   const connections = useQuery({
     queryKey: ["connections"],
     queryFn: () => api.get<Connection[]>("/connectors/connections"),
+  });
+
+  // Powers the "canopy project" picker so the operator selects a project by name instead of
+  // typing a numeric id into raw JSON.
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: () => api.get<Project[]>("/projects"),
+    enabled: mayManage,
   });
 
   // OAuth flows redirect on success; surface failures (misconfig / policy) instead of failing silently.
@@ -55,23 +62,19 @@ export default function Connectors() {
   });
 
   const create = useMutation({
-    mutationFn: () => {
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(config || "{}");
-      } catch {
-        throw new Error("Config must be valid JSON");
-      }
-      return api.post<Connection>("/connectors/connections", {
+    mutationFn: () =>
+      api.post<Connection>("/connectors/connections", {
         provider,
         name,
         token: token || null,
-        config: parsed,
-      });
-    },
+        config: buildConnectorConfig(provider, fields, advanced),
+      }),
     onSuccess: () => {
       setName("");
       setToken("");
+      setFields({});
+      setAdvanced("");
+      setShowAdvanced(false);
       setError(null);
       qc.invalidateQueries({ queryKey: ["connections"] });
     },
@@ -129,6 +132,14 @@ export default function Connectors() {
           : "You can view connections and, where enabled, connect your own account. Managing shared connections requires an architect or admin."}
       </p>
 
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-600">
+        These are canopy's <strong>data</strong> integrations — Jira, GitHub, Drive. Connecting{" "}
+        <strong>Claude Code itself</strong> (an MCP token + the plugin) lives on{" "}
+        <Link to="/agent-setup" className="font-medium text-canopy-700 hover:underline">
+          Agent Setup →
+        </Link>
+      </div>
+
       {mayManage && (
       <form
         onSubmit={(e) => {
@@ -141,9 +152,9 @@ export default function Connectors() {
           <select
             value={provider}
             onChange={(e) => {
-              const p = e.target.value as Provider;
-              setProvider(p);
-              setConfig(CONFIG_HINTS[p]);
+              // New provider → new field set; drop the old typed values so keys don't leak across.
+              setProvider(e.target.value as Provider);
+              setFields({});
             }}
             className="rounded border border-slate-300 px-3 py-2 text-sm"
           >
@@ -164,12 +175,61 @@ export default function Connectors() {
           placeholder="API token / access token (stored encrypted)"
           className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
         />
-        <textarea
-          value={config}
-          onChange={(e) => setConfig(e.target.value)}
-          rows={3}
-          className="w-full rounded border border-slate-300 px-3 py-2 font-mono text-xs"
-        />
+
+        {/* Typed config fields (§lib/connectorFields) — no more hand-written JSON for the common case. */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {CONNECTOR_FIELDS[provider].map((f) => (
+            <label key={f.key} className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+              {f.label}
+              {f.kind === "project" ? (
+                <select
+                  value={fields[f.key] ?? ""}
+                  onChange={(e) => setField(f.key, e.target.value)}
+                  className="rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-800"
+                >
+                  <option value="">
+                    {projects.isLoading ? "Loading projects…" : "Select a project…"}
+                  </option>
+                  {(projects.data ?? []).map((p) => (
+                    <option key={p.id} value={String(p.id)}>
+                      {p.key} — {p.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type={f.kind === "email" ? "email" : f.kind === "url" ? "url" : "text"}
+                  value={fields[f.key] ?? ""}
+                  onChange={(e) => setField(f.key, e.target.value)}
+                  placeholder={f.placeholder}
+                  className="rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-800"
+                />
+              )}
+              {f.help && <span className="font-normal text-slate-400">{f.help}</span>}
+            </label>
+          ))}
+        </div>
+
+        {/* Advanced escape hatch: extra/unknown config keys as raw JSON, merged under the typed fields. */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="text-xs font-medium text-slate-500 hover:text-slate-700"
+          >
+            {showAdvanced ? "▾" : "▸"} Advanced (extra config as JSON)
+          </button>
+          {showAdvanced && (
+            <textarea
+              value={advanced}
+              onChange={(e) => setAdvanced(e.target.value)}
+              rows={3}
+              placeholder='{"board_id": 42}'
+              className="mt-2 w-full rounded border border-slate-300 px-3 py-2 font-mono text-xs"
+            />
+          )}
+        </div>
+
         {error && <div className="text-sm text-red-600">{error}</div>}
         <button className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
           Add connection

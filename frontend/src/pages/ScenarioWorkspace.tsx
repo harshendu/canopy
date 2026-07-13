@@ -20,6 +20,8 @@ import ScenarioCompare from "../components/ScenarioCompare";
 import ScenarioEditor from "../components/ScenarioEditor";
 import { PageHeader } from "../components/PageHeader";
 import { Icon } from "../components/icons";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { isPlanner } from "../lib/permissions";
 import {
   SCENARIO_GROUPS,
   SCENARIO_NEEDS_PROJECT,
@@ -44,6 +46,8 @@ export default function ScenarioWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { group: activeGroup, view } = resolveScenarioView(searchParams.get("tab"));
   const [projectId, setProjectId] = useState<number | null>(null);
+  const { data: me } = useCurrentUser();
+  const mayPlan = isPlanner(me?.role); // scenario edits are planner-gated (§A3a / §T2)
 
   const goToView = (v: ScenarioView) => setSearchParams({ tab: v }, { replace: true });
   const goToGroup = (key: ScenarioGroupKey) => goToView(defaultScenarioView(key));
@@ -161,14 +165,21 @@ export default function ScenarioWorkspace() {
         {view === "compare" && (
           <ScenarioCompare scenarioId={sid} status={scenario.data?.status ?? "draft"} />
         )}
-        {view === "edit" && activeProject != null && (
-          <ScenarioEditor
-            scenarioId={sid}
-            projects={projects}
-            projectId={activeProject}
-            onProjectChange={setProjectId}
-          />
-        )}
+        {view === "edit" &&
+          activeProject != null &&
+          (mayPlan ? (
+            <ScenarioEditor
+              scenarioId={sid}
+              projects={projects}
+              projectId={activeProject}
+              onProjectChange={setProjectId}
+            />
+          ) : (
+            <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-500">
+              Editing a scenario is limited to planners (architect / engineering manager). You can
+              view every projection here.
+            </p>
+          ))}
         {view === "criticalpath" && <CriticalPathPanel scenarioId={sid} />}
         {view === "capacity" && <CapacityPanel scenarioId={sid} />}
         {view === "forecast" && <ForecastPanel scenarioId={sid} />}

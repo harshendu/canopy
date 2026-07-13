@@ -22,6 +22,7 @@ from app.models.project import Task
 from app.models.team import Engineer
 from app.schemas.entities import IngestIssue, IngestPullRequest
 from app.services import mapping
+from app.services.burndown import is_done_status
 
 _EPIC_TYPES = {"Epic"}
 
@@ -106,6 +107,14 @@ async def upsert_task_from_external(
     task.name = summary
     task.status = status
     task.type = task_type
+    # Mirror completion from the upstream status so the status-derived views (board/burndown/
+    # forecast/DORA) and the progress %/rollups agree on one definition of "done". Jira has no
+    # percent field, so: a done status ⇒ 100%; a task that regressed out of done drops back to 0;
+    # a not-yet-done task keeps any manually-entered partial progress (canopy-only signal).
+    if is_done_status(status):
+        task.percent_complete = 100.0
+    elif task.percent_complete >= 100.0:
+        task.percent_complete = 0.0
     # Ownership mirrors the upstream assignee when one is set; an unassigned upstream issue
     # leaves any locally-set owner alone (assignment stays usable for canopy-only workflows).
     engineer_id = await resolve_assignee_engineer(session, assignee_account_id, assignee_name)

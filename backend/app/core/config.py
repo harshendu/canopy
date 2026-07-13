@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     GOOGLE_OAUTH_CLIENT_ID: str = ""
     GOOGLE_OAUTH_CLIENT_SECRET: str = ""
 
+    # --- Plugin / MCP setup instructions (shown on the Agent Setup page) ---
+    # A deployment (or a fork) overrides these so the copy-paste snippets point at *its* repo/
+    # marketplace, not the upstream default. Served (non-secret) via GET /api/v1/meta.
+    PLUGIN_MARKETPLACE_REF: str = "harshendu/canopy"  # `/plugin marketplace add <ref>`
+    PLUGIN_REPO_URL: str = "https://github.com/harshendu/canopy.git"  # MCP-only clone URL
+    PLUGIN_MCP_SERVER_PATH: str = "plugin/mcp_server/server.py"  # server path within the clone
+
     # --- File-drop ingest (Phase 4) ---
     # Watched shared storage canopy polls for export files to ingest, layout
     # <root>/<connection_id>/*.{json,csv}. Backend "local" (a directory) or "s3" (a bucket);

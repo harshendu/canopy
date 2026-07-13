@@ -8,7 +8,7 @@ read/write call sites that consult it.
 from fastapi import APIRouter
 from sqlmodel import select
 
-from app.api.deps import AdminUser, SessionDep
+from app.api.deps import AdminUser, HumanOnly, SessionDep
 from app.models.base import Provider
 from app.models.integration import IntegrationSetting
 from app.schemas.integration import IntegrationSettingRead, IntegrationSettingUpdate
@@ -33,7 +33,8 @@ async def list_integration_settings(
 
 @router.patch("/integrations/{provider}", response_model=IntegrationSettingRead)
 async def update_integration_setting(
-    session: SessionDep, _: AdminUser, provider: Provider, payload: IntegrationSettingUpdate
+    session: SessionDep, _: AdminUser, __: HumanOnly, provider: Provider,
+    payload: IntegrationSettingUpdate,
 ) -> IntegrationSettingRead:
     row = (
         await session.execute(

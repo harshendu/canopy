@@ -1,6 +1,6 @@
 from datetime import date
 
-from app.services.burndown import compute_burndown, is_done_status
+from app.services.burndown import compute_burndown, done_dates_per_task, is_done_status
 
 
 def test_is_done_status():
@@ -9,6 +9,31 @@ def test_is_done_status():
     assert is_done_status("CLOSED")
     assert not is_done_status("In Progress")
     assert not is_done_status(None)
+
+
+def test_is_done_status_recognizes_common_custom_done_columns():
+    # BUG-14: a team whose board ends in Shipped/Deployed/Released must register as done.
+    for name in ("Shipped", "deployed", "Released", "live", "MERGED", "accepted", "completed"):
+        assert is_done_status(name), name
+    # ...but a still-open / non-completion state is not done.
+    for name in ("In Review", "Cancelled", "Won't Do", "Blocked"):
+        assert not is_done_status(name), name
+
+
+def test_done_dates_per_task_dedups_reopened_tasks():
+    # BUG-15: task 1 went Done→Reopened→Done; it must contribute ONE date (the last), not two.
+    rows = [
+        (1, "Done", date(2026, 1, 5)),
+        (1, "In Progress", date(2026, 1, 6)),
+        (1, "Done", date(2026, 1, 12)),  # re-done — the one that should count
+        (2, "Done", date(2026, 1, 8)),
+        (3, "In Progress", date(2026, 1, 9)),  # never done — excluded
+    ]
+    assert done_dates_per_task(rows) == [date(2026, 1, 8), date(2026, 1, 12)]
+
+
+def test_done_dates_per_task_empty():
+    assert done_dates_per_task([]) == []
 
 
 def test_compute_burndown_decreases_remaining():

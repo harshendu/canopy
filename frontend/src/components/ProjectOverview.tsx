@@ -6,6 +6,7 @@ import type { AlertsResponse, ForecastResponse, ProjectSummary } from "../api/ty
 import { riskTone } from "../lib/risk";
 import { tabEnabled, type IsFeatureOn, type ProjectTab } from "../lib/projectNav";
 import OutcomesPanel from "./OutcomesPanel";
+import { QueryError } from "./QueryError";
 import { Icon } from "./icons";
 
 /**
@@ -24,7 +25,7 @@ const ALERT_TAB: Record<string, ProjectTab> = {
   unscheduled: "gantt",
   milestone_overdue: "gantt",
   over_allocation: "capacity",
-  risk_overdue: "risk",
+  risk_overdue: "raid",
 };
 
 function alertDot(severity: string): string {
@@ -122,6 +123,13 @@ export default function ProjectOverview({
           </div>
           {alerts.isLoading ? (
             <p className="text-sm text-slate-400">Loading alerts…</p>
+          ) : alerts.isError ? (
+            // Never fall through to "On track" on a fetch failure — that would falsely reassure.
+            <QueryError
+              error={alerts.error}
+              onRetry={() => void alerts.refetch()}
+              label="Couldn’t load alerts"
+            />
           ) : alertList.length === 0 ? (
             <p className="flex items-center gap-1.5 text-sm text-slate-500">
               <span className="h-2 w-2 rounded-full bg-emerald-500" />
@@ -202,7 +210,7 @@ export default function ProjectOverview({
             label="Open risks"
             value={s?.open_risks ?? "—"}
             hint="RAID register"
-            onOpen={drill("risk")}
+            onOpen={drill("raid")}
           />
         )}
       </div>

@@ -12,7 +12,13 @@ import type {
 } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
-import { diffRows, includedCount, itemHeadline } from "../lib/proposals";
+import {
+  coerceOverride,
+  diffRows,
+  includedCount,
+  itemHeadline,
+  proposalShape,
+} from "../lib/proposals";
 import { PageHeader } from "../components/PageHeader";
 
 const STATUS_FILTERS: { key: ProposalStatus | "all"; label: string }[] = [
@@ -34,6 +40,13 @@ const ACTION_BADGE: Record<string, string> = {
   create: "bg-emerald-50 text-emerald-700 border-emerald-200",
   update: "bg-sky-50 text-sky-700 border-sky-200",
   resolve: "bg-violet-50 text-violet-700 border-violet-200",
+};
+
+// Compact tint for the collapsed-card shape chips (same color semantics as ACTION_BADGE).
+const SHAPE_TONE: Record<string, string> = {
+  create: "text-emerald-600",
+  update: "text-sky-600",
+  resolve: "text-violet-600",
 };
 
 export default function Reviews() {
@@ -208,6 +221,15 @@ function ProposalCard({
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["proposal", id] }),
   });
 
+  // Audit-preserving inline override: PATCH the reviewer's field edits; {} clears them.
+  const overrideItem = useMutation({
+    mutationFn: (input: { itemId: number; overrides: Record<string, unknown> }) =>
+      api.patch<ProposalItem>(`/proposals/${id}/items/${input.itemId}`, {
+        overrides: input.overrides,
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["proposal", id] }),
+  });
+
   const header = detail.data ?? summaryRow;
   if (!header) {
     return (
@@ -238,9 +260,26 @@ function ProposalCard({
           </span>
         )}
         <span className="truncate font-medium">{header.title}</span>
-        <span className="ml-auto shrink-0 text-xs text-slate-400">
-          {header.item_count} change{header.item_count === 1 ? "" : "s"}
-          {header.origin ? ` · ${header.origin}` : ""}
+        {header.attention_count > 0 && (
+          <span
+            className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800"
+            title="Some items errored or changed since they were staged — review before applying."
+          >
+            ⚠ {header.attention_count} need{header.attention_count === 1 ? "s" : ""} attention
+          </span>
+        )}
+        <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-slate-400">
+          {/* Change shape at a glance (create / update / resolve) without expanding the card. */}
+          {proposalShape(header.action_counts).map((c) => (
+            <span key={c.action} className={`font-medium tabular-nums ${SHAPE_TONE[c.action]}`}>
+              {c.glyph}
+              {c.count}
+            </span>
+          ))}
+          <span>
+            {header.item_count} change{header.item_count === 1 ? "" : "s"}
+            {header.origin ? ` · ${header.origin}` : ""}
+          </span>
         </span>
       </button>
 
@@ -275,6 +314,9 @@ function ProposalCard({
                   canEdit={planner && isOpen}
                   onToggle={(excluded) =>
                     toggleItem.mutate({ itemId: item.id, excluded })
+                  }
+                  onOverride={(overrides) =>
+                    overrideItem.mutateAsync({ itemId: item.id, overrides })
                   }
                 />
               ))}
@@ -337,12 +379,59 @@ function ItemRow({
   item,
   canEdit,
   onToggle,
+  onOverride,
 }: {
   item: ProposalItem;
   canEdit: boolean;
   onToggle: (excluded: boolean) => void;
+  onOverride: (overrides: Record<string, unknown>) => Promise<unknown>;
 }) {
   const rows = diffRows(item);
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [overrideError, setOverrideError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const overrides = item.overrides ?? {};
+  const hasOverrides = Object.keys(overrides).length > 0;
+
+  const startEdit = (field: string) => {
+    const raw = field in overrides ? overrides[field] : item.payload[field];
+    setDraft(raw == null ? "" : String(raw));
+    setEditingField(field);
+    setOverrideError(null);
+  };
+  const commit = async (next: Record<string, unknown>) => {
+    setSaving(true);
+    setOverrideError(null);
+    try {
+      await onOverride(next);
+      setEditingField(null);
+    } catch (e) {
+      // The backend rejects a bad override (400 {code:"invalid_override"}); show why.
+      let msg = e instanceof ApiError ? e.message : String(e);
+      try {
+        const body = JSON.parse(msg) as { detail?: { error?: string } | string };
+        if (body.detail && typeof body.detail === "object" && body.detail.error) {
+          msg = body.detail.error;
+        } else if (typeof body.detail === "string") {
+          msg = body.detail;
+        }
+      } catch {
+        /* leave msg as-is */
+      }
+      setOverrideError(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const save = (field: string) =>
+    commit({ ...overrides, [field]: coerceOverride(item.payload[field], draft) });
+  const revert = (field: string) => {
+    const next = { ...overrides };
+    delete next[field];
+    void commit(next);
+  };
+
   return (
     <li
       className={`rounded border p-3 ${
@@ -377,6 +466,20 @@ function ItemRow({
                 changed since staged
               </span>
             )}
+            {hasOverrides && (
+              <span
+                className="rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-700"
+                title={
+                  item.overridden_by
+                    ? `Edited by ${item.overridden_by}${
+                        item.overridden_at ? ` on ${item.overridden_at.slice(0, 10)}` : ""
+                      } — the agent's original values are kept below.`
+                    : "You edited a proposed value — the agent's original is kept below."
+                }
+              >
+                edited{item.overridden_by ? ` by ${item.overridden_by}` : ""}
+              </span>
+            )}
             {item.error && (
               <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">
                 {item.error}
@@ -407,25 +510,89 @@ function ItemRow({
                 <tbody>
                   {rows.map((r) => (
                     <tr key={r.field} className="border-t border-slate-100">
-                      <td className="py-1 pr-3 font-mono text-slate-400">{r.field}</td>
+                      <td className="py-1 pr-3 align-top font-mono text-slate-400">{r.field}</td>
                       {r.before !== null ? (
                         <>
-                          <td className="py-1 pr-2 text-slate-500 line-through decoration-slate-300">
+                          <td className="py-1 pr-2 align-top text-slate-500 line-through decoration-slate-300">
                             {r.before}
                           </td>
-                          <td className="py-1 pr-2 text-slate-300">→</td>
+                          <td className="py-1 pr-2 align-top text-slate-300">→</td>
                         </>
                       ) : (
-                        <td className="py-1 pr-2 text-slate-300" colSpan={2} />
+                        <td className="py-1 pr-2 align-top text-slate-300" colSpan={2} />
                       )}
-                      <td className="py-1 font-medium text-slate-700">{r.after}</td>
+                      <td className="py-1 align-top font-medium text-slate-700">
+                        {editingField === r.field ? (
+                          <span className="flex items-center gap-1">
+                            <input
+                              autoFocus
+                              value={draft}
+                              onChange={(e) => setDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") void save(r.field);
+                                if (e.key === "Escape") setEditingField(null);
+                              }}
+                              className="w-28 rounded border border-slate-300 px-1.5 py-0.5 text-xs"
+                            />
+                            <button
+                              onClick={() => void save(r.field)}
+                              disabled={saving}
+                              className="rounded bg-canopy-500 px-1.5 py-0.5 text-xs font-medium text-white disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => setEditingField(null)}
+                              className="text-slate-400 hover:text-slate-600"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1.5">
+                            {r.proposed !== null ? (
+                              <>
+                                <span className="text-slate-400 line-through decoration-slate-300">
+                                  {r.proposed}
+                                </span>
+                                <span className="font-semibold text-violet-700">{r.after}</span>
+                              </>
+                            ) : (
+                              <span>{r.after}</span>
+                            )}
+                            {canEdit && r.editable && (
+                              <button
+                                onClick={() => startEdit(r.field)}
+                                className="text-slate-300 hover:text-canopy-600"
+                                title="Override this value"
+                                aria-label={`Override ${r.field}`}
+                              >
+                                ✎
+                              </button>
+                            )}
+                            {canEdit && r.proposed !== null && (
+                              <button
+                                onClick={() => revert(r.field)}
+                                className="text-slate-300 hover:text-slate-600"
+                                title="Revert to the agent's value"
+                                aria-label={`Revert ${r.field}`}
+                              >
+                                ↩
+                              </button>
+                            )}
+                          </span>
+                        )}
+                      </td>
                       {r.current !== null && (
-                        <td className="py-1 pl-2 text-amber-700">now: {r.current}</td>
+                        <td className="py-1 pl-2 align-top text-amber-700">now: {r.current}</td>
                       )}
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {overrideError && (
+                <p className="mt-1 text-xs text-red-600">Override rejected: {overrideError}</p>
+              )}
             </div>
           )}
         </div>

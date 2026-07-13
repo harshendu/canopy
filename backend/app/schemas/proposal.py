@@ -46,6 +46,12 @@ class ProposalItemRead(BaseModel):
     source_label: str | None
     source_url: str | None
     excluded: bool
+    # Audit-preserving inline override (§AA2/T17): the reviewer's per-field edits (kept separate
+    # from the agent's original `payload`) + who/when. `overridden_by` is the resolved display name.
+    overrides: dict[str, Any] | None = None
+    overridden_by_user_id: int | None = None
+    overridden_by: str | None = None
+    overridden_at: datetime | None = None
     applied_entity_id: int | None
     error: str | None
 
@@ -75,6 +81,10 @@ class ProposalRead(BaseModel):
     created_at: datetime
     item_count: int = 0
     excluded_count: int = 0
+    # Triage aids so the collapsed review-queue card is scannable without expanding it (§AA/T17):
+    action_counts: dict[str, int] = Field(default_factory=dict)  # {"create": n, "update": n, …}
+    # items that errored or drifted (stale) since staging — look before applying:
+    attention_count: int = 0
     scope_label: str | None = None  # resolved project/initiative key+name for display
 
 
@@ -83,7 +93,11 @@ class ProposalDetail(ProposalRead):
 
 
 class ProposalItemPatch(BaseModel):
-    excluded: bool
+    # Both optional so a patch can toggle inclusion, set field overrides, or both. Only the fields
+    # present in the request are applied (distinguished via model_fields_set). For `overrides`,
+    # an empty object clears the reviewer's override (revert to the agent's proposed values).
+    excluded: bool | None = None
+    overrides: dict[str, Any] | None = None
 
 
 class ProposalRejectRequest(BaseModel):

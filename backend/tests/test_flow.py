@@ -4,7 +4,7 @@ import pytest
 
 from app.core.security import hash_password
 from app.models.base import UserRole
-from app.models.project import TaskStatusHistory
+from app.models.project import Task, TaskStatusHistory
 from app.models.user import User
 from app.services.flow import NO_STATUS, BoardTaskInput, build_board
 
@@ -86,18 +86,23 @@ async def test_board_endpoint(client, db_session):
     t1 = (
         await client.post(
             "/api/v1/tasks",
-            json={"project_id": project_id, "name": "A", "duration": 2, "status": "In Progress"},
+            json={"project_id": project_id, "name": "A", "duration": 2},
             headers=headers,
         )
     ).json()["id"]
-    (
+    t2 = (
         await client.post(
             "/api/v1/tasks",
-            json={"project_id": project_id, "name": "B", "duration": 2, "status": "Done"},
+            json={"project_id": project_id, "name": "B", "duration": 2},
             headers=headers,
         )
-    )
+    ).json()["id"]
 
+    # `status` is Jira-mirrored (read-only via the API) — set it directly, as a sync would.
+    for tid, st in ((t1, "In Progress"), (t2, "Done")):
+        task = await db_session.get(Task, tid)
+        assert task is not None
+        task.status = st
     # Make A look like it entered "In Progress" well in the past.
     db_session.add(
         TaskStatusHistory(

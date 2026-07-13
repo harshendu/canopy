@@ -81,7 +81,10 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   a `networkx` DAG). The CPM works in working-day offsets; a `WorkingCalendar` maps them to dates
   (skips weekends when `Project.skip_weekends` + project `Holiday`s). `app/services/planner.py`
   `reschedule_project` loads the graph, runs CPM with the calendar, optionally applies duration
-  overrides (what-if) and/or persists, and reports `deadline` violations. Endpoints:
+  overrides (what-if) and/or persists, and reports `deadline` violations. The CPM pin is a task's
+  **`constraint_start`** (a user "start no earlier than" input), kept **separate** from the computed
+  `start`/`end` output — never pin from the computed start, or the schedule ratchets forward-only
+  and what-if goes inert. Endpoints:
   `POST /projects/{id}/replan` (persist), `POST /projects/{id}/whatif` (no persist, duration overrides),
   `POST /projects/{id}/baseline` (snapshot start/end → `baseline_*`; logs a reasoned `Baseline`
   event — `GET .../baselines`; the Gantt overlays current-vs-baseline as **schedule variance**, and
@@ -264,6 +267,10 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
     MySQL and truncates/errors. Short/identifier/indexed columns stay `str` (VARCHAR).
   - **Postgres/MySQL enforce foreign keys; SQLite does not by default.** Don't rely on SQLite's lax
     enforcement — handle cascade/ordering explicitly (e.g. clear self-references before bulk-deleting).
+    Deleting a `Task`/`Project` goes through `app/services/cascade.py` (`delete_task_cascade` /
+    `delete_project_cascade`), which clears FK-referencing rows in child→parent order — a bare
+    `session.delete()` 500s on PG/MySQL and silently orphans on SQLite. `tests/test_cascade_delete.py`
+    verifies it under `PRAGMA foreign_keys=ON` over the full demo graph, so a missed table fails CI.
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
   REST routes (~125 across projects/planning/proposals/connectors/team/architecture/scenarios/
   specs/docs/delivery/outcomes). Skills are runbooks (`updating-canopy` — the session operating

@@ -6,6 +6,7 @@ import type { User } from "../api/types";
 import { useAuth } from "../lib/auth";
 import { useSession } from "../lib/useSession";
 import { roleLabel } from "../lib/roles";
+import { functionLabel } from "../lib/persona";
 
 function initials(label: string): string {
   const parts = label
@@ -55,7 +56,11 @@ export default function UserSwitcher({ collapsed = false }: { collapsed?: boolea
       <button
         type="button"
         onClick={() => canSwitch && setOpen((o) => !o)}
-        title={collapsed ? `${label} · ${roleLabel(user.role)}` : undefined}
+        title={
+          collapsed
+            ? `${label} · ${roleLabel(user.role)} · ${functionLabel(user.function)}`
+            : undefined
+        }
         className={`flex w-full items-center rounded text-left ${
           collapsed ? "justify-center py-1" : "gap-2 px-2 py-2"
         } ${canSwitch ? "hover:bg-slate-100" : "cursor-default"}`}
@@ -69,7 +74,9 @@ export default function UserSwitcher({ collapsed = false }: { collapsed?: boolea
           <>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-slate-700">{label}</span>
-              <span className="block truncate text-xs text-slate-400">{roleLabel(user.role)}</span>
+              <span className="block truncate text-xs text-slate-400">
+                {roleLabel(user.role)} · {functionLabel(user.function)}
+              </span>
             </span>
             {canSwitch && <span className="text-slate-400">⇅</span>}
           </>

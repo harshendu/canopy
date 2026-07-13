@@ -76,5 +76,14 @@ class ProposalItem(TimestampMixin, table=True):
     source_url: str | None = Field(default=None, sa_column=Column(Text))
     # Review state.
     excluded: bool = False  # reviewer opted this item out before applying
+    # Audit-preserving inline override (§AA2/T17): the reviewer's per-field edits, layered OVER
+    # `payload` at apply time. `payload` stays the agent's original proposal (the audit record), so
+    # we can always show "agent proposed X → human changed to Y". Empty/None means no override.
+    overrides: dict | None = Field(default=None, sa_column=Column(JSON))
+    # Who/when last overrode. A bare int (NOT a DB foreign_key) on purpose: adding an FK to an
+    # existing table forces a SQLite table rebuild (portability-hostile per CLAUDE.md); this is
+    # audit metadata resolved to a name at read time, so a plain additive column is the right trade.
+    overridden_by_user_id: int | None = None
+    overridden_at: datetime | None = None
     applied_entity_id: int | None = None  # id of the created/updated entity after apply
     error: str | None = Field(default=None, sa_column=Column(Text))  # last validation error

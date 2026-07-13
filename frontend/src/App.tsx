@@ -3,10 +3,10 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "./api/client";
-import type { Proposal } from "./api/types";
+import type { Engineer, PortfolioResponse, Proposal } from "./api/types";
 import { useAuth } from "./lib/auth";
 import { useCurrentUser } from "./lib/useCurrentUser";
-import { canContribute } from "./lib/permissions";
+import { canContribute, canWriteProjects } from "./lib/permissions";
 import { personaHome } from "./lib/persona";
 import { useEventStream } from "./lib/useEventStream";
 import { featureOn, useFeatures } from "./lib/useFeatures";
@@ -33,6 +33,7 @@ import AgentSetup from "./pages/AgentSetup";
 import Sidebar from "./components/Sidebar";
 import PreviewPanel from "./components/PreviewPanel";
 import ImpersonationBanner from "./components/ImpersonationBanner";
+import { GetStarted } from "./components/GetStarted";
 
 const Portfolio = lazy(() => import("./pages/Portfolio")); // Recharts — load on demand
 
@@ -85,11 +86,27 @@ function ProtectedLayout() {
   );
 }
 
-/** Land each persona on their default surface (a lens, not a wall — see lib/persona). */
+/** Land each persona on their default surface (a lens, not a wall — see lib/persona). On a
+ *  brand-new, empty install, show the first-run guide instead of dumping the installing admin on
+ *  an empty personal workspace that tells them to "ask an admin" (themselves). */
 function PersonaHome() {
   const { data: me, isLoading } = useCurrentUser();
   const features = useFeatures();
-  if (isLoading) return <Loading />;
+  const projects = useQuery({
+    queryKey: ["portfolio"],
+    queryFn: () => api.get<PortfolioResponse>("/projects/portfolio"),
+  });
+  const engineers = useQuery({
+    queryKey: ["engineers"],
+    queryFn: () => api.get<Engineer[]>("/team/engineers"),
+  });
+  if (isLoading || projects.isLoading || engineers.isLoading) return <Loading />;
+  const emptyInstall =
+    projects.isSuccess &&
+    engineers.isSuccess &&
+    projects.data.projects.length === 0 &&
+    engineers.data.length === 0;
+  if (emptyInstall) return <GetStarted canManage={canWriteProjects(me?.role)} />;
   return <Navigate to={personaHome(me?.function, features)} replace />;
 }
 

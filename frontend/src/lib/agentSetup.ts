@@ -50,6 +50,31 @@ export function statusChipClass(status: AgentTokenInfo["status"]): string {
   return STATUS_CHIP[status];
 }
 
+/** The directory `git clone <url>` creates — the URL's last path segment without a trailing
+ *  `.git` or slashes. Falls back to "canopy" for an unparseable URL. Pure. */
+export function repoDirName(repoUrl: string): string {
+  const last = repoUrl.replace(/\/+$/, "").split("/").pop() ?? "";
+  const name = last.replace(/\.git$/, "").trim();
+  return name || "canopy";
+}
+
+/** MCP-only bootstrap: clone the repo, enter its plugin dir, make a venv, install deps. Pure —
+ *  driven by the deployment's configured repo URL (§GET /meta), not a hardcoded fork. */
+export function cloneSnippet(repoUrl: string): string {
+  return [
+    `git clone ${repoUrl}`,
+    `cd ${repoDirName(repoUrl)}/plugin`,
+    "python -m venv .venv && . .venv/bin/activate",
+    "pip install -r mcp_server/requirements.txt",
+  ].join("\n");
+}
+
+/** Display path for the `.mcp.json` `args` entry: an obvious `/path/to/` prefix the user swaps
+ *  for their real clone location, plus the config-driven repo dir + in-repo server path. Pure. */
+export function mcpServerDisplayPath(repoUrl: string, serverPathInRepo: string): string {
+  return `/path/to/${repoDirName(repoUrl)}/${serverPathInRepo}`;
+}
+
 /** The `.mcp.json` a user pastes to run the stdio MCP server directly (no full plugin). The MCP
  *  server reads `CANOPY_API_TOKEN` to call the canopy API as the token's issuer. */
 export function mcpJsonSnippet(apiBaseUrl: string, token: string, serverPath: string): string {

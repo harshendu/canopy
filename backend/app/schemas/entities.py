@@ -126,7 +126,13 @@ class TaskCreate(BaseModel):
     end: date | None = None
     duration: int = 1
     percent_complete: float = 0.0
-    status: str | None = None
+    # A "start no earlier than" (SNET) scheduling constraint — the CPM pin. Distinct from `start`,
+    # which is the computed output (overwritten each replan). Set this to hold a task's start.
+    constraint_start: date | None = None
+    # NB: `status` is deliberately NOT writable here — it is the Jira-mirrored, read-only field
+    # (Source-of-truth boundary). Writing it directly silently corrupts the status-derived views
+    # (board/aging, burndown, forecast, DORA) with no TaskStatusHistory row. The proposal and MCP
+    # write paths already exclude it; the direct REST route now matches them.
     deadline: date | None = None
     assignee_engineer_id: int | None = None
     spec_id: int | None = None
@@ -145,7 +151,8 @@ class TaskUpdate(BaseModel):
     end: date | None = None
     duration: int | None = None
     percent_complete: float | None = None
-    status: str | None = None
+    constraint_start: date | None = None  # SNET pin (see TaskCreate); `start` is computed output
+    # `status` is Jira-mirrored + read-only — not writable via this route (see TaskCreate).
     deadline: date | None = None
     assignee_engineer_id: int | None = None
     spec_id: int | None = None
@@ -167,6 +174,7 @@ class TaskRead(BaseModel):
     end: date | None
     duration: int
     percent_complete: float
+    constraint_start: date | None = None
     baseline_start: date | None
     baseline_end: date | None
     is_critical: bool

@@ -1,11 +1,12 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type {
   Baseline,
   BurndownResponse,
+  DependencyType,
   ForecastResponse,
   GanttResponse,
   Project,
@@ -15,6 +16,7 @@ import type {
   TaskType,
 } from "../api/types";
 import GanttChart from "../components/GanttChart";
+import WhatIfPanel from "../components/WhatIfPanel";
 import CapacityView from "../components/CapacityView";
 import RoadmapView from "../components/RoadmapView";
 import DeliveryView from "../components/DeliveryView";
@@ -26,6 +28,7 @@ import ProjectOverview from "../components/ProjectOverview";
 import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
 import TaskDetailPanel from "../components/TaskDetailPanel";
+import HolidaysEditor from "../components/HolidaysEditor";
 import { PageHeader } from "../components/PageHeader";
 import { Icon } from "../components/icons";
 import {
@@ -63,9 +66,13 @@ export default function ProjectView() {
   const [taskDuration, setTaskDuration] = useState(3);
   const [taskType, setTaskType] = useState<TaskType>("task");
   const [taskDeadline, setTaskDeadline] = useState("");
+  const [taskParent, setTaskParent] = useState<number | "">("");
   const [pred, setPred] = useState<number | "">("");
   const [succ, setSucc] = useState<number | "">("");
+  const [depType, setDepType] = useState<DependencyType>("FS");
+  const [depLag, setDepLag] = useState(0);
   const [lastReplan, setLastReplan] = useState<ReplanResult | null>(null);
+  const [replanError, setReplanError] = useState<string | null>(null);
   const [baselining, setBaselining] = useState(false);
   const [baselineNote, setBaselineNote] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
@@ -113,9 +120,22 @@ export default function ProjectView() {
     enabled: activeTab === "burndown",
   });
 
+  // Map task id → name so the replan banner reads names, not raw ids (the API returns id lists).
+  const taskName_ = useMemo(
+    () => new Map((tasks.data ?? []).map((t) => [t.id, t.name] as const)),
+    [tasks.data],
+  );
+  const labelFor = (tid: number): string => taskName_.get(tid) ?? `#${tid}`;
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["gantt", id] });
     qc.invalidateQueries({ queryKey: ["tasks", id] });
+  };
+  // A structural/duration edit invalidates CPM output (start/end/critical path). Re-run the
+  // scheduler automatically so the plan never silently goes stale (was: user had to remember to
+  // click "Schedule (CPM)"). The delta banner shows what moved.
+  const replanAfterEdit = () => {
+    if (mayPlan) replan.mutate();
   };
 
   const addTask = useMutation({
@@ -126,12 +146,16 @@ export default function ProjectView() {
         duration: taskDuration,
         type: taskType,
         deadline: taskDeadline || null,
+        parent_id: taskParent === "" ? null : taskParent,
       }),
     onSuccess: () => {
       setTaskName("");
       setTaskDeadline("");
+      setTaskParent("");
       invalidate();
+      replanAfterEdit();
     },
+    onError: (e) => setReplanError(e instanceof ApiError ? e.message : "Couldn’t add the task."),
   });
 
   const toggleWeekends = useMutation({
@@ -145,24 +169,62 @@ export default function ProjectView() {
 
   const addDependency = useMutation({
     mutationFn: () =>
-      api.post("/dependencies", { predecessor_id: pred, successor_id: succ }),
+      api.post("/dependencies", {
+        predecessor_id: pred,
+        successor_id: succ,
+        type: depType,
+        lag: depLag,
+      }),
     onSuccess: () => {
       setPred("");
       setSucc("");
+      setDepType("FS");
+      setDepLag(0);
       invalidate();
+      replanAfterEdit();
     },
+    onError: (e) =>
+      setReplanError(e instanceof ApiError ? e.message : "Couldn’t link the dependency."),
+  });
+
+  const deleteDependency = useMutation({
+    mutationFn: (depId: number) => api.del(`/dependencies/${depId}`),
+    onSuccess: () => {
+      invalidate();
+      replanAfterEdit();
+    },
+    onError: (e) =>
+      setReplanError(e instanceof ApiError ? e.message : "Couldn’t remove the dependency."),
   });
 
   const replan = useMutation({
     mutationFn: () => api.post<ReplanResult>(`/projects/${id}/replan`),
     onSuccess: (res) => {
       setLastReplan(res);
+      setReplanError(null);
       invalidate();
     },
+    // Surface scheduling failures (e.g. a cyclic dependency → 409) instead of failing silently.
+    onError: (e) =>
+      setReplanError(
+        e instanceof ApiError
+          ? e.status === 409
+            ? "Scheduling failed: the dependencies form a cycle. Remove the circular link and retry."
+            : e.message
+          : "Scheduling failed.",
+      ),
   });
 
   const baselinesOn = featureOn(features, "planning.baselines");
   const forecastOn = featureOn(features, "tracking.forecast");
+  const whatifOn = featureOn(features, "planning.whatif");
+  // Latest scheduled finish across the plan — the baseline the what-if projection is measured against.
+  const currentEnd = useMemo(() => {
+    const ends = (gantt.data?.tasks ?? [])
+      .map((t) => t.end_date)
+      .filter((d): d is string => Boolean(d));
+    return ends.length ? ends.reduce((a, b) => (a > b ? a : b)) : null;
+  }, [gantt.data]);
   // Staged changes awaiting review for THIS project (agent proposals — §AA).
   const openProposals = useQuery({
     queryKey: ["proposals", "open", "project", id],
@@ -296,17 +358,33 @@ export default function ProjectView() {
         />
       )}
 
+      {replanError && (
+        <div
+          role="alert"
+          className="flex items-start justify-between gap-3 rounded border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700"
+        >
+          <span>⚠ {replanError}</span>
+          <button
+            onClick={() => setReplanError(null)}
+            className="text-red-500 hover:text-red-800"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {lastReplan && (
         <div className="space-y-1">
           <div className="rounded border border-canopy-500/30 bg-canopy-50 px-4 py-2 text-sm text-canopy-700">
             Scheduled {lastReplan.scheduled_tasks} tasks · critical path:{" "}
-            {lastReplan.critical_path.join(" → ") || "none"} · ends{" "}
+            {lastReplan.critical_path.map(labelFor).join(" → ") || "none"} · ends{" "}
             {lastReplan.project_end ?? "—"}
           </div>
           {lastReplan.deadline_violations.length > 0 && (
             <div className="rounded border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700">
               ⚠ {lastReplan.deadline_violations.length} task(s) miss their deadline:{" "}
-              {lastReplan.deadline_violations.join(", ")}
+              {lastReplan.deadline_violations.map(labelFor).join(", ")}
             </div>
           )}
         </div>
@@ -371,6 +449,9 @@ export default function ProjectView() {
             <p className="text-sm text-slate-500">
               No tasks yet — add tasks below, then run “Schedule (CPM)”.
             </p>
+          )}
+          {whatifOn && gantt.data && gantt.data.tasks.length > 0 && (
+            <WhatIfPanel projectId={id} tasks={gantt.data.tasks} currentEnd={currentEnd} />
           )}
           {forecast.data && (
             <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
@@ -499,11 +580,14 @@ export default function ProjectView() {
 
       {activeTab === "risk" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading risk…</p>}>
-          <div className="space-y-6">
-            <RiskView projectId={id} />
-            <RiskRegister scope="project" scopeId={id} mayWrite={mayPlan} />
-          </div>
+          {/* The computed 0–100 score dashboard (leading indicators + acknowledgements + the
+              lagging alerts). The human-tracked RAID register is its own sub-view ("raid"). */}
+          <RiskView projectId={id} />
         </Suspense>
+      )}
+
+      {activeTab === "raid" && (
+        <RiskRegister scope="project" scopeId={id} mayWrite={mayPlan} />
       )}
 
       {activeTab === "retros" && (
@@ -554,6 +638,21 @@ export default function ProjectView() {
               <option value="summary">Summary / phase</option>
             </select>
           </div>
+          <select
+            value={taskParent}
+            onChange={(e) => setTaskParent(e.target.value ? Number(e.target.value) : "")}
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            title="Nest this task under a phase — builds the WBS tree"
+          >
+            <option value="">No parent (top-level)</option>
+            {(tasks.data ?? [])
+              .filter((t) => t.type === "summary")
+              .map((t) => (
+                <option key={t.id} value={t.id}>
+                  Under: {t.name}
+                </option>
+              ))}
+          </select>
           <label className="flex items-center gap-2 text-xs text-slate-500">
             Deadline (optional)
             <input
@@ -562,8 +661,11 @@ export default function ProjectView() {
               onChange={(e) => setTaskDeadline(e.target.value)}
               className="rounded border border-slate-300 px-2 py-1 text-sm"
             />
-            <button className="ml-auto rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
-              Add
+            <button
+              disabled={addTask.isPending}
+              className="ml-auto rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {addTask.isPending ? "Adding…" : "Add"}
             </button>
           </label>
         </form>
@@ -575,7 +677,7 @@ export default function ProjectView() {
           }}
           className="space-y-2 rounded-lg border border-slate-200 bg-white p-4"
         >
-          <h2 className="font-semibold">Add dependency (finish → start)</h2>
+          <h2 className="font-semibold">Add dependency</h2>
           <select
             value={pred}
             onChange={(e) => setPred(Number(e.target.value))}
@@ -588,25 +690,81 @@ export default function ProjectView() {
               </option>
             ))}
           </select>
+          <select
+            value={succ}
+            onChange={(e) => setSucc(Number(e.target.value))}
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="">Successor…</option>
+            {(tasks.data ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
           <div className="flex gap-2">
             <select
-              value={succ}
-              onChange={(e) => setSucc(Number(e.target.value))}
-              className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+              value={depType}
+              onChange={(e) => setDepType(e.target.value as DependencyType)}
+              className="rounded border border-slate-300 px-3 py-2 text-sm"
+              title="FS: predecessor finishes before successor starts (default) · SS: both start together · FF: both finish together · SF: predecessor finishes when successor starts"
             >
-              <option value="">Successor…</option>
-              {(tasks.data ?? []).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
+              <option value="FS">Finish → start</option>
+              <option value="SS">Start → start</option>
+              <option value="FF">Finish → finish</option>
+              <option value="SF">Start → finish</option>
             </select>
-            <button className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
-              Link
+            <label className="flex items-center gap-1.5 text-xs text-slate-500">
+              lag (days)
+              <input
+                type="number"
+                value={depLag}
+                onChange={(e) => setDepLag(Number(e.target.value))}
+                className="w-16 rounded border border-slate-300 px-2 py-2 text-sm"
+              />
+            </label>
+            <button
+              disabled={addDependency.isPending}
+              className="ml-auto rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {addDependency.isPending ? "Linking…" : "Link"}
             </button>
           </div>
+
+          {(gantt.data?.links.length ?? 0) > 0 && (
+            <div className="border-t border-slate-100 pt-2">
+              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Existing dependencies
+              </h3>
+              <ul className="max-h-40 space-y-1 overflow-y-auto">
+                {gantt.data!.links.map((l) => (
+                  <li key={l.id} className="flex items-center gap-1.5 text-xs text-slate-600">
+                    <span className="min-w-0 flex-1 truncate">
+                      {labelFor(l.source)} → {labelFor(l.target)}
+                      <span className="ml-1 text-slate-400">
+                        ({l.type}
+                        {l.lag ? `, +${l.lag}d` : ""})
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => deleteDependency.mutate(l.id)}
+                      disabled={deleteDependency.isPending}
+                      className="shrink-0 text-slate-400 hover:text-red-600 disabled:opacity-50"
+                    >
+                      remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </form>
       </div>
+      )}
+
+      {mayWriteProject && activeTab === "gantt" && (
+        <HolidaysEditor projectId={id} mayWrite={mayWriteProject} onChanged={replanAfterEdit} />
       )}
 
       {selectedTaskId !== null && (
@@ -616,6 +774,7 @@ export default function ProjectView() {
           mayPlan={mayPlan}
           mayContribute={mayContribute}
           onClose={() => setSelectedTaskId(null)}
+          onStructuralChange={replanAfterEdit}
         />
       )}
     </div>

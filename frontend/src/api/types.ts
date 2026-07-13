@@ -102,6 +102,23 @@ export interface InitiativeRollup {
   on_track: boolean | null;
 }
 
+/** Manage-by-exception weekly roll-up (§R5) — leads with `attention`, the exception list. */
+export interface InitiativeDigest {
+  initiative_id: number;
+  name: string;
+  generated_on: string;
+  headline: string;
+  on_track: boolean | null;
+  risk_level: string;
+  drift_level: string;
+  p85_date: string | null;
+  open_blockers: number;
+  open_decisions: number;
+  attention: string[];
+  outcomes: string[];
+  markdown: string;
+}
+
 export interface RiskItem {
   id: number;
   scope_level: RiskScope;
@@ -191,6 +208,13 @@ export interface Milestone {
   description: string | null;
   target_date: string | null;
   status: string;
+}
+
+export interface Holiday {
+  id: number;
+  project_id: number;
+  day: string;
+  name: string | null;
 }
 
 export interface GanttLink {
@@ -589,6 +613,15 @@ export interface AgentTokenInfo {
   expires_at: string;
   revoked_at: string | null;
   status: "active" | "expired" | "revoked";
+}
+
+/** Non-secret instance metadata (GET /api/v1/meta) — drives the Agent Setup snippets so a fork
+ *  or self-hosted deployment shows its own repo/marketplace, not the upstream default. */
+export interface SetupMeta {
+  project_name: string;
+  plugin_marketplace_ref: string;
+  plugin_repo_url: string;
+  plugin_mcp_server_path: string;
 }
 
 // --- Demo / seeded-data mode (local & dev only) ---
@@ -1101,6 +1134,12 @@ export interface ProposalItem {
   source_label: string | null;
   source_url: string | null;
   excluded: boolean;
+  /** Reviewer's audit-preserving inline field overrides, layered over `payload` at apply time. */
+  overrides: Record<string, unknown> | null;
+  overridden_by_user_id: number | null;
+  /** resolved display name of the reviewer who overrode (read-time) */
+  overridden_by: string | null;
+  overridden_at: string | null;
   applied_entity_id: number | null;
   error: string | null;
   /** live values recomputed at read time (open proposals, update/resolve items) */
@@ -1125,6 +1164,10 @@ export interface Proposal {
   created_at: string;
   item_count: number;
   excluded_count: number;
+  /** Per-action tally for the collapsed-card shape chip: {"create": n, "update": n, "resolve": n}. */
+  action_counts: Record<string, number>;
+  /** Items that errored or drifted since staging — surfaced as a "needs attention" flag. */
+  attention_count: number;
   scope_label: string | null;
 }
 

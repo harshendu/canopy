@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -5,6 +6,7 @@ import { api } from "../api/client";
 import type {
   ForecastResponse,
   InitiativeCriticalPath,
+  InitiativeDigest,
   InitiativeRollup,
 } from "../api/types";
 import { riskTone } from "../lib/risk";
@@ -17,6 +19,7 @@ import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
+import { QueryError } from "../components/QueryError";
 import { Icon } from "../components/icons";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canWriteProjects, isPlanner } from "../lib/permissions";
@@ -51,7 +54,36 @@ export default function InitiativeView() {
     queryKey: ["initiative-forecast", id],
     queryFn: () => api.get<ForecastResponse>(`/initiatives/${id}/forecast`),
   });
+  const digest = useQuery({
+    queryKey: ["initiative-digest", id],
+    queryFn: () => api.get<InitiativeDigest>(`/initiatives/${id}/digest`),
+  });
+  const [copied, setCopied] = useState(false);
+  const copyDigest = async () => {
+    if (!digest.data) return;
+    try {
+      await navigator.clipboard.writeText(digest.data.markdown);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false); // clipboard unavailable/denied — don't lie about success (see BUG-13)
+    }
+  };
 
+  if (rollup.isError) {
+    return (
+      <div className="space-y-4">
+        <Link to="/initiatives" className="text-sm text-emerald-700 hover:underline">
+          ← Back to initiatives
+        </Link>
+        <QueryError
+          error={rollup.error}
+          onRetry={() => void rollup.refetch()}
+          label="Couldn’t load this initiative"
+        />
+      </div>
+    );
+  }
   if (!rollup.data) {
     return <p className="text-sm text-slate-500">Loading initiative…</p>;
   }
@@ -107,6 +139,40 @@ export default function InitiativeView() {
         mayWrite={mayWriteInitiative}
         onSaved={() => qc.invalidateQueries({ queryKey: ["initiative-rollup", id] })}
       />
+
+      {/* Manage-by-exception digest (§R5) — leads with what needs attention, reusing the same
+          rollup + forecast the stat grid below shows in full. Was MCP/API-only; now in the UI. */}
+      {digest.data && (
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Icon name="alerts" size={16} />
+              <h2 className="font-semibold">{digest.data.headline}</h2>
+            </div>
+            <button
+              onClick={() => void copyDigest()}
+              className="shrink-0 rounded border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              {copied ? "Copied ✓" : "Copy digest"}
+            </button>
+          </div>
+          {digest.data.attention.length > 0 ? (
+            <ul className="mt-2 space-y-1">
+              {digest.data.attention.map((a, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-slate-700">
+                  <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+                  {a}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 flex items-center gap-1.5 text-sm text-slate-500">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              Nothing needs attention this week.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <Stat

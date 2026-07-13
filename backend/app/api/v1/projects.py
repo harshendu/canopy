@@ -22,6 +22,7 @@ from app.schemas.entities import (
     ProjectUpdate,
 )
 from app.services.capacity import AvailabilitySpan
+from app.services.cascade import delete_project_cascade
 from app.services.drift import level as drift_level
 from app.services.metadata import normalize_tags
 
@@ -273,10 +274,11 @@ async def update_project(
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project(session: SessionDep, _: ArchitectWriter, project_id: int) -> None:
-    project = await session.get(Project, project_id)
-    if project is not None:
-        await session.delete(project)
-        await session.commit()
+    # Clear the project's whole object graph (tasks, schedule, decisions, architecture,
+    # governance, drafts, referencing scenario rows) in FK-safe order first — a bare delete
+    # 500s on Postgres/MySQL for any non-empty project.
+    await delete_project_cascade(session, project_id)
+    await session.commit()
 
 
 # --- Scheduling calendar: holidays ---

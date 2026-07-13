@@ -43,7 +43,7 @@ from app.services.alerts import (
     OverAllocation,
     compute_alerts,
 )
-from app.services.burndown import compute_burndown, is_done_status
+from app.services.burndown import compute_burndown, done_dates_per_task, is_done_status
 from app.services.capacity import (
     AllocationSpan,
     AvailabilitySpan,
@@ -239,8 +239,10 @@ async def burndown(session: SessionDep, _: CurrentUser, project_id: int) -> Burn
             select(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids))
         )
     ).scalars().all()
-    done_dates = sorted(
-        h.changed_at.date() for h in history if is_done_status(h.to_status)
+    # One completion date per task (last done transition) — a reopened-then-redone task must not
+    # count twice, which would inflate throughput / push burndown remaining negative.
+    done_dates = done_dates_per_task(
+        (h.task_id, h.to_status, h.changed_at.date()) for h in history
     )
 
     ends = [t.end for t in tasks if t.end]
@@ -331,10 +333,12 @@ async def board(session: SessionDep, _: CurrentUser, project_id: int) -> BoardRe
     for t in leaves:
         assert t.id is not None
         rows = by_task.get(t.id, [])
-        # When did it enter its current status? (latest matching transition, else created.)
+        # When did it enter its current status? (latest matching transition; else the task's last
+        # update, not created_at — a months-old task freshly moved in Jira but synced without its
+        # changelog would otherwise read as aging-for-months, a false "stuck" signal.)
         entered = max(
             (h.changed_at.date() for h in rows if h.to_status == t.status),
-            default=t.created_at.date(),
+            default=t.updated_at.date(),
         )
         age_days = max(0, (today - entered).days)
         done_dates = [h.changed_at.date() for h in rows if is_done_status(h.to_status)]
