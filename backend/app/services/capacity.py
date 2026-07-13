@@ -55,11 +55,14 @@ def weekly_capacity(
     weeks = mondays(window_start, window_end)
     result: dict[int, dict[date, float]] = {}
     for span in allocations:
-        if span.start is None or span.end is None:
-            continue
+        # An open-ended allocation (no start and/or no end) still consumes capacity — treat a
+        # missing bound as the window edge rather than dropping the span, or a 100% no-end-date
+        # allocation is invisible to the over-allocation check the heatmap exists to surface.
+        s = span.start or window_start
+        e = span.end or window_end
         for week in weeks:
             week_end = week + timedelta(days=6)
-            if span.start <= week_end and span.end >= week:  # span overlaps this week
+            if s <= week_end and e >= week:  # span overlaps this week
                 per_engineer = result.setdefault(span.engineer_id, {})
                 per_engineer[week] = per_engineer.get(week, 0.0) + span.percent
     return result
@@ -73,11 +76,12 @@ def weekly_availability(
     weeks = mondays(window_start, window_end)
     result: dict[int, dict[date, float]] = {}
     for span in spans:
-        if span.start is None or span.end is None:
-            continue
+        # Open-ended availability windows count too — clamp a missing bound to the window edge.
+        s = span.start or window_start
+        e = span.end or window_end
         for week in weeks:
             week_end = week + timedelta(days=6)
-            if span.start <= week_end and span.end >= week:  # span overlaps this week
+            if s <= week_end and e >= week:  # span overlaps this week
                 per_engineer = result.setdefault(span.engineer_id, {})
                 prev = per_engineer.get(week)
                 per_engineer[week] = (

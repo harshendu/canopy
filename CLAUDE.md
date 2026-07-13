@@ -81,7 +81,10 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   a `networkx` DAG). The CPM works in working-day offsets; a `WorkingCalendar` maps them to dates
   (skips weekends when `Project.skip_weekends` + project `Holiday`s). `app/services/planner.py`
   `reschedule_project` loads the graph, runs CPM with the calendar, optionally applies duration
-  overrides (what-if) and/or persists, and reports `deadline` violations. Endpoints:
+  overrides (what-if) and/or persists, and reports `deadline` violations. The CPM pin is a task's
+  **`constraint_start`** (a user "start no earlier than" input), kept **separate** from the computed
+  `start`/`end` output — never pin from the computed start, or the schedule ratchets forward-only
+  and what-if goes inert. Endpoints:
   `POST /projects/{id}/replan` (persist), `POST /projects/{id}/whatif` (no persist, duration overrides),
   `POST /projects/{id}/baseline` (snapshot start/end → `baseline_*`; logs a reasoned `Baseline`
   event — `GET .../baselines`; the Gantt overlays current-vs-baseline as **schedule variance**, and

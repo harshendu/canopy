@@ -55,7 +55,7 @@ from app.services.alerts import (
     OverAllocation,
     compute_alerts,
 )
-from app.services.burndown import compute_burndown, is_done_status
+from app.services.burndown import compute_burndown, done_dates_per_task, is_done_status
 from app.services.capacity import (
     AllocationSpan,
     AvailabilitySpan,
@@ -590,15 +590,15 @@ def scenario_alerts(m: MaterializedScenario, project_id: int) -> AlertsResponse:
 
 
 def _done_dates(m: MaterializedScenario, tasks: list[ScenarioTask]) -> list[date]:
-    """Done-transition dates from the live history of cloned tasks (added tasks have none)."""
-    dates: list[date] = []
-    for t in tasks:
-        if t.live_task_id is None:
-            continue
-        for h in m.live_history.get(t.live_task_id, []):
-            if is_done_status(h.to_status):
-                dates.append(h.changed_at.date())
-    return sorted(dates)
+    """One completion date per cloned task (last done transition) from its live history — a
+    reopened-then-redone task counts once, not once per transition (added tasks have none)."""
+    rows = [
+        (t.live_task_id, h.to_status, h.changed_at.date())
+        for t in tasks
+        if t.live_task_id is not None
+        for h in m.live_history.get(t.live_task_id, [])
+    ]
+    return done_dates_per_task(rows)
 
 
 def scenario_burndown(m: MaterializedScenario, project_id: int) -> BurndownResponse:

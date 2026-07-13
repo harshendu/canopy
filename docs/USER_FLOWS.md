@@ -547,8 +547,12 @@ projects and rolls up their health.
   path, the project end date, and any **deadline violations** (also flagged red on the Gantt).
 - **API:** `POST /api/v1/projects/{id}/replan` · **MCP:** `replan_schedule`.
 - **Result:** computes start/end dates, `is_critical`, and float for every task, honoring the
-  project's working calendar (weekends + holidays) and any task's set start date (treated as
-  start-no-earlier-than). Cycles return a 409 error.
+  project's working calendar (weekends + holidays) and a task's **`constraint_start`** — an
+  explicit "start no earlier than" (SNET) pin, set via `PATCH /tasks/{id}`. `constraint_start` is
+  kept **separate from the computed `start`** so a replan never reuses last run's *output* as this
+  run's *pin*; without that separation the schedule ratcheted forward-only and what-if (§C5) was
+  inert (removing a dependency or cutting a duration couldn't pull successors earlier). Repeated
+  replans are now idempotent, and cutting scope pulls the end in. Cycles return a 409 error.
 
 ### C4. Set / view a baseline (schedule variance)
 - **UI:** project header → **Set baseline** opens a note field ("Why re-baseline?") and snapshots
@@ -565,7 +569,10 @@ projects and rolls up their health.
 - **Actor:** architect via Claude (or API) · **MCP:** `whatif_schedule` · **API:**
   `POST /api/v1/projects/{id}/whatif` with `duration_overrides` (`{task_id: working_days}`).
 - **Result:** returns a *projected* end date / critical path / deadline violations **without
-  persisting** — for "what if we add an engineer / cut scope" analysis.
+  persisting** — for "what if we add an engineer / cut scope" analysis. Now **actually responsive**:
+  cutting a duration pulls dependent work (and the project end) earlier, because the scheduler no
+  longer pins tasks at their last-computed start (see §C3 `constraint_start`). Previously a scope
+  cut showed no improvement.
 - **UI gap:** no what-if screen yet; it's driven through Claude or the API.
 
 ### C6. Zoom the Gantt
@@ -1078,7 +1085,12 @@ attach their **own** OAuth credential to it — canopy then reads/writes **as th
   not-yet-done issue keeps any manually-entered partial progress). This keeps the status-derived
   views (board/burndown/forecast/DORA) and the progress %/portfolio rollups agreeing on one
   definition of done, so a Jira-driven project no longer reads as 0% complete with an inflated
-  forecast. Shared by the direct sync and the MCP ingest (§J3a).
+  forecast. Shared by the direct sync and the MCP ingest (§J3a). **"Done" is recognized across the
+  common completion columns** — `done/closed/resolved/complete(d)/shipped/deployed/released/live/
+  merged/accepted` (`app/services/burndown.py:is_done_status`), so a board that ends in "Shipped"
+  registers as done everywhere; per-connection configurable done-mapping is the remaining follow-up.
+  Completion is counted **once per task** (last done transition) — a reopened-then-redone task no
+  longer double-counts (which had inflated throughput and could drive burndown remaining negative).
 - **API:** `POST /api/v1/connectors/connections/{id}/sync` (full) and `.../sync/incremental` ·
   **MCP:** `trigger_jira_sync`.
 - **Background:** an arq worker runs an incremental reconciliation poll on a cron as the correctness

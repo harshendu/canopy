@@ -173,7 +173,9 @@ async def reschedule_project(
             duration=effective_duration(t.type, t.duration, overrides.get(t.id)),
             type=t.type,
             parent_id=t.parent_id,
-            pinned_start=t.start,
+            # Pin only from an explicit user constraint, never the last run's computed start —
+            # otherwise the schedule ratchets forward-only and what-if can't pull work earlier.
+            pinned_start=t.constraint_start,
             deadline=t.deadline,
         )
         for t in tasks

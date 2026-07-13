@@ -35,7 +35,7 @@ from app.schemas.entities import (
     ProjectSummary,
 )
 from app.services import digest as digest_service
-from app.services.burndown import is_done_status
+from app.services.burndown import done_dates_per_task
 from app.services.capacity import AvailabilitySpan
 from app.services.cross_project import CPDep, CPTask, cross_project_critical_path
 from app.services.drift import level as drift_level
@@ -445,7 +445,9 @@ async def initiative_forecast(
                 select(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids))
             )
         ).scalars().all()
-        done_dates = sorted(h.changed_at.date() for h in history if is_done_status(h.to_status))
+        done_dates = done_dates_per_task(
+            (h.task_id, h.to_status, h.changed_at.date()) for h in history
+        )
     today = date.today()
     result = monte_carlo_forecast(remaining, weekly_throughput(done_dates, today), today)
     return ForecastResponse(
