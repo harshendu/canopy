@@ -44,7 +44,13 @@ async def login(
 ) -> Token:
     result = await session.execute(select(User).where(User.email == form.username))
     user = result.scalar_one_or_none()
-    if user is None or not verify_password(form.password, user.hashed_password):
+    # Verify the password before the is_active check so a deactivated account gets the *same* 401
+    # as a bad password (no "the account exists but is disabled" side-channel).
+    if (
+        user is None
+        or not verify_password(form.password, user.hashed_password)
+        or not user.is_active
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password"
         )
@@ -132,7 +138,10 @@ async def revoke_my_agent_token(
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def register(session: SessionDep, _: AdminUser, payload: UserCreate) -> User:
+async def register(session: SessionDep, _: AdminUser, __: HumanOnly, payload: UserCreate) -> User:
+    # Human-only: registering a user *sets an initial credential and grants a role* — the same
+    # class of action as reset_password. An agent token (even an admin's) must not be able to
+    # create/promote an account, which would otherwise escape bounded agency (§A6).
     existing = await session.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
@@ -170,8 +179,10 @@ async def _other_active_admins_exist(session: SessionDep, user: User) -> bool:
 
 @router.patch("/users/{user_id}", response_model=UserRead)
 async def update_user(
-    session: SessionDep, admin: AdminUser, user_id: int, payload: UserUpdate
+    session: SessionDep, admin: AdminUser, _h: HumanOnly, user_id: int, payload: UserUpdate
 ) -> User:
+    # Human-only: this can change a user's role (e.g. promote to admin) or reactivate an
+    # account — a credential/authority mutation an agent token must not perform (§A6).
     user = await session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")

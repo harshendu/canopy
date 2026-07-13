@@ -33,12 +33,15 @@ export default function TaskDetailPanel({
   mayPlan,
   mayContribute,
   onClose,
+  onStructuralChange,
 }: {
   taskId: number;
   projectId: number;
   mayPlan: boolean;
   mayContribute: boolean;
   onClose: () => void;
+  /** Called after a save that changed a scheduling input (duration) — lets the parent re-run CPM. */
+  onStructuralChange?: () => void;
 }) {
   const task = useQuery({
     queryKey: ["task", taskId],
@@ -75,7 +78,14 @@ export default function TaskDetailPanel({
         </div>
 
         <div className="space-y-6 p-4">
-          {task.data && <TaskFields task={task.data} projectId={projectId} canEdit={mayPlan} />}
+          {task.data && (
+            <TaskFields
+              task={task.data}
+              projectId={projectId}
+              canEdit={mayPlan}
+              onStructuralChange={onStructuralChange}
+            />
+          )}
 
           <section>
             <h3 className="mb-2 text-sm font-semibold text-slate-700">External links</h3>
@@ -104,10 +114,12 @@ function TaskFields({
   task: t,
   projectId,
   canEdit,
+  onStructuralChange,
 }: {
   task: Task;
   projectId: number;
   canEdit: boolean;
+  onStructuralChange?: () => void;
 }) {
   const qc = useQueryClient();
   const [progress, setProgress] = useState(String(t.percent_complete));
@@ -136,8 +148,9 @@ function TaskFields({
   const save = useMutation({
     mutationFn: () =>
       api.patch(`/tasks/${t.id}`, {
-        percent_complete: Number(progress),
-        duration: Number(duration),
+        // Clamp to the field's valid range — min/max only bind the spinner arrows, not typed input.
+        percent_complete: Math.min(100, Math.max(0, Number(progress) || 0)),
+        duration: Math.max(0, Number(duration) || 0),
         estimate_optimistic: numOrNull(opt),
         estimate_likely: numOrNull(likely),
         estimate_pessimistic: numOrNull(pess),
@@ -149,6 +162,8 @@ function TaskFields({
       qc.invalidateQueries({ queryKey: ["tasks", projectId] });
       qc.invalidateQueries({ queryKey: ["gantt", projectId] });
       qc.invalidateQueries({ queryKey: ["board", projectId] });
+      // Duration is a CPM input — let the parent re-plan so dates/critical path don't go stale.
+      onStructuralChange?.();
     },
   });
 
@@ -252,6 +267,11 @@ function TaskFields({
         <TagEditor tags={tags} onChange={setTags} disabled={!canEdit} />
       </div>
 
+      {save.isError && (
+        <p role="alert" className="text-sm text-red-700">
+          Couldn’t save: {(save.error as Error).message}
+        </p>
+      )}
       {canEdit && (
         <button
           type="submit"

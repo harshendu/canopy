@@ -72,6 +72,16 @@ that navigates must follow them.
   active group's views (secondary), replacing the old single-level strips (a 17-tab
   horizontal-scroll / a 10-tab wrapping row). The pure nav models are `lib/projectNav.ts` /
   `lib/scenarioNav.ts`.
+- **First-run guide:** on a brand-new, **empty install** (no projects *and* no engineers) the `/`
+  landing shows a **Get started** checklist (`components/GetStarted.tsx`) — create a project → add
+  the team → connect Jira/GitHub/Drive → break down + schedule — instead of routing the installing
+  admin (whose `function` defaults to `engineering`) to an empty `/me` that tells them to "ask an
+  admin" (themselves). Once any project/engineer exists, persona landing (§A7) resumes.
+- **Resilient states:** an app-level **error boundary** (`components/ErrorBoundary.tsx`) keeps one
+  bad view from blanking the whole SPA, and async panels distinguish an **error** from an empty
+  state (`components/QueryError.tsx`) — a failed `/alerts` reads "couldn't load", never a false
+  "On track"; a failed `/portfolio` never reads "No projects yet". The SSE live-refresh (§K)
+  reconnects after a transient drop instead of closing permanently.
 
 ---
 
@@ -173,14 +183,19 @@ forbidden from **one-way-door / external-write** actions; **two-way-door** actio
   and `get_current_user` rejects it once revoked. **List/revoke:** `GET /auth/agent-tokens` (your
   tokens + expiry + status) and `DELETE /auth/agent-tokens/{id}` (revoke, `HumanOnly`). UI: the
   **Agent Setup** tab (§A11).
-- **What an agent token is blocked from (403):** accepting a **one-way-door** decision
-  (`PATCH /architecture/adrs/{id}` → `accepted` when `reversibility=one_way`, §G2); **pushing a
-  draft plan to Jira** (`POST /draft-plans/{id}/push-to-jira`, §C10 — an external write);
-  **applying a scenario** to the live plan (`POST /scenarios/{id}/apply`, §T5); and
-  **reviewing/applying/rejecting a change proposal** (§AA — the agent stages, the human
-  commits). Everything else (creating/updating tasks, proposing/refining decisions, accepting
-  *two-way* doors, specs, blockers, risks, draft authoring, **staging + withdrawing
-  proposals**) stays open. Enforced in `app/api/deps.py`
+- **What an agent token is blocked from (403):** accepting a decision that is **not explicitly
+  two-way** (`PATCH /architecture/adrs/{id}` → `accepted` unless `reversibility=two_way` — an
+  *unclassified* decision fails closed too, §G2); **pushing a draft plan to Jira**
+  (`POST /draft-plans/{id}/push-to-jira`, §C10 — an external write); **applying a scenario** to the
+  live plan (`POST /scenarios/{id}/apply`, §T5); **reviewing/applying/rejecting a change proposal**
+  (§AA — the agent stages, the human commits); and **credential / role / admin-config mutations**
+  — registering or updating a user (`POST /auth/register`, `PATCH /auth/users/{id}`, which set an
+  initial credential or grant a role) and toggling feature gates / integration strategy
+  (`PATCH /admin/features/{key}`, `/admin/integrations/{provider}`). This keeps an admin's agent
+  token from escalating to a fresh full-scope admin account (the credential rule `reset_password`
+  already honored, now consistent across every credential/authority path). Everything else
+  (creating/updating tasks, proposing/refining decisions, accepting *two-way* doors, specs,
+  blockers, risks, draft authoring, **staging + withdrawing proposals**) stays open. Enforced in `app/api/deps.py`
   (`require_human` / `HumanOnly`); the scope rides in the JWT (`app/core/security.py`), and
   `GET /auth/session` reports it so a session can see its own limits.
 - **Not built:** auto-running the coherence guardrails (drift + PR-to-ADR + fitness) on an
@@ -457,8 +472,15 @@ projects and rolls up their health.
   (API/MCP — the UI form creates top-level tasks).
 - **Edit / assign:** `PATCH /api/v1/tasks/{id}` (a planner edits any task; an engineer only one
   assigned to them — §A3a) · **MCP:** `update_task` (planning fields: name/duration/start/end/
-  deadline/percent_complete/parent — **status stays Jira-mirrored, read-only**) and `assign_task`
-  (set/clear `assignee_engineer_id`). Re-run `replan_schedule` after duration/structure changes.
+  deadline/percent_complete/parent — **status stays Jira-mirrored, read-only**; `status` is not a
+  writable field on the direct REST route either, matching the proposal/MCP whitelists) and
+  `assign_task` (set/clear `assignee_engineer_id`).
+- **Auto-replan (UI):** adding a task, adding a dependency, or changing a task's duration in the
+  dashboard now **re-runs CPM automatically** (planner sessions) and shows the delta banner —
+  scheduled-task count, the critical path **by task name**, project end, and any deadline
+  violations — so the schedule + critical path never silently go stale between edits. A cyclic
+  dependency surfaces the 409 inline instead of failing quietly. The manual **Schedule (CPM)**
+  button stays for an explicit re-run. (Agent/API callers still call `replan_schedule` themselves.)
 
 ### C1a. Task detail panel — owner, estimates, tags, progress, blockers, risks, external links **[new]**
 - **UI:** click a task bar in the **Gantt** (or a card on the **Board**) to open a right-side
@@ -1020,6 +1042,12 @@ attach their **own** OAuth credential to it — canopy then reads/writes **as th
   arrives with clear individual ownership on the Gantt/Board/workspace (§C6a, §M). An issue that is
   **unassigned in Jira leaves a locally-set owner untouched** (local assignment stays usable);
   a set Jira assignee wins over a local one. Status stays read-only as ever.
+- **Completion (progress %):** sync mirrors completion from the issue status — a **done** status
+  marks the task **100%** complete, and an issue that regresses out of done drops back to 0 (a
+  not-yet-done issue keeps any manually-entered partial progress). This keeps the status-derived
+  views (board/burndown/forecast/DORA) and the progress %/portfolio rollups agreeing on one
+  definition of done, so a Jira-driven project no longer reads as 0% complete with an inflated
+  forecast. Shared by the direct sync and the MCP ingest (§J3a).
 - **API:** `POST /api/v1/connectors/connections/{id}/sync` (full) and `.../sync/incremental` ·
   **MCP:** `trigger_jira_sync`.
 - **Background:** an arq worker runs an incremental reconciliation poll on a cron as the correctness

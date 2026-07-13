@@ -1,8 +1,8 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type {
   Baseline,
   BurndownResponse,
@@ -66,6 +66,7 @@ export default function ProjectView() {
   const [pred, setPred] = useState<number | "">("");
   const [succ, setSucc] = useState<number | "">("");
   const [lastReplan, setLastReplan] = useState<ReplanResult | null>(null);
+  const [replanError, setReplanError] = useState<string | null>(null);
   const [baselining, setBaselining] = useState(false);
   const [baselineNote, setBaselineNote] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
@@ -113,9 +114,22 @@ export default function ProjectView() {
     enabled: activeTab === "burndown",
   });
 
+  // Map task id → name so the replan banner reads names, not raw ids (the API returns id lists).
+  const taskName_ = useMemo(
+    () => new Map((tasks.data ?? []).map((t) => [t.id, t.name] as const)),
+    [tasks.data],
+  );
+  const labelFor = (tid: number): string => taskName_.get(tid) ?? `#${tid}`;
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["gantt", id] });
     qc.invalidateQueries({ queryKey: ["tasks", id] });
+  };
+  // A structural/duration edit invalidates CPM output (start/end/critical path). Re-run the
+  // scheduler automatically so the plan never silently goes stale (was: user had to remember to
+  // click "Schedule (CPM)"). The delta banner shows what moved.
+  const replanAfterEdit = () => {
+    if (mayPlan) replan.mutate();
   };
 
   const addTask = useMutation({
@@ -131,7 +145,9 @@ export default function ProjectView() {
       setTaskName("");
       setTaskDeadline("");
       invalidate();
+      replanAfterEdit();
     },
+    onError: (e) => setReplanError(e instanceof ApiError ? e.message : "Couldn’t add the task."),
   });
 
   const toggleWeekends = useMutation({
@@ -150,15 +166,28 @@ export default function ProjectView() {
       setPred("");
       setSucc("");
       invalidate();
+      replanAfterEdit();
     },
+    onError: (e) =>
+      setReplanError(e instanceof ApiError ? e.message : "Couldn’t link the dependency."),
   });
 
   const replan = useMutation({
     mutationFn: () => api.post<ReplanResult>(`/projects/${id}/replan`),
     onSuccess: (res) => {
       setLastReplan(res);
+      setReplanError(null);
       invalidate();
     },
+    // Surface scheduling failures (e.g. a cyclic dependency → 409) instead of failing silently.
+    onError: (e) =>
+      setReplanError(
+        e instanceof ApiError
+          ? e.status === 409
+            ? "Scheduling failed: the dependencies form a cycle. Remove the circular link and retry."
+            : e.message
+          : "Scheduling failed.",
+      ),
   });
 
   const baselinesOn = featureOn(features, "planning.baselines");
@@ -296,17 +325,33 @@ export default function ProjectView() {
         />
       )}
 
+      {replanError && (
+        <div
+          role="alert"
+          className="flex items-start justify-between gap-3 rounded border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700"
+        >
+          <span>⚠ {replanError}</span>
+          <button
+            onClick={() => setReplanError(null)}
+            className="text-red-500 hover:text-red-800"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {lastReplan && (
         <div className="space-y-1">
           <div className="rounded border border-canopy-500/30 bg-canopy-50 px-4 py-2 text-sm text-canopy-700">
             Scheduled {lastReplan.scheduled_tasks} tasks · critical path:{" "}
-            {lastReplan.critical_path.join(" → ") || "none"} · ends{" "}
+            {lastReplan.critical_path.map(labelFor).join(" → ") || "none"} · ends{" "}
             {lastReplan.project_end ?? "—"}
           </div>
           {lastReplan.deadline_violations.length > 0 && (
             <div className="rounded border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700">
               ⚠ {lastReplan.deadline_violations.length} task(s) miss their deadline:{" "}
-              {lastReplan.deadline_violations.join(", ")}
+              {lastReplan.deadline_violations.map(labelFor).join(", ")}
             </div>
           )}
         </div>
@@ -616,6 +661,7 @@ export default function ProjectView() {
           mayPlan={mayPlan}
           mayContribute={mayContribute}
           onClose={() => setSelectedTaskId(null)}
+          onStructuralChange={replanAfterEdit}
         />
       )}
     </div>

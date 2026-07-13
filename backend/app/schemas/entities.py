@@ -126,7 +126,10 @@ class TaskCreate(BaseModel):
     end: date | None = None
     duration: int = 1
     percent_complete: float = 0.0
-    status: str | None = None
+    # NB: `status` is deliberately NOT writable here — it is the Jira-mirrored, read-only field
+    # (Source-of-truth boundary). Writing it directly silently corrupts the status-derived views
+    # (board/aging, burndown, forecast, DORA) with no TaskStatusHistory row. The proposal and MCP
+    # write paths already exclude it; the direct REST route now matches them.
     deadline: date | None = None
     assignee_engineer_id: int | None = None
     spec_id: int | None = None
@@ -145,7 +148,7 @@ class TaskUpdate(BaseModel):
     end: date | None = None
     duration: int | None = None
     percent_complete: float | None = None
-    status: str | None = None
+    # `status` is Jira-mirrored + read-only — not writable via this route (see TaskCreate).
     deadline: date | None = None
     assignee_engineer_id: int | None = None
     spec_id: int | None = None

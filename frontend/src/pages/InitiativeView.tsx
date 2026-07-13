@@ -17,6 +17,7 @@ import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
+import { QueryError } from "../components/QueryError";
 import { Icon } from "../components/icons";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canWriteProjects, isPlanner } from "../lib/permissions";
@@ -52,6 +53,20 @@ export default function InitiativeView() {
     queryFn: () => api.get<ForecastResponse>(`/initiatives/${id}/forecast`),
   });
 
+  if (rollup.isError) {
+    return (
+      <div className="space-y-4">
+        <Link to="/initiatives" className="text-sm text-emerald-700 hover:underline">
+          ← Back to initiatives
+        </Link>
+        <QueryError
+          error={rollup.error}
+          onRetry={() => void rollup.refetch()}
+          label="Couldn’t load this initiative"
+        />
+      </div>
+    );
+  }
   if (!rollup.data) {
     return <p className="text-sm text-slate-500">Loading initiative…</p>;
   }

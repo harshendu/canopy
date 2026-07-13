@@ -264,6 +264,10 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
     MySQL and truncates/errors. Short/identifier/indexed columns stay `str` (VARCHAR).
   - **Postgres/MySQL enforce foreign keys; SQLite does not by default.** Don't rely on SQLite's lax
     enforcement — handle cascade/ordering explicitly (e.g. clear self-references before bulk-deleting).
+    Deleting a `Task`/`Project` goes through `app/services/cascade.py` (`delete_task_cascade` /
+    `delete_project_cascade`), which clears FK-referencing rows in child→parent order — a bare
+    `session.delete()` 500s on PG/MySQL and silently orphans on SQLite. `tests/test_cascade_delete.py`
+    verifies it under `PRAGMA foreign_keys=ON` over the full demo graph, so a missed table fails CI.
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
   REST routes (~125 across projects/planning/proposals/connectors/team/architecture/scenarios/
   specs/docs/delivery/outcomes). Skills are runbooks (`updating-canopy` — the session operating

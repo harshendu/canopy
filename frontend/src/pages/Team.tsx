@@ -233,7 +233,9 @@ export default function Team() {
           </li>
         ))}
         {engineers.data?.length === 0 && (
-          <li className="px-4 py-6 text-center text-sm text-slate-400">No engineers yet.</li>
+          <li className="px-4 py-6 text-center text-sm text-slate-400">
+            No engineers yet — add your first team member with the form above.
+          </li>
         )}
       </ul>
 

@@ -18,12 +18,10 @@ from sqlmodel import col, select
 from app.core.events import publish
 from app.models.base import utcnow
 from app.models.project import (
-    Blocker,
     Dependency,
     Milestone,
     Project,
     Task,
-    TaskStatusHistory,
 )
 from app.models.scenario import (
     Scenario,
@@ -35,6 +33,7 @@ from app.models.scenario import (
 )
 from app.models.team import Allocation, EngineerAvailability
 from app.schemas.scenarios import ScenarioApplyResult, ScenarioConflict
+from app.services.cascade import delete_task_cascade
 from app.services.planner import reschedule_project
 
 
@@ -106,36 +105,11 @@ def _ordered_by_depth(tasks: list[ScenarioTask]) -> list[ScenarioTask]:
 
 
 async def _delete_live_task(session: AsyncSession, task_id: int) -> None:
-    """Delete a live task and the rows that FK-reference it (deps, allocations, blockers,
-    status history) so the delete is safe under enforced foreign keys."""
-    for dep in (
-        await session.execute(
-            select(Dependency).where(
-                (col(Dependency.predecessor_id) == task_id)
-                | (col(Dependency.successor_id) == task_id)
-            )
-        )
-    ).scalars().all():
-        await session.delete(dep)
-    for alloc in (
-        await session.execute(select(Allocation).where(Allocation.task_id == task_id))
-    ).scalars().all():
-        await session.delete(alloc)
-    for blocker in (
-        await session.execute(
-            select(Blocker).where(
-                (col(Blocker.task_id) == task_id) | (col(Blocker.blocking_task_id) == task_id)
-            )
-        )
-    ).scalars().all():
-        await session.delete(blocker)
-    for hist in (
-        await session.execute(select(TaskStatusHistory).where(TaskStatusHistory.task_id == task_id))
-    ).scalars().all():
-        await session.delete(hist)
-    live = await session.get(Task, task_id)
-    if live is not None:
-        await session.delete(live)
+    """Delete a live task and every row that FK-references it (deps, allocations, blockers,
+    status history, PR/scenario refs) so the delete is safe under enforced foreign keys. Child
+    tasks are promoted to the deleted task's parent — the shared cascade also fixes the old bug
+    where a removed parent left its live children with a dangling ``parent_id``."""
+    await delete_task_cascade(session, task_id)
 
 
 async def apply_scenario(

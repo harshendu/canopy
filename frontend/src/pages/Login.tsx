@@ -9,7 +9,8 @@ import { useAuth } from "../lib/auth";
 export default function Login() {
   const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("architect@example.com");
+  // Empty by default — the demo-accounts panel below offers click-to-fill in demo mode.
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

@@ -17,6 +17,7 @@ from app.schemas.entities import (
     TaskStatusHistoryRead,
     TaskUpdate,
 )
+from app.services.cascade import delete_task_cascade
 from app.services.links import collect_task_links
 from app.services.metadata import normalize_tags
 
@@ -104,7 +105,7 @@ async def update_task(
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_task(session: SessionDep, _: PlannerWriter, task_id: int) -> None:
-    task = await session.get(Task, task_id)
-    if task is not None:
-        await session.delete(task)
-        await session.commit()
+    # Clear FK-referencing rows first (deps, history, blockers, allocations, PR/scenario refs)
+    # and promote children — a bare delete 500s on Postgres/MySQL for any linked task.
+    await delete_task_cascade(session, task_id)
+    await session.commit()

@@ -17,7 +17,9 @@ export function useEventStream(enabled: boolean): void {
     source.onmessage = () => {
       void qc.invalidateQueries();
     };
-    source.onerror = () => source.close();
+    // Do NOT close on error: EventSource auto-reconnects after a transient drop (network blip,
+    // proxy idle-timeout, backend redeploy). Calling close() here would set state to CLOSED and
+    // permanently kill live-refresh for the rest of the session. The unmount cleanup closes it.
     return () => source.close();
   }, [enabled, qc]);
 }

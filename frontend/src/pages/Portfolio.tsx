@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bar,
@@ -16,9 +17,10 @@ import { healthTone } from "../lib/health";
 import ExportMenu from "../components/ExportMenu";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
+import { QueryError } from "../components/QueryError";
 
 export default function Portfolio() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["portfolio"],
     queryFn: () => api.get<PortfolioResponse>("/projects/portfolio"),
   });
@@ -35,8 +37,19 @@ export default function Portfolio() {
 
       {isLoading ? (
         <p className="text-sm text-slate-500">Loading…</p>
+      ) : isError ? (
+        <QueryError
+          error={error}
+          onRetry={() => void refetch()}
+          label="Couldn’t load the portfolio"
+        />
       ) : projects.length === 0 ? (
-        <p className="text-sm text-slate-400">No projects yet.</p>
+        <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500">
+          No projects yet. Projects are where you plan and schedule work.{" "}
+          <Link to="/projects" className="font-medium text-emerald-700 hover:underline">
+            Create your first project →
+          </Link>
+        </div>
       ) : (
         <>
           <div className="rounded-lg border border-slate-200 bg-white p-4">
