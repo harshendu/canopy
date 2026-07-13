@@ -2,6 +2,7 @@
 
 from app.models import _dialects  # noqa: F401  (registers cross-dialect DDL compiler hooks)
 from app.models.activity import ActivityEvent
+from app.models.agent_token import AgentTokenRecord
 from app.models.architecture import (
     ADRComment,
     ADRComponentLink,
@@ -62,6 +63,7 @@ __all__ = [
     "ADRFitnessFunction",
     "ADRStakeholder",
     "ActivityEvent",
+    "AgentTokenRecord",
     "Allocation",
     "ArchitectureComponent",
     "ArchitectureDecision",

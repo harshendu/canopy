@@ -126,9 +126,15 @@ carries a **scope** claim: `full` (a human login — does anything its role allo
 bounded token an architect hands to Claude). An `agent` token acts **as its issuer** but is
 forbidden from **one-way-door / external-write** actions; **two-way-door** actions run freely
 (bias to action on reversible work).
-- **Mint:** `POST /api/v1/auth/agent-token` (planner) → an `agent`-scoped JWT for the current
-  user (`{expires_minutes?}`, default 7 days, max 30). Configure the plugin's `CANOPY_API_TOKEN`
-  with this instead of a full login token.
+- **Mint:** `POST /api/v1/auth/agent-token` (**any signed-in user** — the token only carries the
+  issuer's own permissions, so this is safe; `HumanOnly` stops an agent token from minting another)
+  → an `agent`-scoped JWT for the current user (`{label?, expires_minutes?}`, default 7 days, max
+  30; gated by the `ai.agent_tokens` feature). Configure the plugin's `CANOPY_API_TOKEN` with this
+  instead of a full login token. Minted tokens are **persisted as metadata** (`AgentTokenRecord` —
+  never the secret, which is shown once) so they can be listed and revoked; the JWT carries a `jti`
+  and `get_current_user` rejects it once revoked. **List/revoke:** `GET /auth/agent-tokens` (your
+  tokens + expiry + status) and `DELETE /auth/agent-tokens/{id}` (revoke, `HumanOnly`). UI: the
+  **Agent Setup** tab (§A11).
 - **What an agent token is blocked from (403):** accepting a **one-way-door** decision
   (`PATCH /architecture/adrs/{id}` → `accepted` when `reversibility=one_way`, §G2); **pushing a
   draft plan to Jira** (`POST /draft-plans/{id}/push-to-jira`, §C10 — an external write);
@@ -244,6 +250,28 @@ entire install — e.g. run canopy as "plan + Jira sync + Gantt only" by disabli
   hook). The UI mirror is `useFeatures`/`featureOn` (`src/lib/useFeatures.ts`).
 - **Not built:** per-user / per-project gates (gates are install-wide), and a "who toggled what
   when" audit trail.
+
+### A11. Agent Setup tab — self-service MCP token + connection instructions **[new]**
+Every user needs a way to point their own Claude Code at canopy. The **Agent Setup** tab lets any
+signed-in user mint a bounded agent token (§A6), see their live tokens, revoke one, and copy the
+exact steps to connect — as a full plugin or a bare MCP server.
+- **Actor:** any authenticated user (the token carries only the issuer's own permissions).
+- **UI:** `/agent-setup` (sidebar **Agent Setup**, shown to everyone). Three parts: (1) a
+  **generate** form (name + 7/14/30-day expiry) that reveals the secret **once** in a copy block
+  with a "copy it now" warning; (2) a **token list** — label, status chip (active/expired/revoked),
+  expiry phrase, and a two-click **Revoke**; (3) **Connect Claude Code** with a *Full plugin* /
+  *MCP only* toggle whose copy-paste snippets auto-fill the just-minted token. When the
+  `ai.agent_tokens` gate is off, the generate form is replaced by an explainer but list/revoke stay.
+- **API:** `POST /auth/agent-token` (mint, `ai.agent_tokens`-gated), `GET /auth/agent-tokens`
+  (list), `DELETE /auth/agent-tokens/{id}` (revoke) — see §A6. The token is consumed by the MCP
+  server as `CANOPY_API_TOKEN` (plugin `api_token`), so the instructions mirror §L1.
+- **Notes:** the *Full plugin* path is `/plugin marketplace add … → /plugin install canopy@canopy →`
+  set `api_base_url` + `api_token`; the *MCP only* path clones the repo, `pip install`s
+  `mcp_server/requirements.txt`, and drops a stdio `.mcp.json` (`CANOPY_API_BASE_URL` +
+  `CANOPY_API_TOKEN`). The API URL defaults to the dashboard origin (with a local-dev
+  `:8000` note); a shared always-on HTTP MCP server points at `docs/PRODUCTION.md` instead.
+- **Not built:** per-token last-used tracking, and a shared-server (HTTP transport) token flow —
+  the tab is scoped to a per-user stdio token.
 
 ---
 
@@ -1664,15 +1692,14 @@ backlog:
 - **What-if** scheduling (C5).
 - The **epic doc-field mapping / harvest** setup (§V2/§V3) stays conversational (AI-driven via the
   plugin) — no React wizard (deliberate); the Docs **tab** itself is built (read + add links).
-- The **agent-token** mint (§A6) has no UI button yet — mint via `POST /auth/agent-token` (the
-  Specs/Docs/Delivery **tabs** themselves are now built).
 - Project rename/archive/date edits and **holiday** management (B4, C7).
 - *(closed previously: G5 blast radius; Risk (§Q) + portfolio scores (§B1); user/role mgmt (A3) +
   engineer workspace (§M); per-role enforcement (§A3a); drift detection (§N); retros/postmortems
   (§P). Closed this revision: **CI/observability events + Activity feed** (§J8) with incident
   postmortem auto-open (§P2); the **quality** risk family + **drift-into-risk** + **risk timeline**
   (§Q); **ADR doc-import** UI (G6); **component owner/criticality/tier** (§G1); **`/me/today`** (§M);
-  the **decision-deadline nudger** + **PR-to-ADR linker** skills (§L8/§L9).)*
+  the **decision-deadline nudger** + **PR-to-ADR linker** skills (§L8/§L9); the **Agent Setup** tab
+  — self-service agent-token mint/list/revoke + plugin & MCP setup instructions (§A11).)*
 
 ## Not built (deliberately deferred — with rationale)
 - **OIDC/SSO + `HttpOnly`-cookie tokens** (§A1): a substantial auth overhaul; the `Bearer` JWT path

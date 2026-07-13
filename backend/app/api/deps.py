@@ -8,7 +8,12 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.core.db import get_session
-from app.core.security import decode_access_token, decode_token_actor, decode_token_scope
+from app.core.security import (
+    decode_access_token,
+    decode_token_actor,
+    decode_token_jti,
+    decode_token_scope,
+)
 from app.models.base import TokenScope, UserRole
 from app.models.team import Engineer
 from app.models.user import User
@@ -36,6 +41,15 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if user is None or not user.is_active:
         raise credentials_error
+    # A persisted (revocable) token carries a `jti`; reject it once its record is revoked. Ordinary
+    # stateless tokens have no `jti` and skip this entirely (no extra query). Lazy import avoids a
+    # deps↔services import cycle (same pattern as require_feature).
+    jti = decode_token_jti(token)
+    if jti is not None:
+        from app.services.agent_tokens import token_is_revoked
+
+        if await token_is_revoked(session, jti):
+            raise credentials_error
     return user
 
 

@@ -563,6 +563,34 @@ export interface SessionInfo {
   impersonator: User | null;
 }
 
+// --- Agent tokens (Agent Setup tab: mint a bounded token for Claude / the MCP server, §A6) ---
+export interface AgentTokenRequest {
+  label?: string | null;
+  expires_minutes?: number | null;
+}
+
+/** A freshly minted token — the only time `access_token` (the secret) is returned. */
+export interface AgentToken {
+  access_token: string;
+  token_type?: string;
+  scope: string;
+  id: number;
+  label: string;
+  expires_minutes: number;
+  expires_at: string;
+}
+
+/** A minted token as listed later — metadata only, never the secret. */
+export interface AgentTokenInfo {
+  id: number;
+  label: string;
+  scope: string;
+  issued_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  status: "active" | "expired" | "revoked";
+}
+
 // --- Demo / seeded-data mode (local & dev only) ---
 export interface DemoAccount {
   email: string;

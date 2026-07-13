@@ -20,6 +20,7 @@ def create_access_token(
     expires_minutes: int | None = None,
     scope: str = "full",
     actor: str | None = None,
+    jti: str | None = None,
 ) -> str:
     expire = datetime.now(UTC) + timedelta(
         minutes=expires_minutes or settings.ACCESS_TOKEN_EXPIRE_MINUTES
@@ -28,6 +29,9 @@ def create_access_token(
     if actor is not None:
         # RFC 8693-style delegation: an admin acts *as* `subject` while `act` records who they are.
         payload["act"] = actor
+    if jti is not None:
+        # Token id for a revocable (persisted) token — see AgentTokenRecord / get_current_user.
+        payload["jti"] = jti
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -47,6 +51,17 @@ def decode_token_actor(token: str) -> str | None:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         actor = payload.get("act")
         return str(actor) if actor is not None else None
+    except jwt.PyJWTError:
+        return None
+
+
+def decode_token_jti(token: str) -> str | None:
+    """The token id (`jti` claim) of a revocable persisted token (an agent token), or ``None`` for
+    an ordinary stateless token. `get_current_user` uses it to reject a revoked token."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        jti = payload.get("jti")
+        return str(jti) if jti is not None else None
     except jwt.PyJWTError:
         return None
 
