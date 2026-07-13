@@ -141,12 +141,14 @@ export default function RiskView({ projectId }: { projectId: number }) {
         ))}
       </div>
 
-      {/* Mitigation log */}
+      {/* Indicator acknowledgements — NOT "mitigations": these acknowledge a *computed* indicator
+          with a note/owner/check-in. Distinct from the RAID register's own mitigation/contingency
+          fields (its own sub-view), which is why the old "Mitigation log" name was confusing. */}
       <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 font-semibold">Mitigation log</h2>
+        <h2 className="mb-2 font-semibold">Indicator acknowledgements</h2>
         {data.mitigations.length === 0 ? (
           <p className="text-sm text-slate-400">
-            No mitigations yet — acknowledge an indicator above to start one.
+            Nothing acknowledged yet — acknowledge an indicator above to track a response.
           </p>
         ) : (
           <ul className="space-y-2 text-sm">

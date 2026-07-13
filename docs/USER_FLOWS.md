@@ -434,7 +434,9 @@ projects and rolls up their health.
   - **Execution** *(tracking)* — **Board** · **Capacity** · **Delivery** (§X) · **Burndown** ·
     **Activity**
   - **Architecture** *(architecture)* — **Decisions** · **Architecture** (map) · **Drift**
-  - **Governance** *(governance)* — **Risk** · **Specs** (§W) · **Docs** (§V) · **Retros**
+  - **Governance** *(governance)* — **Risk score** (§Q1, the computed dashboard) · **Risk
+    register** (§Q3a, the human RAID ledger — a separate sub-view) · **Specs** (§W) · **Docs**
+    (§V) · **Retros**
   - **Integrations** *(integrations)* — **Plan → Jira** · **Jira Links** (§J9)
 
   A whole workspace disappears when *every* one of its features is gated off (§A10); a group that
@@ -646,8 +648,11 @@ stays Jira-owned (§Source-of-truth boundaries).
 
 ### C10.2 Push the draft to Jira (create / update tickets)
 - **UI:** expand a draft → **Create Jira tickets** (becomes **Update Jira tickets** once synced).
-  Picks the project's Jira connection automatically (or choose one when several match). Reports
-  per-task created/updated/failed with the new Jira keys; a partial failure doesn't abort the rest.
+  A **pre-flight confirm** states the split before the outbound write — "create N new ticket(s),
+  update M existing" (M = draft tasks already stamped with a `jira_key`) — since this is the one
+  place canopy writes *to* Jira and it's irreversible. Picks the project's Jira connection
+  automatically (or choose one when several match). Reports per-task created/updated/failed with the
+  new Jira keys; a partial failure doesn't abort the rest.
 - **API:** `POST /api/v1/draft-plans/{plan_id}/push-to-jira` (optional `connection_id`) · **MCP:**
   `push_draft_to_jira`. Logic is in `app/services/draft_sync.py`; the Jira write methods are
   `JiraConnector.create_issue` / `update_issue` (`POST/PUT /rest/api/3/issue`, description as ADF).
@@ -719,10 +724,12 @@ surfaces where decisions get made — the engineer workspace and the project ale
 ## F. Team & capacity
 
 ### F1. Manage engineers and roles
-- **UI:** `/team` (the management persona's landing, §A7) — leads with a **"Needs attention"**
-  band (open blockers across the team, from `GET /blockers` with no `project_id` filter; and
-  over-allocated engineer-weeks from the org-wide capacity grid below, §F3) before the roster
-  admin forms. Then: add engineers (name, title, **GitHub login**, **timezone**, **committed
+- **UI:** `/team` (the management persona's landing, §A7) — leads with an **"Open blockers"**
+  queue (`components/BlockerQueue.tsx`): every open blocker across the team (from `GET /blockers`
+  with no `project_id` filter), sorted worst-severity then soonest-`needed_by`, each showing
+  severity/category/owner/needed-by with an inline **resolve** — plus an over-allocation summary
+  line (from the org-wide capacity grid below, §F3). All before the roster admin forms. Then: add
+  engineers (name, title, **GitHub login**, **timezone**, **committed
   hours/week**, **skill tags**), link an engineer to a **login** (per-row select, admins only),
   add functional roles, and remove engineers. Engineer rows show skills / GitHub / committed hours.
 - **API:** `GET/POST /api/v1/team/engineers`, `PATCH/DELETE /api/v1/team/engineers/{id}`
@@ -919,14 +926,16 @@ digest (§I) sits underneath.
   03:00) that snapshots **every** project, so the trend is real without anyone clicking. The job is
   `run_risk_snapshots` in `app/api/v1/risk.py`.
 
-### Q3. Mitigation log
-- **UI:** Risk tab → **Acknowledge** any indicator with a note, an owner, and a check-in date; open
-  mitigations show inline under their indicator and in the **Mitigation log** (resolve / reopen /
-  delete).
+### Q3. Indicator acknowledgements **[renamed from "Mitigation log"]**
+- **UI:** **Risk score** tab → **Acknowledge** any indicator with a note, an owner, and a check-in
+  date; open acknowledgements show inline under their indicator and in the **Indicator
+  acknowledgements** panel (resolve / reopen / delete).
 - **API:** `GET` (embedded in the risk response), `POST/PATCH/DELETE
   /api/v1/projects/{id}/risk/mitigations[/{mid}]` · **MCP:** `log_risk_mitigation`.
-- **Note:** the mitigation log **acknowledges a computed indicator**. It is distinct from the **risk
-  register** (Q3a), which tracks human-identified qualitative risks.
+- **Note:** an acknowledgement **acknowledges a computed indicator**. It was renamed from
+  "Mitigation log" because the RAID register (Q3a) has its own **mitigation** field — two different
+  "mitigation" concepts on one screen was the confusion. It is distinct from the **risk register**
+  (Q3a), which tracks human-identified qualitative risks.
 
 ### Q3a. Risk register (RAID) **[new]**
 - A **human-tracked** risk register, kept **separate from the computed risk score** (it does not feed
@@ -935,9 +944,10 @@ digest (§I) sits underneath.
   owner, a **mitigation** (lower the probability), a **contingency** (if it occurs anyway), and a
   target resolution date. Status: open | mitigating | accepted | resolved | occurred (terminal
   statuses stamp `resolved_at`).
-- **UI:** a **"Risk register (RAID)"** section in the project **Risk** tab, on the **initiative**
-  cockpit, and in the **task detail panel** (§C1a) — list with exposure/status badges + add / status /
-  delete. Writes are planner-gated.
+- **UI:** its **own "Risk register" sub-view** under the project Governance group (`?tab=raid`),
+  separate from the computed Risk score (§Q1) — a ledger, not a dashboard — plus on the
+  **initiative** cockpit and in the **task detail panel** (§C1a). List with exposure/status badges +
+  add / status / delete. Writes are planner-gated.
 - **API:** `GET /api/v1/risks?scope_level=&scope_id=&status=`, `POST /api/v1/risks`,
   `GET/PATCH/DELETE /api/v1/risks/{id}`, `POST /api/v1/risks/{id}/close` · **MCP:** `list_risks`,
   `add_risk`, `update_risk`, `close_risk`.
@@ -1304,7 +1314,11 @@ what-if (the Gantt's §C5 covers task durations only).
   any **staleness conflicts**. · **MCP:** `compare_scenario` (the key read before applying).
 
 ### T5. Apply (commit to canopy's planning layer)
-- **UI:** "Apply scenario" (planner only). On a staleness conflict, offer force-apply.
+- **UI:** "Apply scenario" (planner only) → a **pre-flight confirm** that states the change up front,
+  leading with the destructive part: "create N, update M, **DELETE K live task(s)/dependency(ies)**;
+  affected projects are re-planned; can't be undone" (from the compare diff counts). On a staleness
+  conflict, offer force-apply (same confirm). Item-level Added/Removed/Changed lists are a follow-up
+  (the `/compare` payload returns counts, not item names, today).
 - **API:** `POST /api/v1/scenarios/{id}/apply` (`{force}`). In one transaction: create/update/
   delete the live tasks/dependencies/milestones/allocations/availability (remapping new scenario
   task ids), then replan each affected project, then flip status to `applied`. Returns
@@ -1757,10 +1771,14 @@ team member via `Engineer.user_id` (§A5).
 - **Note:** if no engineer is linked to the account, the page prompts to have an admin link one on
   the Team page; tasks/decisions are empty until then.
 
-### M2. Today (daily focus)
-- **UI:** `/me/today` (linked from `/me`) → today's focus: assigned open tasks that are **critical
-  or due within 7 days**, and the decisions to push (owned ADRs in `proposed`/`under_discussion`).
-- **API:** `GET /api/v1/me/today`.
+### M2. Today (daily focus) **[updated]**
+- **UI:** `/me/today` (linked from `/me`) → today's focus, now covering the four time-sensitive
+  daily signals: an **"N staged changes await your review"** banner (→ `/reviews`, gated on
+  `ai.proposals`), your **open blockers** (from the `/me/workspace` payload, with resolve),
+  assigned open tasks that are **critical or due within 7 days**, and the decisions to push (owned
+  ADRs in `proposed`/`under_discussion`).
+- **API:** `GET /api/v1/me/today` + `GET /api/v1/me/workspace` (blockers) +
+  `GET /api/v1/proposals?status=open` (review count) — the last two composed client-side.
 - **Not built (v2 §M):** PRs awaiting the user's review (needs GitHub PR-metrics, §J6) and
   decision-queue items filtered to the user's components.
 

@@ -27,6 +27,7 @@ export type ProjectTab =
   | "burndown"
   | "delivery"
   | "risk"
+  | "raid"
   | "retros"
   | "activity";
 
@@ -62,7 +63,14 @@ export const PROJECT_GROUPS: ProjectGroupDef[] = [
     icon: "architecture",
     tabs: ["decisions", "architecture", "drift"],
   },
-  { key: "governance", label: "Governance", icon: "governance", tabs: ["risk", "specs", "docs", "retros"] },
+  {
+    key: "governance",
+    label: "Governance",
+    // "risk" is the computed score dashboard; "raid" is the human-tracked risk register (a ledger)
+    // — two genuinely different jobs, split into two sub-views instead of stacked on one tab.
+    icon: "governance",
+    tabs: ["risk", "raid", "specs", "docs", "retros"],
+  },
   { key: "integrations", label: "Integrations", icon: "jiralinks", tabs: ["drafts", "jiralinks"] },
 ];
 
@@ -80,6 +88,7 @@ export const TAB_FEATURES: Partial<Record<ProjectTab, string>> = {
   burndown: "tracking.burndown",
   delivery: "tracking.delivery",
   risk: "governance.risk",
+  raid: "governance.risk", // the RAID register lives under the same gate as the computed score
   retros: "governance.retros",
 };
 
@@ -98,7 +107,8 @@ export const TAB_LABELS: Record<ProjectTab, string> = {
   jiralinks: "Jira Links",
   burndown: "Burndown",
   delivery: "Delivery",
-  risk: "Risk",
+  risk: "Risk score",
+  raid: "Risk register",
   retros: "Retros",
   activity: "Activity",
 };
@@ -119,6 +129,7 @@ export const TAB_ICONS: Record<ProjectTab, IconName> = {
   burndown: "burndown",
   delivery: "delivery",
   risk: "risk",
+  raid: "alerts", // register/ledger — a distinct mark from the score's gauge icon
   retros: "retros",
   activity: "activity",
 };

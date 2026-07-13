@@ -568,11 +568,14 @@ export default function ProjectView() {
 
       {activeTab === "risk" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading risk…</p>}>
-          <div className="space-y-6">
-            <RiskView projectId={id} />
-            <RiskRegister scope="project" scopeId={id} mayWrite={mayPlan} />
-          </div>
+          {/* The computed 0–100 score dashboard (leading indicators + acknowledgements + the
+              lagging alerts). The human-tracked RAID register is its own sub-view ("raid"). */}
+          <RiskView projectId={id} />
         </Suspense>
+      )}
+
+      {activeTab === "raid" && (
+        <RiskRegister scope="project" scopeId={id} mayWrite={mayPlan} />
       )}
 
       {activeTab === "retros" && (

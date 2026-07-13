@@ -25,7 +25,7 @@ const ALERT_TAB: Record<string, ProjectTab> = {
   unscheduled: "gantt",
   milestone_overdue: "gantt",
   over_allocation: "capacity",
-  risk_overdue: "risk",
+  risk_overdue: "raid",
 };
 
 function alertDot(severity: string): string {
@@ -210,7 +210,7 @@ export default function ProjectOverview({
             label="Open risks"
             value={s?.open_risks ?? "—"}
             hint="RAID register"
-            onOpen={drill("risk")}
+            onOpen={drill("raid")}
           />
         )}
       </div>
