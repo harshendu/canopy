@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models.base import UserFunction, UserRole
@@ -11,14 +13,32 @@ class Token(BaseModel):
 
 
 class AgentTokenRequest(BaseModel):
+    label: str | None = None  # human-friendly name shown in the token list
     expires_minutes: int | None = None  # default 7 days, capped at 30
 
 
 class AgentToken(BaseModel):
+    """A freshly minted agent token — the only time `access_token` (the secret) is returned."""
+
     access_token: str
     token_type: str = "bearer"
     scope: str = "agent"
+    id: int
+    label: str
     expires_minutes: int
+    expires_at: datetime
+
+
+class AgentTokenInfo(BaseModel):
+    """A minted agent token as listed later — metadata only, never the secret."""
+
+    id: int
+    label: str
+    scope: str
+    issued_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    status: str  # active | expired | revoked
 
 
 class UserCreate(BaseModel):

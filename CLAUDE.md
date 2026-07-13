@@ -191,11 +191,17 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   `get_initiative_digest`, skill `daily-standup`. Slack/email **delivery is a hook** over the digest
   (not built, like the alerts digest §I). USER_FLOWS §A7/§R5; roadmap gap #6 in AI_NATIVE_EXECUTION.md.
 - **Bounded agency (scoped tokens):** access tokens carry a `scope` claim — `full` (human) or
-  `agent`. An `agent` token (minted via `POST /auth/agent-token`, planner-gated) acts as its issuer
-  but is blocked (403) from **one-way-door / external-write** actions: accepting a `one_way` ADR,
-  `push-to-jira`, `apply_scenario`. Two-way-door actions stay open — the reversibility distinction
-  is the human-in-the-loop policy. Enforced via `require_human`/`HumanOnly` in `app/api/deps.py`
-  (scope in `app/core/security.py`). USER_FLOWS §A6; roadmap gap #4 in AI_NATIVE_EXECUTION.md (the
+  `agent`. An `agent` token (minted via `POST /auth/agent-token` by **any signed-in user** — it
+  only carries the issuer's own permissions; `HumanOnly` blocks an agent token from minting another;
+  gated by `ai.agent_tokens`) acts as its issuer but is blocked (403) from **one-way-door /
+  external-write** actions: accepting a `one_way` ADR, `push-to-jira`, `apply_scenario`.
+  Two-way-door actions stay open — the reversibility distinction is the human-in-the-loop policy.
+  Enforced via `require_human`/`HumanOnly` in `app/api/deps.py` (scope in `app/core/security.py`).
+  Minted tokens are **persisted as metadata** (`AgentTokenRecord`, `app/services/agent_tokens.py` —
+  never the secret) so they can be listed (`GET /auth/agent-tokens`) and revoked
+  (`DELETE /auth/agent-tokens/{id}`): the JWT carries a `jti` and `get_current_user` rejects it once
+  revoked. UI: the **Agent Setup** tab (`/agent-setup`, all users — mint/list/revoke + plugin & MCP
+  setup instructions). USER_FLOWS §A6/§A11; roadmap gap #4 in AI_NATIVE_EXECUTION.md (the
   webhook that auto-runs guardrails on agent PRs stays agent-driven — the server can't crawl code, §N).
 - **Feature gates (admin on/off per surface):** two-level catalog (group → feature, e.g.
   `tracking` → `tracking.board`) in `app/services/features.py`; overrides are `FeatureFlag` rows

@@ -27,6 +27,7 @@ import AdminIntegrations from "./pages/AdminIntegrations";
 import AdminFeatures from "./pages/AdminFeatures";
 import DemoData from "./pages/DemoData";
 import Team from "./pages/Team";
+import AgentSetup from "./pages/AgentSetup";
 import ChangePassword from "./components/ChangePassword";
 import ImpersonationBanner from "./components/ImpersonationBanner";
 import UserSwitcher from "./components/UserSwitcher";
@@ -98,6 +99,9 @@ function ProtectedLayout({ children }: { children: ReactNode }) {
             )}
             <NavLink to="/team" className={navClass}>
               Team
+            </NavLink>
+            <NavLink to="/agent-setup" className={navClass}>
+              Agent Setup
             </NavLink>
             {canContribute(me?.role) && featureOn(features, "integrations") && (
               <NavLink to="/connectors" className={navClass}>
@@ -307,6 +311,14 @@ export default function App() {
         element={
           <ProtectedLayout>
             <Connectors />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/agent-setup"
+        element={
+          <ProtectedLayout>
+            <AgentSetup />
           </ProtectedLayout>
         }
       />

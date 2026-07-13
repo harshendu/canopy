@@ -11,15 +11,15 @@ from app.api.deps import (
     FeatureGate,
     HumanOnly,
     Impersonator,
-    PlannerWriter,
     SessionDep,
     TokenScopeDep,
 )
 from app.core.security import create_access_token, hash_password, verify_password
-from app.models.base import TokenScope, UserRole
+from app.models.base import UserRole
 from app.models.user import User
 from app.schemas.auth import (
     AgentToken,
+    AgentTokenInfo,
     AgentTokenRequest,
     PasswordChange,
     PasswordReset,
@@ -29,11 +29,13 @@ from app.schemas.auth import (
     UserRead,
     UserUpdate,
 )
+from app.services.agent_tokens import (
+    list_agent_tokens,
+    mint_agent_token,
+    revoke_agent_token,
+)
 
 router = APIRouter()
-
-_AGENT_TOKEN_DEFAULT_MINUTES = 7 * 24 * 60  # 7 days
-_AGENT_TOKEN_MAX_MINUTES = 30 * 24 * 60  # 30 days
 
 
 @router.post("/login", response_model=Token)
@@ -97,15 +99,36 @@ async def impersonate(
 @router.post(
     "/agent-token", response_model=AgentToken, dependencies=[FeatureGate("ai.agent_tokens")]
 )
-async def issue_agent_token(user: PlannerWriter, payload: AgentTokenRequest) -> AgentToken:
-    """Mint a bounded **agent** token for the current planner to hand to Claude. It acts as the
-    issuer but is restricted from one-way-door / external-write actions (accepting a one-way-door
-    decision, pushing to Jira, applying a scenario) — those stay human-gated. Two-way-door actions
-    run freely. Default 7-day expiry (max 30)."""
-    minutes = min(payload.expires_minutes or _AGENT_TOKEN_DEFAULT_MINUTES, _AGENT_TOKEN_MAX_MINUTES)
-    minutes = max(minutes, 1)
-    token = create_access_token(user.email, expires_minutes=minutes, scope=TokenScope.agent.value)
-    return AgentToken(access_token=token, expires_minutes=minutes)
+async def issue_agent_token(
+    session: SessionDep, user: CurrentUser, _: HumanOnly, payload: AgentTokenRequest
+) -> AgentToken:
+    """Mint a bounded **agent** token for the current user to hand to Claude — the MCP server reads
+    it as `CANOPY_API_TOKEN` (see the Agent Setup tab). It acts as the issuer but is restricted from
+    one-way-door / external-write actions (accepting a one-way-door decision, pushing to Jira,
+    applying a scenario) — those stay human-gated; two-way-door actions run freely. Open to any
+    signed-in user (the token only carries the issuer's own permissions); `HumanOnly` stops an agent
+    token from minting another. Persisted so it appears in `GET /agent-tokens` and can be revoked.
+    Default 7-day expiry (max 30). The `access_token` secret is returned **only** here."""
+    return await mint_agent_token(
+        session, user, label=payload.label, expires_minutes=payload.expires_minutes
+    )
+
+
+@router.get("/agent-tokens", response_model=list[AgentTokenInfo])
+async def list_my_agent_tokens(session: SessionDep, user: CurrentUser) -> list[AgentTokenInfo]:
+    """The caller's minted agent tokens with expiry + status (active|expired|revoked) — metadata
+    only; the secret is shown once at creation. Backs the Agent Setup tab's token list."""
+    return await list_agent_tokens(session, user)
+
+
+@router.delete("/agent-tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_my_agent_token(
+    session: SessionDep, user: CurrentUser, _: HumanOnly, token_id: int
+) -> None:
+    """Revoke one of the caller's own agent tokens — the JWT stops authenticating immediately
+    (enforced in `get_current_user`). Human-only, so an agent token can't revoke tokens."""
+    if not await revoke_agent_token(session, user, token_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found")
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
