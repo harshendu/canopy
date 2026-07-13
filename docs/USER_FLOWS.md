@@ -329,6 +329,16 @@ exact steps to connect — as a full plugin or a bare MCP server.
   `mcp_server/requirements.txt`, and drops a stdio `.mcp.json` (`CANOPY_API_BASE_URL` +
   `CANOPY_API_TOKEN`). The API URL defaults to the dashboard origin (with a local-dev
   `:8000` note); a shared always-on HTTP MCP server points at `docs/PRODUCTION.md` instead.
+- **Config-driven snippets:** the repo/marketplace refs in the snippets come from the deployment
+  (`GET /api/v1/meta` ← `PLUGIN_MARKETPLACE_REF` / `PLUGIN_REPO_URL` / `PLUGIN_MCP_SERVER_PATH`), so a
+  **fork or self-hosted install** shows *its own* repo — no hardcoded upstream. The clone dir + server
+  path are derived from the configured URL (pure `frontend/src/lib/agentSetup.ts`, unit-tested).
+- **Honest copy button:** copy reflects the *real* result — "Copied" only on success, and a
+  "Copy failed — select & ⌘C" hint when the clipboard write is refused (insecure origin / denied
+  permission), with a hidden-textarea `execCommand` fallback. The one-time token is never lost to a
+  false "Copied" (was BUG-13).
+- **Cross-link:** pairs with **Connectors** (§J1) — Agent Setup connects *Claude*, Connectors connect
+  *data sources*; each links to the other.
 - **Not built:** per-token last-used tracking, and a shared-server (HTTP transport) token flow —
   the tab is scoped to a per-user stdio token.
 
@@ -1056,14 +1066,22 @@ component map + ADRs and maintains the queue.
 
 ## J. Connectors & integrations (Connectors page)
 
-### J1. Add a connection
+### J1. Add a connection **[updated — typed fields + project picker]**
 - **UI:** `/connectors` → choose provider (Jira / GitHub / Google Drive), name it, optionally paste an
-  API token, and provide provider config JSON (e.g. Jira: `base_url`, `email`, `project_id`,
-  `jira_project_key`; GitHub: `owner`, `repo`). Jira also accepts optional **ticket-creation** keys
-  used by §C10: `story_point_field` (e.g. `customfield_10016`), `epic_issue_type` (default `Epic`),
-  `story_issue_type` (default `Story`).
+  API token, then fill **typed config fields** instead of hand-writing JSON — Jira: **Site URL**,
+  **Account email**, **Jira project key**, **canopy project**; GitHub: **Owner / org**,
+  **Repository**, **canopy project**. The **canopy project** field is a **picker** (choose a project
+  by `key — name`; stored as a numeric `project_id`) so nobody has to look up an internal id.
+  Switching provider swaps the field set. An **Advanced (extra config as JSON)** disclosure remains
+  for uncommon keys — e.g. Jira ticket-creation keys used by §C10 (`story_point_field` like
+  `customfield_10016`, `epic_issue_type` default `Epic`, `story_issue_type` default `Story`) or
+  `board_id`. Merge rule (pure `frontend/src/lib/connectorFields.ts`, unit-tested): advanced JSON is
+  the base, typed fields override same-named keys, empty typed values are dropped.
 - **API:** `POST /api/v1/connectors/connections` (token is encrypted at rest) · **MCP:**
   `list_connections`.
+- **Cross-link:** the page notes that connecting **Claude Code itself** (MCP token + plugin) lives on
+  **Agent Setup** (§A11), and Agent Setup links back here for **data** connectors — the two
+  integration surfaces are now explicitly paired.
 
 ### J2. Connect via OAuth (shared service connection)
 - **UI:** on a connection row → **Connect** (or **Reconnect**). The browser is redirected to the

@@ -615,6 +615,15 @@ export interface AgentTokenInfo {
   status: "active" | "expired" | "revoked";
 }
 
+/** Non-secret instance metadata (GET /api/v1/meta) — drives the Agent Setup snippets so a fork
+ *  or self-hosted deployment shows its own repo/marketplace, not the upstream default. */
+export interface SetupMeta {
+  project_name: string;
+  plugin_marketplace_ref: string;
+  plugin_repo_url: string;
+  plugin_mcp_server_path: string;
+}
+
 // --- Demo / seeded-data mode (local & dev only) ---
 export interface DemoAccount {
   email: string;

@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   EXPIRY_OPTIONS,
+  cloneSnippet,
   daysUntil,
   expiryPhrase,
   mcpJsonSnippet,
+  mcpServerDisplayPath,
+  repoDirName,
   statusChipClass,
 } from "./agentSetup";
 
@@ -37,6 +40,27 @@ describe("agentSetup", () => {
     for (const s of ["active", "expired", "revoked"] as const) {
       expect(statusChipClass(s)).toMatch(/border-/);
     }
+  });
+
+  it("repoDirName strips .git and trailing slashes, falls back to canopy", () => {
+    expect(repoDirName("https://github.com/harshendu/canopy.git")).toBe("canopy");
+    expect(repoDirName("https://github.com/acme/canopy-fork.git")).toBe("canopy-fork");
+    expect(repoDirName("git@github.com:acme/plat.git")).toBe("plat");
+    expect(repoDirName("https://example.com/repo/")).toBe("repo");
+    expect(repoDirName("")).toBe("canopy");
+  });
+
+  it("cloneSnippet is driven by the configured repo URL (not a hardcoded fork)", () => {
+    const snippet = cloneSnippet("https://github.com/acme/canopy-fork.git");
+    expect(snippet).toContain("git clone https://github.com/acme/canopy-fork.git");
+    expect(snippet).toContain("cd canopy-fork/plugin");
+    expect(snippet).toContain("pip install -r mcp_server/requirements.txt");
+  });
+
+  it("mcpServerDisplayPath composes the configured repo dir + in-repo server path", () => {
+    expect(
+      mcpServerDisplayPath("https://github.com/acme/canopy-fork.git", "plugin/mcp_server/server.py"),
+    ).toBe("/path/to/canopy-fork/plugin/mcp_server/server.py");
   });
 
   it("mcpJsonSnippet wires the token + base URL into a valid stdio config", () => {
