@@ -67,10 +67,11 @@ that navigates must follow them.
   **breadcrumbs** + a **back arrow** to the logical parent (derived from the breadcrumb trail):
   Projects → *Project*; Initiatives → *Initiative* (→ Scenarios → *Scenario*); My work → Today;
   Reviews → *Review*. Top-level list pages show title + subtitle only (no back/breadcrumbs).
-- **Iconized tabs:** the project cockpit (`ProjectView`) uses a **two-level** icon nav — six domain
-  workspaces (primary) over the active group's views (secondary), replacing the old single
-  horizontal-scroll strip of 17 tabs (§B3). The scenario workspace (`ScenarioWorkspace`) still
-  prefixes each tab with its SVG glyph in one wrapping strip.
+- **Iconized tabs:** both the project cockpit (`ProjectView`, §B3) and the scenario workspace
+  (`ScenarioWorkspace`, §T3) use a **two-level** icon nav — domain workspaces (primary) over the
+  active group's views (secondary), replacing the old single-level strips (a 17-tab
+  horizontal-scroll / a 10-tab wrapping row). The pure nav models are `lib/projectNav.ts` /
+  `lib/scenarioNav.ts`.
 
 ---
 
@@ -1211,10 +1212,13 @@ what-if (the Gantt's §C5 covers task durations only).
   `add_scenario_dependency`, `set_scenario_availability`, `set_scenario_allocation`.
 
 ### T3. Regenerate all views over the scenario
-- **UI:** the workspace mirrors the project cockpit's tabs (Gantt · Dependencies · Capacity ·
-  Board · Burndown · Forecast · Critical path · Alerts), reusing the same view components against
-  scenario data. Cross-project critical path + capacity are initiative-wide; the rest take a
-  project picker.
+- **UI:** the workspace mirrors the project cockpit's **two-level nav** (§B3, pure model in
+  `lib/scenarioNav.ts`): a **Compare** entry (§T4, the default landing) plus **Schedule** (Gantt ·
+  Dependencies · Critical path), **Execution** (Board · Capacity · Burndown), **Outlook** (Forecast ·
+  Alerts), and **Edit** (§T2), reusing the same view components against scenario data. The active
+  view is deep-linkable via `?tab=<view>`. Cross-project critical path + capacity are
+  initiative-wide; the per-project projections (Gantt / Dependencies / Board / Burndown / Alerts)
+  take a project picker.
 - **API:** `GET /api/v1/scenarios/{id}/{gantt|capacity|board|burndown|forecast|alerts}`
   (`?project_id=` where relevant) and `GET /api/v1/scenarios/{id}/critical-path`. Each returns the
   **same schema as the live endpoint**, recomputed over the snapshot — never persisted. Cloned
