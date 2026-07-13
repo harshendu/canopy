@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { DemoStatus } from "../api/types";
+import { PageHeader } from "../components/PageHeader";
 
 const COUNT_LABELS: Record<string, string> = {
   users: "Users",
@@ -58,7 +59,7 @@ export default function DemoData() {
   if (data && !data.demo_mode) {
     return (
       <div className="space-y-4">
-        <h1 className="text-2xl font-bold">Demo data</h1>
+        <PageHeader title="Demo data" />
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           <p className="font-medium">Demo mode is disabled.</p>
           <p className="mt-1">
@@ -73,15 +74,10 @@ export default function DemoData() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Demo data</h1>
-        <p className="mt-1 max-w-3xl text-sm text-slate-500">
-          Load a full, coherent demo dataset — or wipe everything back to empty. Resetting keeps
-          you (and the configured superuser) signed in and recreates all demo users. Connectors are
-          served by an offline mock, so &ldquo;Sync from Jira&rdquo; and provider reads work without
-          real credentials.
-        </p>
-      </div>
+      <PageHeader
+        title="Demo data"
+        subtitle="Load a full, coherent demo dataset — or wipe everything back to empty. Resetting keeps you (and the configured superuser) signed in and recreates all demo users. Connectors are served by an offline mock, so “Sync from Jira” and provider reads work without real credentials."
+      />
 
       <div className="flex flex-wrap gap-3">
         <button

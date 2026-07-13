@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Scenario } from "../api/types";
+import type { Initiative, Scenario } from "../api/types";
 import { isPlanner } from "../lib/permissions";
 import { useCurrentUser } from "../lib/useCurrentUser";
+import { PageHeader } from "../components/PageHeader";
+import { PreviewLink } from "../components/PreviewLink";
 
 export default function ScenarioList() {
   const { initiativeId } = useParams();
@@ -19,6 +21,11 @@ export default function ScenarioList() {
     queryKey: ["scenarios", id],
     queryFn: () => api.get<Scenario[]>(`/initiatives/${id}/scenarios`),
   });
+  const { data: initiatives = [] } = useQuery({
+    queryKey: ["initiatives"],
+    queryFn: () => api.get<Initiative[]>("/initiatives"),
+  });
+  const initiativeName = initiatives.find((i) => i.id === id)?.name ?? "Initiative";
 
   const create = useMutation({
     mutationFn: () => api.post<Scenario>(`/initiatives/${id}/scenarios`, { title }),
@@ -30,16 +37,15 @@ export default function ScenarioList() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <Link to={`/initiatives/${id}`} className="text-xs text-slate-400 hover:text-slate-600">
-          ← Initiative
-        </Link>
-        <h1 className="text-2xl font-bold">Scenarios</h1>
-        <p className="text-sm text-slate-500">
-          What-if branches of this initiative — change team, availability, milestones, deadlines,
-          and scope, then compare every view before applying.
-        </p>
-      </div>
+      <PageHeader
+        breadcrumbs={[
+          { label: "Initiatives", to: "/initiatives" },
+          { label: initiativeName, to: `/initiatives/${id}` },
+          { label: "Scenarios" },
+        ]}
+        title="Scenarios"
+        subtitle="What-if branches of this initiative — change team, availability, milestones, deadlines, and scope, then compare every view before applying."
+      />
 
       {mayPlan && (
         <form
@@ -70,8 +76,8 @@ export default function ScenarioList() {
         <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {(scenarios.data ?? []).map((s) => (
             <li key={s.id}>
-              <Link
-                to={`/initiatives/${id}/scenarios/${s.id}`}
+              <PreviewLink
+                target={{ kind: "scenario", id: s.id, initiativeId: id }}
                 className="block rounded-lg border border-slate-200 bg-white p-4 hover:bg-slate-50"
               >
                 <div className="flex items-center justify-between">
@@ -90,7 +96,7 @@ export default function ScenarioList() {
                 <p className="mt-1 text-xs text-slate-400">
                   captured {s.base_captured_at.slice(0, 10)}
                 </p>
-              </Link>
+              </PreviewLink>
             </li>
           ))}
         </ul>

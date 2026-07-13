@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "../api/client";
@@ -13,6 +13,7 @@ import type {
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
 import { diffRows, includedCount, itemHeadline } from "../lib/proposals";
+import { PageHeader } from "../components/PageHeader";
 
 const STATUS_FILTERS: { key: ProposalStatus | "all"; label: string }[] = [
   { key: "open", label: "Awaiting review" },
@@ -52,9 +53,11 @@ export default function Reviews() {
   if (proposalId) {
     return (
       <div className="space-y-4">
-        <Link to="/reviews" className="text-sm text-canopy-700 hover:underline">
-          ← All reviews
-        </Link>
+        <PageHeader
+          breadcrumbs={[{ label: "Reviews", to: "/reviews" }, { label: "Review" }]}
+          title="Review"
+          subtitle="A single staged change set awaiting your review."
+        />
         <ProposalCard id={Number(proposalId)} planner={planner} initiallyOpen />
       </div>
     );
@@ -62,14 +65,16 @@ export default function Reviews() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Reviews</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Changes staged by Claude (and teammates) that only land after <em>you</em> review
-          and apply them. Each line shows where the fact came from; untick anything you
-          don&apos;t want before applying.
-        </p>
-      </div>
+      <PageHeader
+        title="Reviews"
+        subtitle={
+          <>
+            Changes staged by Claude (and teammates) that only land after <em>you</em> review
+            and apply them. Each line shows where the fact came from; untick anything you
+            don&apos;t want before applying.
+          </>
+        }
+      />
 
       <div className="flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => (

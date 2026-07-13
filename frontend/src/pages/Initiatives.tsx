@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { Initiative } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canWriteProjects } from "../lib/permissions";
+import { PageHeader } from "../components/PageHeader";
+import { PreviewLink } from "../components/PreviewLink";
 
 export default function Initiatives() {
   const qc = useQueryClient();
@@ -40,13 +41,10 @@ export default function Initiatives() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Initiatives</h1>
-        <p className="text-sm text-slate-500">
-          A program spanning multiple projects executed concurrently. Open one to roll up health
-          across its sub-projects.
-        </p>
-      </div>
+      <PageHeader
+        title="Initiatives"
+        subtitle="A program spanning multiple projects executed concurrently. Open one to roll up health across its sub-projects."
+      />
 
       {mayCreate && (
         <form
@@ -96,8 +94,8 @@ export default function Initiatives() {
         <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
           {initiatives.map((i) => (
             <li key={i.id}>
-              <Link
-                to={`/initiatives/${i.id}`}
+              <PreviewLink
+                target={{ kind: "initiative", id: i.id }}
                 className="flex items-center justify-between px-4 py-3 hover:bg-slate-50"
               >
                 <span>
@@ -110,7 +108,7 @@ export default function Initiatives() {
                 <span className="text-xs text-slate-400">
                   {i.target_date ? `target ${i.target_date}` : "no target"}
                 </span>
-              </Link>
+              </PreviewLink>
             </li>
           ))}
           {initiatives.length === 0 && (

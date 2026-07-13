@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { FeatureGate } from "../api/types";
+import { PageHeader } from "../components/PageHeader";
 
 /** One on/off switch. Grey = forced off by the disabled group (own toggle preserved). */
 function Toggle({
@@ -56,15 +57,10 @@ export default function AdminFeatures() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Features</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Turn whole surfaces (a group) or single features on and off. Changes apply
-          immediately for everyone — gated pages, tabs, and API endpoints disappear/return
-          without a restart. Core flows (projects, tasks, Gantt scheduling, team, sign-in)
-          are always on.
-        </p>
-      </div>
+      <PageHeader
+        title="Features"
+        subtitle="Turn whole surfaces (a group) or single features on and off. Changes apply immediately for everyone — gated pages, tabs, and API endpoints disappear/return without a restart. Core flows (projects, tasks, Gantt scheduling, team, sign-in) are always on."
+      />
 
       {gates.isError && (
         <p className="text-sm text-red-600">{(gates.error as Error).message}</p>

@@ -12,6 +12,7 @@ import {
   mcpJsonSnippet,
   statusChipClass,
 } from "../lib/agentSetup";
+import { PageHeader } from "../components/PageHeader";
 
 /** Copy-to-clipboard button with a brief "Copied" confirmation. */
 function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
@@ -89,16 +90,18 @@ export default function AgentSetup() {
 
   return (
     <div className="max-w-3xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold">Agent Setup</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Generate an access token so Claude Code can work in canopy on your behalf through the MCP
-          server, then connect it as a full plugin or a bare MCP server. The token is{" "}
-          <strong>agent-scoped</strong>: it carries your own permissions but is blocked from
-          one-way-door / external-write actions (accepting an irreversible decision, pushing to
-          Jira, applying a scenario) — those stay human-only.
-        </p>
-      </div>
+      <PageHeader
+        title="Agent Setup"
+        subtitle={
+          <>
+            Generate an access token so Claude Code can work in canopy on your behalf through the
+            MCP server, then connect it as a full plugin or a bare MCP server. The token is{" "}
+            <strong>agent-scoped</strong>: it carries your own permissions but is blocked from
+            one-way-door / external-write actions (accepting an irreversible decision, pushing to
+            Jira, applying a scenario) — those stay human-only.
+          </>
+        }
+      />
 
       {/* --- Token management --- */}
       <section className="space-y-4">

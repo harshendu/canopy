@@ -37,6 +37,42 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 
 ---
 
+## UI. App shell & navigation conventions (apply to every screen)
+
+The authenticated dashboard renders one **persistent layout route** (`ProtectedLayout` in
+`frontend/src/App.tsx`, an `<Outlet/>` shell) so the nav rail and the preview drawer survive
+navigation instead of remounting per page. These conventions are shared by every flow below; a page
+that navigates must follow them.
+
+- **Collapsible left nav rail** (`components/Sidebar.tsx`, config `lib/nav.ts`): every primary +
+  admin destination is a link with an **SVG icon** (`components/icons.tsx`). A chevron toggles the
+  rail between the full `w-56` (icon + label) and a `w-16` **icon-only rail** (label becomes a
+  hover tooltip); the choice is persisted in `localStorage` (`canopy_sidebar_collapsed`). The
+  Reviews entry keeps its live open-count badge (a dot when collapsed). Admin links sit under an
+  "Admin" divider. The current-user switcher + sign-out live at the foot of the rail (avatar-only
+  when collapsed). Which links appear is still role/feature-gated (`visibleNavItems`, §A10).
+- **Right-side preview drawer** (`components/PreviewPanel.tsx`, `lib/preview.tsx`): a plain click on
+  a link to a **project / initiative / scenario** opens a peek in a right drawer (key facts + status
+  + "Jump to" deep-links) **before** navigating — the user commits with **"Open full view →"** (or a
+  Jump-to chip). Backdrop-click, the ✕, and **Esc** dismiss it. The trigger is `PreviewLink`
+  (`components/PreviewLink.tsx`), which renders a real `<a href>`: **⌘/Ctrl/middle-click still opens
+  the full page directly** (and in a new tab), so the preview never traps a power user. Preview
+  targets + their routes are the pure `lib/previewTarget.ts`.
+  - **What previews vs. navigates directly:** entity records (project / initiative / scenario) preview.
+    **Wayfinding** links do not — sidebar items, breadcrumb crumbs, the back arrow, section links
+    (e.g. Initiative → Scenarios, My work → Today), and the Reviews alert banner navigate straight
+    through, because a "peek" of a list/section or a back-step is noise.
+- **Standard page header** (`components/PageHeader.tsx`): every page renders its title, optional
+  subtitle, and right-aligned actions through one header. Nested/detail pages also carry
+  **breadcrumbs** + a **back arrow** to the logical parent (derived from the breadcrumb trail):
+  Projects → *Project*; Initiatives → *Initiative* (→ Scenarios → *Scenario*); My work → Today;
+  Reviews → *Review*. Top-level list pages show title + subtitle only (no back/breadcrumbs).
+- **Iconized tabs:** the project cockpit (`ProjectView`) and the scenario workspace
+  (`ScenarioWorkspace`) prefix each tab with its SVG glyph; the project tab strip scrolls
+  horizontally rather than wrapping.
+
+---
+
 ## A. Authentication & access
 
 ### A1. Log in

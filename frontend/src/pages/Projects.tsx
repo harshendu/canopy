@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { Initiative, Project } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canWriteProjects } from "../lib/permissions";
+import { PageHeader } from "../components/PageHeader";
+import { PreviewLink } from "../components/PreviewLink";
 
 export default function Projects() {
   const qc = useQueryClient();
@@ -40,7 +41,10 @@ export default function Projects() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Projects</h1>
+      <PageHeader
+        title="Projects"
+        subtitle="Every project you can see. Open one to plan its schedule, board, and architecture."
+      />
 
       {mayCreate && (
         <form
@@ -77,10 +81,10 @@ export default function Projects() {
               key={p.id}
               className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50"
             >
-              <Link to={`/projects/${p.id}`} className="min-w-0 flex-1">
+              <PreviewLink target={{ kind: "project", id: p.id }} className="min-w-0 flex-1">
                 <span className="font-mono text-xs text-slate-400">{p.key}</span>{" "}
                 <span className="font-medium">{p.name}</span>
-              </Link>
+              </PreviewLink>
               {mayCreate && (
                 <select
                   value={p.initiative_id ?? ""}
