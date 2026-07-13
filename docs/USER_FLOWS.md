@@ -1597,6 +1597,16 @@ exist: **draft plans** stage *outbound* plan→Jira tickets (§C10); **proposals
 - **Review actions (planner + human-only — an agent token gets 403):**
   - **Exclude items** — untick any line before applying
     (`PATCH /api/v1/proposals/{id}/items/{item_id}` `{excluded}`).
+  - **Inline field override (audit-preserving, T17)** — fix a single wrong value without rejecting
+    the whole proposal. Each editable diff row (scalar, non-`_ref` fields) has a **✎** control: edit
+    the value, **Save**, and it applies instead of the agent's. The agent's original stays as the
+    record (shown struck next to the violet override), the item carries an **"edited by …"** stamp,
+    and **↩** reverts. Same `PATCH …/items/{item_id}` with `{overrides: {field: value}}` (`{}` clears);
+    an override that fails validation is **rejected at edit time** (400 `invalid_override`), not
+    deferred to apply. Mechanics: `payload` (agent) is never mutated — `overrides` (reviewer) is
+    layered on at apply via `effective_payload` (`app/services/proposals.py`), so the merged value is
+    the single source validation and apply read from. Fields the proposal doesn't set, and structural
+    `*_ref` handles, can't be introduced via override.
   - **Apply** — `POST /api/v1/proposals/{id}/apply`: re-validates every included item,
     executes **all-or-nothing** in one transaction (per-item failures report inline and
     nothing lands), **auto-replans** the affected projects (a staged dependency cycle →

@@ -62,20 +62,48 @@ export interface DiffRow {
   field: string;
   /** stage-time value (null for creates — there is no before) */
   before: string | null;
+  /** the value that will apply: the reviewer's override if set, else the agent's proposal */
   after: string;
   /** live value when it moved since staging (staleness), else null */
   current: string | null;
+  /** the agent's original value (display), shown struck when the reviewer overrode this field */
+  proposed: string | null;
+  /** scalar, non-ref fields can be inline-edited by the reviewer */
+  editable: boolean;
+}
+
+/** Only scalar, non-ref fields are inline-editable — arrays/objects/`*_ref` handles are out of
+ *  scope for the audit-preserving override (they're structure, not a value). Pure. */
+export function isEditableField(field: string, value: unknown): boolean {
+  if (field.endsWith("_ref")) return false;
+  return value === null || ["string", "number", "boolean"].includes(typeof value);
+}
+
+/** Coerce a reviewer's text input to the JS type of the agent's original value for that field, so
+ *  the override round-trips through the typed backend validators (duration stays a number, etc.).
+ *  Pure. */
+export function coerceOverride(original: unknown, input: string): unknown {
+  if (typeof original === "number") {
+    const n = Number(input);
+    return input.trim() !== "" && Number.isFinite(n) ? n : input;
+  }
+  if (typeof original === "boolean") return input === "true" || input === "1";
+  return input;
 }
 
 /** Field-by-field rows for the review diff. Creates list payload values; updates pair
  *  them with the before-snapshot; a `*_ref` value renders as a pointer to an earlier
- *  item's handle. */
+ *  item's handle. The reviewer's inline override (when set) becomes the `after` value, with the
+ *  agent's original carried in `proposed` so the audit trail reads "agent X → you Y". */
 export function diffRows(item: ProposalItem): DiffRow[] {
   const before = item.before;
   const current = item.current ?? null;
+  const overrides = item.overrides ?? null;
   return Object.entries(item.payload).map(([field, value]) => {
     const isRef = field.endsWith("_ref");
-    const after = isRef ? `→ ${formatValue(value)}` : formatValue(value);
+    const isOverridden = overrides != null && field in overrides;
+    const effective = isOverridden ? overrides[field] : value;
+    const after = isRef ? `→ ${formatValue(value)}` : formatValue(effective);
     const beforeVal =
       item.action !== "create" && before && field in before
         ? formatValue(before[field])
@@ -89,6 +117,8 @@ export function diffRows(item: ProposalItem): DiffRow[] {
       before: beforeVal,
       after,
       current: liveVal !== null && liveVal !== beforeVal ? liveVal : null,
+      proposed: isOverridden ? formatValue(value) : null,
+      editable: isEditableField(field, value),
     };
   });
 }

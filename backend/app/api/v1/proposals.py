@@ -22,6 +22,7 @@ from app.core.events import publish
 from app.models.base import ProposalAction, ProposalScope, ProposalStatus, utcnow
 from app.models.project import Initiative, Project
 from app.models.proposal import Proposal, ProposalItem
+from app.models.user import User
 from app.schemas.proposal import (
     ProposalApplyResult,
     ProposalCreate,
@@ -190,6 +191,9 @@ async def _detail(session: SessionDep, proposal: Proposal) -> ProposalDetail:
         if proposal.status == ProposalStatus.open and item.action != ProposalAction.create:
             view.current = await svc.snapshot_target(session, item)
             view.stale = view.current != item.before
+        if item.overridden_by_user_id is not None:
+            editor = await session.get(User, item.overridden_by_user_id)
+            view.overridden_by = editor.full_name or editor.email if editor else None
         detail_items.append(view)
     header = await _read(session, proposal)
     return ProposalDetail(**header.model_dump(), items=detail_items)
@@ -206,19 +210,59 @@ async def get_proposal(session: SessionDep, _: CurrentUser, proposal_id: int) ->
 @router.patch("/{proposal_id}/items/{item_id}", response_model=ProposalItemRead)
 async def review_item(
     session: SessionDep,
-    _: PlannerWriter,
+    user: PlannerWriter,
     __: HumanOnly,
     proposal_id: int,
     item_id: int,
     payload: ProposalItemPatch,
 ) -> ProposalItem:
-    """Include/exclude one item before applying (the reviewer's line-item veto)."""
+    """Reviewer edits on one item before applying: include/exclude (the line-item veto), and/or
+    an **audit-preserving field override** — edit a single proposed value inline instead of
+    rejecting the whole proposal. Only fields present in the request are touched; an empty
+    `overrides` clears the override (reverts to the agent's values). The agent's original
+    `payload` is never changed — the override is layered on at apply time (§AA2/T17)."""
     proposal = await _get_proposal(session, proposal_id)
     _require_open(proposal)
     item = await session.get(ProposalItem, item_id)
     if item is None or item.proposal_id != proposal_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    item.excluded = payload.excluded
+
+    fields_set = payload.model_fields_set
+    if "excluded" in fields_set and payload.excluded is not None:
+        item.excluded = payload.excluded
+
+    if "overrides" in fields_set:
+        new_overrides = payload.overrides or {}
+        if new_overrides:
+            payload_keys = set(item.payload or {})
+            unknown = set(new_overrides) - payload_keys
+            if unknown:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="override may only edit fields the proposal already sets: "
+                    f"unexpected {sorted(unknown)}",
+                )
+            refs = {k for k in new_overrides if k.endswith("_ref")}
+            if refs:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"structural refs can't be overridden inline: {sorted(refs)}",
+                )
+            item.overrides = dict(new_overrides)
+            item.overridden_by_user_id = user.id
+            item.overridden_at = utcnow()
+            try:
+                svc.validate_effective(item)  # reject a bad value now, not at apply
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "invalid_override", "error": str(exc)},
+                ) from exc
+        else:
+            item.overrides = None
+            item.overridden_by_user_id = None
+            item.overridden_at = None
+
     await session.commit()
     await session.refresh(item)
     return item

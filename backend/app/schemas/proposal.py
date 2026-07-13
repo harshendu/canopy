@@ -46,6 +46,12 @@ class ProposalItemRead(BaseModel):
     source_label: str | None
     source_url: str | None
     excluded: bool
+    # Audit-preserving inline override (§AA2/T17): the reviewer's per-field edits (kept separate
+    # from the agent's original `payload`) + who/when. `overridden_by` is the resolved display name.
+    overrides: dict[str, Any] | None = None
+    overridden_by_user_id: int | None = None
+    overridden_by: str | None = None
+    overridden_at: datetime | None = None
     applied_entity_id: int | None
     error: str | None
 
@@ -87,7 +93,11 @@ class ProposalDetail(ProposalRead):
 
 
 class ProposalItemPatch(BaseModel):
-    excluded: bool
+    # Both optional so a patch can toggle inclusion, set field overrides, or both. Only the fields
+    # present in the request are applied (distinguished via model_fields_set). For `overrides`,
+    # an empty object clears the reviewer's override (revert to the agent's proposed values).
+    excluded: bool | None = None
+    overrides: dict[str, Any] | None = None
 
 
 class ProposalRejectRequest(BaseModel):

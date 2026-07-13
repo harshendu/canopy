@@ -1134,6 +1134,12 @@ export interface ProposalItem {
   source_label: string | null;
   source_url: string | null;
   excluded: boolean;
+  /** Reviewer's audit-preserving inline field overrides, layered over `payload` at apply time. */
+  overrides: Record<string, unknown> | null;
+  overridden_by_user_id: number | null;
+  /** resolved display name of the reviewer who overrode (read-time) */
+  overridden_by: string | null;
+  overridden_at: string | null;
   applied_entity_id: number | null;
   error: string | null;
   /** live values recomputed at read time (open proposals, update/resolve items) */
