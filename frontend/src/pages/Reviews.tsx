@@ -12,7 +12,7 @@ import type {
 } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
-import { diffRows, includedCount, itemHeadline } from "../lib/proposals";
+import { diffRows, includedCount, itemHeadline, proposalShape } from "../lib/proposals";
 import { PageHeader } from "../components/PageHeader";
 
 const STATUS_FILTERS: { key: ProposalStatus | "all"; label: string }[] = [
@@ -34,6 +34,13 @@ const ACTION_BADGE: Record<string, string> = {
   create: "bg-emerald-50 text-emerald-700 border-emerald-200",
   update: "bg-sky-50 text-sky-700 border-sky-200",
   resolve: "bg-violet-50 text-violet-700 border-violet-200",
+};
+
+// Compact tint for the collapsed-card shape chips (same color semantics as ACTION_BADGE).
+const SHAPE_TONE: Record<string, string> = {
+  create: "text-emerald-600",
+  update: "text-sky-600",
+  resolve: "text-violet-600",
 };
 
 export default function Reviews() {
@@ -238,9 +245,26 @@ function ProposalCard({
           </span>
         )}
         <span className="truncate font-medium">{header.title}</span>
-        <span className="ml-auto shrink-0 text-xs text-slate-400">
-          {header.item_count} change{header.item_count === 1 ? "" : "s"}
-          {header.origin ? ` · ${header.origin}` : ""}
+        {header.attention_count > 0 && (
+          <span
+            className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800"
+            title="Some items errored or changed since they were staged — review before applying."
+          >
+            ⚠ {header.attention_count} need{header.attention_count === 1 ? "s" : ""} attention
+          </span>
+        )}
+        <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-slate-400">
+          {/* Change shape at a glance (create / update / resolve) without expanding the card. */}
+          {proposalShape(header.action_counts).map((c) => (
+            <span key={c.action} className={`font-medium tabular-nums ${SHAPE_TONE[c.action]}`}>
+              {c.glyph}
+              {c.count}
+            </span>
+          ))}
+          <span>
+            {header.item_count} change{header.item_count === 1 ? "" : "s"}
+            {header.origin ? ` · ${header.origin}` : ""}
+          </span>
         </span>
       </button>
 

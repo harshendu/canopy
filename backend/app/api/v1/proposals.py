@@ -61,11 +61,38 @@ async def _scope_label(session: SessionDep, proposal: Proposal) -> str | None:
     return f"{initiative.key} · {initiative.name}" if initiative else None
 
 
+def _action_counts(items: list[ProposalItem]) -> dict[str, int]:
+    """Per-action tally (create/update/resolve) for the collapsed-card shape chip. Pure."""
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item.action.value] = counts.get(item.action.value, 0) + 1
+    return counts
+
+
+async def _item_needs_attention(
+    session: SessionDep, proposal: Proposal, item: ProposalItem
+) -> bool:
+    """An item a reviewer should look at before applying: it carries a stored validation error,
+    or (while open, for a non-create) its live target has drifted from the stage-time snapshot."""
+    if item.error:
+        return True
+    if proposal.status != ProposalStatus.open or item.action == ProposalAction.create:
+        return False
+    current = await svc.snapshot_target(session, item)
+    return current != item.before
+
+
 async def _read(session: SessionDep, proposal: Proposal) -> ProposalRead:
     items = await svc.load_items(session, proposal)
     view = ProposalRead.model_validate(proposal)
     view.item_count = len(items)
     view.excluded_count = sum(1 for i in items if i.excluded)
+    view.action_counts = _action_counts(items)
+    attention = 0
+    for item in items:
+        if await _item_needs_attention(session, proposal, item):
+            attention += 1
+    view.attention_count = attention
     view.scope_label = await _scope_label(session, proposal)
     return view
 

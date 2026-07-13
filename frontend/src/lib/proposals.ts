@@ -97,3 +97,21 @@ export function diffRows(item: ProposalItem): DiffRow[] {
 export function includedCount(items: ProposalItem[]): number {
   return items.filter((i) => !i.excluded).length;
 }
+
+export interface ProposalShapeChip {
+  action: "create" | "update" | "resolve";
+  count: number;
+  /** compact prefix used in the chip: + / ~ / ✓ */
+  glyph: string;
+}
+
+/** Non-zero create/update/resolve tallies (in that fixed order) for the collapsed-card shape
+ *  summary, so a reviewer reads the change's shape without expanding it. Pure. */
+export function proposalShape(counts: Record<string, number> | undefined): ProposalShapeChip[] {
+  const spec: ProposalShapeChip[] = [
+    { action: "create", count: counts?.create ?? 0, glyph: "+" },
+    { action: "update", count: counts?.update ?? 0, glyph: "~" },
+    { action: "resolve", count: counts?.resolve ?? 0, glyph: "✓" },
+  ];
+  return spec.filter((c) => c.count > 0);
+}

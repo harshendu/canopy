@@ -75,6 +75,10 @@ class ProposalRead(BaseModel):
     created_at: datetime
     item_count: int = 0
     excluded_count: int = 0
+    # Triage aids so the collapsed review-queue card is scannable without expanding it (§AA/T17):
+    action_counts: dict[str, int] = Field(default_factory=dict)  # {"create": n, "update": n, …}
+    # items that errored or drifted (stale) since staging — look before applying:
+    attention_count: int = 0
     scope_label: str | None = None  # resolved project/initiative key+name for display
 
 

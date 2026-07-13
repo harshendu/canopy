@@ -1587,6 +1587,13 @@ exist: **draft plans** stage *outbound* plan→Jira tickets (§C10); **proposals
   (before → proposed, plus the **live value** when it moved after staging — "changed since
   staged"), provenance link, and reason. The project cockpit (§B3) shows an amber
   **"staged change proposals await your review"** banner when any target it.
+- **Collapsed-card triage (T17):** every card carries an at-a-glance summary so a full queue is
+  scannable without expanding each one — a **shape chip** row (`+N` creates / `~N` updates / `✓N`
+  resolves, from `action_counts`) and, when relevant, an amber **"⚠ N need attention"** flag
+  (`attention_count`) for items that errored or **drifted since staging**. Both are computed
+  server-side on `ProposalRead` (`app/api/v1/proposals.py:_action_counts` / `_item_needs_attention`),
+  so the list and the nav badge share one source of truth. Shape helper is pure + unit-tested
+  (`frontend/src/lib/proposals.ts:proposalShape`).
 - **Review actions (planner + human-only — an agent token gets 403):**
   - **Exclude items** — untick any line before applying
     (`PATCH /api/v1/proposals/{id}/items/{item_id}` `{excluded}`).
@@ -1596,7 +1603,9 @@ exist: **draft plans** stage *outbound* plan→Jira tickets (§C10); **proposals
     409), stamps reviewer + `applied_count`, and publishes SSE (§K) so every open view
     refreshes. Items record their `applied_entity_id`.
   - **Reject** — `POST /api/v1/proposals/{id}/reject` `{note}`: the note is the feedback
-    the author (usually the agent) reads back before restaging.
+    the author (usually the agent) reads back before restaging. Delivery is **pull, not push**:
+    the author discovers the rejection + note via `list_proposals` (MCP) / `GET /proposals?status=rejected`
+    — an outbound Slack/email nudge would ride the same delivery hook as the alerts digest (§I, not built).
 - **Withdraw:** the author (or a planner) can pull an open proposal back —
   `POST /api/v1/proposals/{id}/withdraw` (**agent-allowed**: cleaning up your own staged,
   never-applied change is reversible) · **MCP:** `withdraw_proposal`.

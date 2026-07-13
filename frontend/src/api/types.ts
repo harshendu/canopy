@@ -1158,6 +1158,10 @@ export interface Proposal {
   created_at: string;
   item_count: number;
   excluded_count: number;
+  /** Per-action tally for the collapsed-card shape chip: {"create": n, "update": n, "resolve": n}. */
+  action_counts: Record<string, number>;
+  /** Items that errored or drifted since staging — surfaced as a "needs attention" flag. */
+  attention_count: number;
   scope_label: string | null;
 }
 

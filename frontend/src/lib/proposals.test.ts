@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProposalItem } from "../api/types";
-import { diffRows, formatValue, includedCount, itemHeadline, targetLabel } from "./proposals";
+import {
+  diffRows,
+  formatValue,
+  includedCount,
+  itemHeadline,
+  proposalShape,
+  targetLabel,
+} from "./proposals";
 
 function item(overrides: Partial<ProposalItem>): ProposalItem {
   return {
@@ -105,5 +112,19 @@ describe("includedCount", () => {
     expect(
       includedCount([item({}), item({ excluded: true }), item({ id: 3 })])
     ).toBe(2);
+  });
+});
+
+describe("proposalShape", () => {
+  it("returns non-zero create/update/resolve chips in a fixed order", () => {
+    const chips = proposalShape({ update: 2, create: 3, resolve: 1 });
+    expect(chips.map((c) => c.action)).toEqual(["create", "update", "resolve"]);
+    expect(chips.map((c) => c.count)).toEqual([3, 2, 1]);
+    expect(chips.map((c) => c.glyph)).toEqual(["+", "~", "✓"]);
+  });
+  it("omits zero and missing actions", () => {
+    expect(proposalShape({ create: 2 }).map((c) => c.action)).toEqual(["create"]);
+    expect(proposalShape({ update: 0 })).toEqual([]);
+    expect(proposalShape(undefined)).toEqual([]);
   });
 });
