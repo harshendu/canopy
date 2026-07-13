@@ -2,12 +2,14 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { CapacityResponse, Engineer, Role, User } from "../api/types";
+import type { Blocker, CapacityResponse, Engineer, Role, User } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
+import { countOverAllocatedWeeks } from "../lib/capacityAttention";
 import AvailabilityEditor from "../components/AvailabilityEditor";
 import CapacityHeatmap from "../components/CapacityHeatmap";
 import { PageHeader } from "../components/PageHeader";
+import { Icon } from "../components/icons";
 
 export default function Team() {
   const qc = useQueryClient();
@@ -40,6 +42,13 @@ export default function Team() {
     queryFn: () => api.get<User[]>("/auth/users"),
     retry: false,
   });
+  // Cross-project open blockers — the leading "work has stalled" signal (§D0), scoped to no
+  // project so it covers everyone (open_only defaults true server-side).
+  const blockers = useQuery({
+    queryKey: ["blockers", "org"],
+    queryFn: () => api.get<Blocker[]>("/blockers"),
+  });
+  const overAllocated = countOverAllocatedWeeks(capacity.data);
 
   const skillsToArray = (s: string) =>
     s.split(",").map((x) => x.trim()).filter(Boolean);
@@ -89,8 +98,42 @@ export default function Team() {
     <div className="space-y-6">
       <PageHeader
         title="Team"
-        subtitle="Engineers and their profiles — skills, committed capacity, time zones, and the accounts linked to them."
+        subtitle="Who needs you, then engineers, capacity, and the accounts linked to them."
       />
+
+      {/* Manager attention band — the exception view a team lead actually wants first, before the
+          engineer/role admin forms below (§A7 persona landing). */}
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="mb-2 flex items-center gap-2">
+          <Icon name="alerts" size={16} />
+          <h2 className="font-semibold">Needs attention</h2>
+        </div>
+        {blockers.isLoading || capacity.isLoading ? (
+          <p className="text-sm text-slate-400">Loading…</p>
+        ) : (blockers.data?.length ?? 0) === 0 && overAllocated === 0 ? (
+          <p className="flex items-center gap-1.5 text-sm text-slate-500">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            No open blockers and no one over-allocated.
+          </p>
+        ) : (
+          <ul className="space-y-1 text-sm text-slate-700">
+            {(blockers.data?.length ?? 0) > 0 && (
+              <li className="flex items-start gap-2">
+                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-red-500" />
+                {blockers.data!.length} open blocker{blockers.data!.length === 1 ? "" : "s"} across
+                the team — see each task's detail panel to resolve.
+              </li>
+            )}
+            {overAllocated > 0 && (
+              <li className="flex items-start gap-2">
+                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+                {overAllocated} engineer-week{overAllocated === 1 ? "" : "s"} over 100% allocated —
+                see the capacity grid below.
+              </li>
+            )}
+          </ul>
+        )}
+      </div>
 
       {mayWrite && (
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">

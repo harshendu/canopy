@@ -6,6 +6,7 @@ import { api, ApiError } from "../api/client";
 import type {
   Baseline,
   BurndownResponse,
+  DependencyType,
   ForecastResponse,
   GanttResponse,
   Project,
@@ -26,6 +27,7 @@ import ProjectOverview from "../components/ProjectOverview";
 import RiskRegister from "../components/RiskRegister";
 import JiraLinksPanel from "../components/JiraLinksPanel";
 import TaskDetailPanel from "../components/TaskDetailPanel";
+import HolidaysEditor from "../components/HolidaysEditor";
 import { PageHeader } from "../components/PageHeader";
 import { Icon } from "../components/icons";
 import {
@@ -63,8 +65,11 @@ export default function ProjectView() {
   const [taskDuration, setTaskDuration] = useState(3);
   const [taskType, setTaskType] = useState<TaskType>("task");
   const [taskDeadline, setTaskDeadline] = useState("");
+  const [taskParent, setTaskParent] = useState<number | "">("");
   const [pred, setPred] = useState<number | "">("");
   const [succ, setSucc] = useState<number | "">("");
+  const [depType, setDepType] = useState<DependencyType>("FS");
+  const [depLag, setDepLag] = useState(0);
   const [lastReplan, setLastReplan] = useState<ReplanResult | null>(null);
   const [replanError, setReplanError] = useState<string | null>(null);
   const [baselining, setBaselining] = useState(false);
@@ -140,10 +145,12 @@ export default function ProjectView() {
         duration: taskDuration,
         type: taskType,
         deadline: taskDeadline || null,
+        parent_id: taskParent === "" ? null : taskParent,
       }),
     onSuccess: () => {
       setTaskName("");
       setTaskDeadline("");
+      setTaskParent("");
       invalidate();
       replanAfterEdit();
     },
@@ -161,15 +168,32 @@ export default function ProjectView() {
 
   const addDependency = useMutation({
     mutationFn: () =>
-      api.post("/dependencies", { predecessor_id: pred, successor_id: succ }),
+      api.post("/dependencies", {
+        predecessor_id: pred,
+        successor_id: succ,
+        type: depType,
+        lag: depLag,
+      }),
     onSuccess: () => {
       setPred("");
       setSucc("");
+      setDepType("FS");
+      setDepLag(0);
       invalidate();
       replanAfterEdit();
     },
     onError: (e) =>
       setReplanError(e instanceof ApiError ? e.message : "Couldn’t link the dependency."),
+  });
+
+  const deleteDependency = useMutation({
+    mutationFn: (depId: number) => api.del(`/dependencies/${depId}`),
+    onSuccess: () => {
+      invalidate();
+      replanAfterEdit();
+    },
+    onError: (e) =>
+      setReplanError(e instanceof ApiError ? e.message : "Couldn’t remove the dependency."),
   });
 
   const replan = useMutation({
@@ -599,6 +623,21 @@ export default function ProjectView() {
               <option value="summary">Summary / phase</option>
             </select>
           </div>
+          <select
+            value={taskParent}
+            onChange={(e) => setTaskParent(e.target.value ? Number(e.target.value) : "")}
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            title="Nest this task under a phase — builds the WBS tree"
+          >
+            <option value="">No parent (top-level)</option>
+            {(tasks.data ?? [])
+              .filter((t) => t.type === "summary")
+              .map((t) => (
+                <option key={t.id} value={t.id}>
+                  Under: {t.name}
+                </option>
+              ))}
+          </select>
           <label className="flex items-center gap-2 text-xs text-slate-500">
             Deadline (optional)
             <input
@@ -607,8 +646,11 @@ export default function ProjectView() {
               onChange={(e) => setTaskDeadline(e.target.value)}
               className="rounded border border-slate-300 px-2 py-1 text-sm"
             />
-            <button className="ml-auto rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
-              Add
+            <button
+              disabled={addTask.isPending}
+              className="ml-auto rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {addTask.isPending ? "Adding…" : "Add"}
             </button>
           </label>
         </form>
@@ -620,7 +662,7 @@ export default function ProjectView() {
           }}
           className="space-y-2 rounded-lg border border-slate-200 bg-white p-4"
         >
-          <h2 className="font-semibold">Add dependency (finish → start)</h2>
+          <h2 className="font-semibold">Add dependency</h2>
           <select
             value={pred}
             onChange={(e) => setPred(Number(e.target.value))}
@@ -633,25 +675,81 @@ export default function ProjectView() {
               </option>
             ))}
           </select>
+          <select
+            value={succ}
+            onChange={(e) => setSucc(Number(e.target.value))}
+            className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="">Successor…</option>
+            {(tasks.data ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
           <div className="flex gap-2">
             <select
-              value={succ}
-              onChange={(e) => setSucc(Number(e.target.value))}
-              className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+              value={depType}
+              onChange={(e) => setDepType(e.target.value as DependencyType)}
+              className="rounded border border-slate-300 px-3 py-2 text-sm"
+              title="FS: predecessor finishes before successor starts (default) · SS: both start together · FF: both finish together · SF: predecessor finishes when successor starts"
             >
-              <option value="">Successor…</option>
-              {(tasks.data ?? []).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
+              <option value="FS">Finish → start</option>
+              <option value="SS">Start → start</option>
+              <option value="FF">Finish → finish</option>
+              <option value="SF">Start → finish</option>
             </select>
-            <button className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white">
-              Link
+            <label className="flex items-center gap-1.5 text-xs text-slate-500">
+              lag (days)
+              <input
+                type="number"
+                value={depLag}
+                onChange={(e) => setDepLag(Number(e.target.value))}
+                className="w-16 rounded border border-slate-300 px-2 py-2 text-sm"
+              />
+            </label>
+            <button
+              disabled={addDependency.isPending}
+              className="ml-auto rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {addDependency.isPending ? "Linking…" : "Link"}
             </button>
           </div>
+
+          {(gantt.data?.links.length ?? 0) > 0 && (
+            <div className="border-t border-slate-100 pt-2">
+              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Existing dependencies
+              </h3>
+              <ul className="max-h-40 space-y-1 overflow-y-auto">
+                {gantt.data!.links.map((l) => (
+                  <li key={l.id} className="flex items-center gap-1.5 text-xs text-slate-600">
+                    <span className="min-w-0 flex-1 truncate">
+                      {labelFor(l.source)} → {labelFor(l.target)}
+                      <span className="ml-1 text-slate-400">
+                        ({l.type}
+                        {l.lag ? `, +${l.lag}d` : ""})
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => deleteDependency.mutate(l.id)}
+                      disabled={deleteDependency.isPending}
+                      className="shrink-0 text-slate-400 hover:text-red-600 disabled:opacity-50"
+                    >
+                      remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </form>
       </div>
+      )}
+
+      {mayWriteProject && activeTab === "gantt" && (
+        <HolidaysEditor projectId={id} mayWrite={mayWriteProject} onChanged={replanAfterEdit} />
       )}
 
       {selectedTaskId !== null && (

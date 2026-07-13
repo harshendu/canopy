@@ -16,18 +16,21 @@ describe("featureOn", () => {
 
 describe("personaHome with feature gates", () => {
   it("keeps the persona landing when its surface is on", () => {
-    expect(personaHome("product", {})).toBe("/initiatives");
+    // Product/leadership/design land on the cross-project Home (§B1) — read-first, and always
+    // on (unlike /initiatives, which needs portfolio.initiatives), so no gate fallback applies.
+    expect(personaHome("product", {})).toBe("/portfolio");
+    expect(personaHome("leadership", {})).toBe("/portfolio");
+    expect(personaHome("design", {})).toBe("/portfolio");
     expect(personaHome("architecture", {})).toBe("/decisions");
     expect(personaHome("engineering", {})).toBe("/me");
   });
 
   it("falls back to /projects when the landing surface is gated off", () => {
-    expect(personaHome("product", { "portfolio.initiatives": false })).toBe("/projects");
-    expect(personaHome("design", { "portfolio.initiatives": false })).toBe("/projects");
     expect(personaHome("architecture", { architecture: false })).toBe("/projects");
   });
 
   it("leaves ungated landings alone", () => {
+    expect(personaHome("product", { "portfolio.initiatives": false })).toBe("/portfolio");
     expect(personaHome("management", { "portfolio.initiatives": false })).toBe("/team");
     expect(personaHome(undefined, { architecture: false })).toBe("/projects");
   });

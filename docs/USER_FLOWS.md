@@ -202,7 +202,7 @@ forbidden from **one-way-door / external-write** actions; **two-way-door** actio
   agent-authored PR via webhook — the server can't crawl code itself (§N4), so that scan stays
   agent-driven; the webhook→agent trigger is the remaining piece of roadmap gap #4.
 
-### A7. Cross-functional persona (`function`) + per-persona landing **[new]**
+### A7. Cross-functional persona (`function`) + per-persona landing **[updated]**
 A user carries a **`function`** — `engineering | product | design | architecture | management |
 leadership` — **orthogonal to their access `role`** (roadmap gap #6; the stakeholder model in
 [`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md) §5). It makes PM/UX/staff/director/exec
@@ -211,11 +211,16 @@ reads stay open everywhere; writes are still gated by `role`. Personas are a **l
 - **API:** `function` is set on `POST /api/v1/auth/register` and `PATCH /api/v1/auth/users/{id}`
   (admin) and returned on `GET /api/v1/auth/me` (defaults to `engineering`).
 - **UI:** on login (and the `/` root) the app routes to the persona's home (`src/lib/persona.ts`):
-  leadership/product → `/initiatives`, management → `/team`, architecture → `/decisions`,
-  engineering → `/me`. The `/me` workspace shows the persona badge. Any user can still navigate
-  anywhere — it only sets where you land.
-- **Not built:** bespoke per-persona *dashboards* (each persona sees the shared surfaces at a
-  default altitude, not a custom-built page); admin **UI** to edit a user's function (API-only).
+  **leadership / product / design → `/portfolio`** (the cross-project Home + "needs attention"
+  band, §B1 — read-first, and always on, unlike `/initiatives`), **management → `/team`** (which
+  now leads with its own "needs attention" band — open blockers + over-allocated engineer-weeks,
+  ahead of the engineer/role admin forms), **architecture → `/decisions`**, **engineering → `/me`**.
+  The current-user row at the sidebar foot (`UserSwitcher`) shows the persona label next to the
+  role, so the "lens" is legible at a glance, not just implied by the landing route. Any user can
+  still navigate anywhere — it only sets where you land.
+- **Not built:** bespoke per-persona *dashboards* (each persona sees the shared surfaces — now with
+  a persona-relevant attention band on the ones that needed it — not a fully custom-built page);
+  admin **UI** to edit a user's function (API-only).
 
 ### A8. Integration strategy — per-provider read/write policy *(admin)* **[new]**
 Setting up connectors is heavy and a single shared token can't always fit, so the **admin chooses,
@@ -376,30 +381,40 @@ projects and rolls up their health.
   project, total working days, `spans_projects`, and the `handoffs`; cyclic cross-project deps →
   409) · **MCP:** `get_initiative_critical_path`.
 
-### R5. Initiative digest — manage-by-exception weekly roll-up **[new]**
+### R5. Initiative digest — manage-by-exception weekly roll-up **[updated — now in the UI]**
 - A synthesized health digest that **leads with what needs attention** (roadmap gap #6 / `PF L-R2`;
   37signals/Cagan: green is silent, surface exceptions). Reuses the **rollup** (§R3) + **forecast**
   (§C8) and adds **open blockers** (across the initiative's projects) + **outcomes** (§Y). Returns
   a `headline`, an `attention` exception list (behind target, P85 past target, elevated risk/drift,
   open blockers, decisions awaiting, at-risk sub-projects), the status numbers, the outcomes, and a
   ready-to-send **`markdown`** rendering. Pure synthesis in `app/services/digest.py`.
+- **UI:** the initiative cockpit (§R3) now renders the digest at the top — the headline + the
+  `attention` list — with a **Copy digest** action that copies the `markdown` rendering to the
+  clipboard (falls back to a no-op, never a false "Copied", if the clipboard API is unavailable).
 - **API:** `GET /api/v1/initiatives/{id}/digest` · **MCP:** `get_initiative_digest` (the spine of
   the `daily-standup` skill §L16).
 - **Delivery** to Slack/email is a **hook over this output**, not built (same posture as the alerts
-  digest §I) — the digest *content* is the deliverable.
+  digest §I).
 
 ---
 
 ## B. Projects & portfolio
 
-### B1. View the portfolio dashboard
-- **UI:** `/portfolio` (landing page). Shows a completion bar chart and a card per project
-  (avg % complete, completed/total tasks, critical-task count, end date, and **risk + drift score
+### B1. View the portfolio dashboard — the cross-project Home **[updated]**
+- **UI:** `/portfolio` — the cross-project "what needs me" entry (leadership/product/design land
+  here, §A7), leading with a **"Needs attention"** exception band (green is silent) derived purely
+  from the portfolio summaries — off-track health, CPM end past target, elevated (high/critical)
+  risk or drift — each row a deep-link into the owning project's workspace (`lib/attention.ts`,
+  pure + unit-tested, no extra fetches). Deliberately **not** triggered by any open RAID risk
+  count: the register is a maintained ledger, not an alarm, so flagging every tracked risk would
+  show nearly every project and defeat "green is silent." Below it: a completion bar chart and a
+  card per project (avg %
+  complete, completed/total tasks, critical-task count, end date, and **risk + drift score
   badges** — see §Q / §N). Clicking a card opens it. An **Export ▾** control exports the whole
   portfolio as a PDF/CSV snapshot (§S).
 - **API:** `GET /api/v1/projects/portfolio` (each `ProjectSummary` includes `risk_score`/`risk_level`
   and `drift_score`/`drift_level`, computed by the same scorers as the Risk/Drift tabs) · **MCP:**
-  `list_projects`.
+  `list_projects`. The attention band is a pure client-side derivation over this same response.
 - **Not built (v2 §B1):** last-decision recency and sortable columns.
 
 ### B2. Create a project
@@ -466,15 +481,20 @@ projects and rolls up their health.
 
 ### C1. Add a task / milestone / phase
 - **UI:** Gantt tab → "Add task" form: name, duration (working days), type
-  (**task** / **milestone** / **summary**), optional deadline → "Add".
+  (**task** / **milestone** / **summary**), a **parent (phase)** picker (any summary task in the
+  project — nests the new task into the WBS tree directly from the form), optional deadline →
+  "Add".
 - **API:** `POST /api/v1/tasks` · **MCP:** `create_task`.
-- **Notes:** a **summary** task is a phase/workstream; build the WBS by setting `parent_id`
-  (API/MCP — the UI form creates top-level tasks).
-- **Edit / assign:** `PATCH /api/v1/tasks/{id}` (a planner edits any task; an engineer only one
-  assigned to them — §A3a) · **MCP:** `update_task` (planning fields: name/duration/start/end/
-  deadline/percent_complete/parent — **status stays Jira-mirrored, read-only**; `status` is not a
-  writable field on the direct REST route either, matching the proposal/MCP whitelists) and
-  `assign_task` (set/clear `assignee_engineer_id`).
+- **Notes:** a **summary** task is a phase/workstream; the WBS is built by setting `parent_id`,
+  now exposed in the UI form (previously API/MCP-only) alongside the API/MCP.
+- **Edit / assign / delete:** `PATCH /api/v1/tasks/{id}` (a planner edits any task; an engineer
+  only one assigned to them — §A3a) · **MCP:** `update_task` (planning fields: name/duration/
+  start/end/deadline/percent_complete/parent — **status stays Jira-mirrored, read-only**; `status`
+  is not a writable field on the direct REST route either, matching the proposal/MCP whitelists)
+  and `assign_task` (set/clear `assignee_engineer_id`). **Delete** is a planner-only **Delete**
+  button in the task detail panel (§C1a, `window.confirm`'d) → `DELETE /api/v1/tasks/{id}`, which
+  cascades its dependencies/status-history/blockers server-side (`app/services/cascade.py`) and
+  promotes any child tasks to the deleted task's parent rather than orphaning them.
 - **Auto-replan (UI):** adding a task, adding a dependency, or changing a task's duration in the
   dashboard now **re-runs CPM automatically** (planner sessions) and shows the delta banner —
   scheduled-task count, the critical path **by task name**, project end, and any deadline
@@ -482,9 +502,10 @@ projects and rolls up their health.
   dependency surfaces the 409 inline instead of failing quietly. The manual **Schedule (CPM)**
   button stays for an explicit re-run. (Agent/API callers still call `replan_schedule` themselves.)
 
-### C1a. Task detail panel — owner, estimates, tags, progress, blockers, risks, external links **[new]**
+### C1a. Task detail panel — owner, estimates, tags, progress, blockers, risks, external links **[updated]**
 - **UI:** click a task bar in the **Gantt** (or a card on the **Board**) to open a right-side
-  **detail panel**. It edits the task's **owner** (an "Owner" select over the team's engineers —
+  **detail panel**. A planner-only **Delete** button sits next to the panel's close (✕) — deletes
+  the task after a confirm, cascading its dependencies/history/blockers (see §C1). It edits the task's **owner** (an "Owner" select over the team's engineers —
   the click-through home of individual ownership), **progress** + **duration**, a **3-point
   estimate** (aggressive / practical / buffered, with the computed PERT mean + spread + a
   confidence badge), **tags**, the task's **blockers** (raise/resolve with category + severity +
@@ -509,13 +530,17 @@ projects and rolls up their health.
   comes from `PullRequest.task_id` (a webhook would match by branch / Jira key); the demo seed wires
   it directly. Gantt/Board still show no per-row link badge (a possible follow-up).
 
-### C2. Add a dependency
-- **UI:** Gantt tab → "Add dependency (finish → start)" form: pick predecessor + successor → "Link".
-- **API:** `POST /api/v1/dependencies` (supports `type` FS/SS/FF/SF and `lag`) · **MCP:**
-  `link_dependency`.
-- **Notes:** the UI creates finish-to-start links; other types + lag are via API/MCP. A
-  **cross-project** dependency (a hand-off between teams) is allowed only when both tasks' projects
-  share an **initiative** (§R4); it appears on the initiative critical path, not the per-project Gantt.
+### C2. Add / remove a dependency **[updated]**
+- **UI:** Gantt tab → "Add dependency" form: pick predecessor + successor, a **type** select
+  (finish→start / start→start / finish→finish / start→finish, default FS) + a **lag (days)**
+  input → "Link". Below the form, an **existing-dependencies list** (source → target, type, lag)
+  with a **remove** action per row.
+- **API:** `POST /api/v1/dependencies` (`type` FS/SS/FF/SF and `lag`), `DELETE
+  /api/v1/dependencies/{id}` · **MCP:** `link_dependency`.
+- **Notes:** all four types + lag are now in the UI form (previously API/MCP-only for non-FS/lag).
+  A **cross-project** dependency (a hand-off between teams) is allowed only when both tasks'
+  projects share an **initiative** (§R4); it appears on the initiative critical path, not the
+  per-project Gantt.
 
 ### C3. Schedule (Critical Path Method)
 - **UI:** project header → **Schedule (CPM)**. A banner reports scheduled task count, the critical
@@ -556,9 +581,12 @@ projects and rolls up their health.
   server-resolved `assignee_name` per task; assignment itself is §C1/C1a (`PATCH /tasks/{id}`,
   MCP `assign_task`). Jira-synced tasks arrive with ownership already mapped (§J3).
 
-### C7. Working calendar (weekends + holidays)
-- **UI:** "5-day week" toggle (weekends). **Holidays** are API-only:
-  `GET/POST/DELETE /api/v1/projects/{id}/holidays`. Both feed the CPM scheduler.
+### C7. Working calendar (weekends + holidays) **[updated — holidays now in the UI]**
+- **UI:** "5-day week" toggle (weekends). **Holidays**: a `HolidaysEditor` panel under the Gantt
+  tab (list + add-by-date + remove), gated on the same **`ArchitectWriter`** role as other project
+  settings (admin/architect — not the broader planner set that can edit tasks/deps). Adding or
+  removing a holiday re-runs CPM automatically (it shifts the working calendar).
+- **API:** `GET/POST/DELETE /api/v1/projects/{id}/holidays`. Both feed the CPM scheduler.
 
 ### C8. Probabilistic forecast (Monte-Carlo) **[new — v2 §C-R1]**
 - **UI:** Gantt tab → a **Probabilistic forecast** card shows **P50 (likely)** and **P85 (safe)**
@@ -684,7 +712,10 @@ surfaces where decisions get made — the engineer workspace and the project ale
 ## F. Team & capacity
 
 ### F1. Manage engineers and roles
-- **UI:** `/team` — add engineers (name, title, **GitHub login**, **timezone**, **committed
+- **UI:** `/team` (the management persona's landing, §A7) — leads with a **"Needs attention"**
+  band (open blockers across the team, from `GET /blockers` with no `project_id` filter; and
+  over-allocated engineer-weeks from the org-wide capacity grid below, §F3) before the roster
+  admin forms. Then: add engineers (name, title, **GitHub login**, **timezone**, **committed
   hours/week**, **skill tags**), link an engineer to a **login** (per-row select, admins only),
   add functional roles, and remove engineers. Engineer rows show skills / GitHub / committed hours.
 - **API:** `GET/POST /api/v1/team/engineers`, `PATCH/DELETE /api/v1/team/engineers/{id}`
@@ -1787,17 +1818,25 @@ at the connector's `open_client()` chokepoint.
 ## Known UI gaps (currently API/MCP-only)
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
-- **What-if** scheduling (C5).
+- **What-if** scheduling (C5) — per-project quick duration-override probing; **Scenarios** (§T)
+  cover the durable, multi-dimensional initiative-level what-if.
 - The **epic doc-field mapping / harvest** setup (§V2/§V3) stays conversational (AI-driven via the
   plugin) — no React wizard (deliberate); the Docs **tab** itself is built (read + add links).
-- Project rename/archive/date edits and **holiday** management (B4, C7).
+- Project rename/archive/date edits (B4) — the header has the weekend toggle + health/status/tags
+  meta bar; renaming/archiving/dates are still API-only.
 - *(closed previously: G5 blast radius; Risk (§Q) + portfolio scores (§B1); user/role mgmt (A3) +
   engineer workspace (§M); per-role enforcement (§A3a); drift detection (§N); retros/postmortems
-  (§P). Closed this revision: **CI/observability events + Activity feed** (§J8) with incident
+  (§P). Closed prior revision: **CI/observability events + Activity feed** (§J8) with incident
   postmortem auto-open (§P2); the **quality** risk family + **drift-into-risk** + **risk timeline**
   (§Q); **ADR doc-import** UI (G6); **component owner/criticality/tier** (§G1); **`/me/today`** (§M);
   the **decision-deadline nudger** + **PR-to-ADR linker** skills (§L8/§L9); the **Agent Setup** tab
-  — self-service agent-token mint/list/revoke + plugin & MCP setup instructions (§A11).)*
+  — self-service agent-token mint/list/revoke + plugin & MCP setup instructions (§A11). Closed this
+  revision: **holiday** management (C7) — a `HolidaysEditor` panel on the Gantt tab; **WBS
+  parenting** and **dependency type/lag** in the Add-task/Add-dependency forms (C1/C2); **task
+  delete** and **dependency delete** from the UI (C1/C1a/C2); the **initiative digest** now
+  renders in the UI, not just MCP/API (R5); the **portfolio "needs attention" band** (B1) and a
+  matching band on **`/team`** (F1); and non-engineering personas landing on read-first surfaces
+  instead of a create-list / admin page (A7).)*
 
 ## Not built (deliberately deferred — with rationale)
 - **OIDC/SSO + `HttpOnly`-cookie tokens** (§A1): a substantial auth overhaul; the `Bearer` JWT path

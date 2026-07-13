@@ -102,6 +102,23 @@ export interface InitiativeRollup {
   on_track: boolean | null;
 }
 
+/** Manage-by-exception weekly roll-up (§R5) — leads with `attention`, the exception list. */
+export interface InitiativeDigest {
+  initiative_id: number;
+  name: string;
+  generated_on: string;
+  headline: string;
+  on_track: boolean | null;
+  risk_level: string;
+  drift_level: string;
+  p85_date: string | null;
+  open_blockers: number;
+  open_decisions: number;
+  attention: string[];
+  outcomes: string[];
+  markdown: string;
+}
+
 export interface RiskItem {
   id: number;
   scope_level: RiskScope;
@@ -191,6 +208,13 @@ export interface Milestone {
   description: string | null;
   target_date: string | null;
   status: string;
+}
+
+export interface Holiday {
+  id: number;
+  project_id: number;
+  day: string;
+  name: string | null;
 }
 
 export interface GanttLink {

@@ -43,11 +43,30 @@ export default function TaskDetailPanel({
   /** Called after a save that changed a scheduling input (duration) — lets the parent re-run CPM. */
   onStructuralChange?: () => void;
 }) {
+  const qc = useQueryClient();
   const task = useQuery({
     queryKey: ["task", taskId],
     queryFn: () => api.get<Task>(`/tasks/${taskId}`),
   });
   const features = useFeatures();
+
+  const deleteTask = useMutation({
+    mutationFn: () => api.del(`/tasks/${taskId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tasks", projectId] });
+      qc.invalidateQueries({ queryKey: ["gantt", projectId] });
+      qc.invalidateQueries({ queryKey: ["board", projectId] });
+      onClose();
+      // The delete cascades deps/history/etc. server-side; re-plan so the schedule reflects it.
+      onStructuralChange?.();
+    },
+  });
+  const handleDelete = () => {
+    const name = task.data?.name ?? `task #${taskId}`;
+    if (window.confirm(`Delete "${name}"? This also removes its dependencies and history.`)) {
+      deleteTask.mutate();
+    }
+  };
 
   return (
     <>
@@ -72,10 +91,26 @@ export default function TaskDetailPanel({
               </div>
             )}
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700" aria-label="Close">
-            ✕
-          </button>
+          <div className="flex shrink-0 items-center gap-3">
+            {mayPlan && (
+              <button
+                onClick={handleDelete}
+                disabled={deleteTask.isPending}
+                className="text-xs font-medium text-slate-400 hover:text-red-600 disabled:opacity-50"
+              >
+                {deleteTask.isPending ? "Deleting…" : "Delete"}
+              </button>
+            )}
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-700" aria-label="Close">
+              ✕
+            </button>
+          </div>
         </div>
+        {deleteTask.isError && (
+          <p role="alert" className="border-b border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700">
+            Couldn’t delete: {(deleteTask.error as Error).message}
+          </p>
+        )}
 
         <div className="space-y-6 p-4">
           {task.data && (
