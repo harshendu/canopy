@@ -567,7 +567,13 @@ projects and rolls up their health.
   `Baseline`), `GET /api/v1/projects/{id}/baselines` (the history, newest first) · **MCP:**
   `set_baseline` (accepts a `note`).
 
-### C5. What-if scheduling
+### C5. What-if scheduling **[updated — now has a UI panel]**
+- **UI:** Gantt tab → a **What-if** card under the chart (shown when `planning.whatif` is on and the
+  plan has tasks). Pick a leaf task, enter a hypothetical duration, **Add override** (accumulates
+  removable chips showing `old → new`), then **Project**. The result shows **Projected end**, **Δ vs
+  current** (green earlier / red later), **critical-task count**, and **deadline misses** — all
+  computed, nothing persisted. Editing the override set clears the stale projection. Component:
+  `frontend/src/components/WhatIfPanel.tsx`.
 - **Actor:** architect via Claude (or API) · **MCP:** `whatif_schedule` · **API:**
   `POST /api/v1/projects/{id}/whatif` with `duration_overrides` (`{task_id: working_days}`).
 - **Result:** returns a *projected* end date / critical path / deadline violations **without
@@ -575,10 +581,19 @@ projects and rolls up their health.
   cutting a duration pulls dependent work (and the project end) earlier, because the scheduler no
   longer pins tasks at their last-computed start (see §C3 `constraint_start`). Previously a scope
   cut showed no improvement.
-- **UI gap:** no what-if screen yet; it's driven through Claude or the API.
 
-### C6. Zoom the Gantt
-- **UI:** Gantt tab → the `−` / `+` controls change the day-width.
+### C6. Read the Gantt — zoom, legend, today, variance, collapse **[updated]**
+- **UI:** Gantt tab.
+  - **Zoom:** the `−` / `+` controls change the day-width.
+  - **Legend:** a row under the chart decodes the marks — **red** = critical path, **canopy** =
+    task, **slate** = phase/summary, gray strip = **baseline**, amber dashed = **deadline**, sky
+    dashed = **today**, and the `+d`/`−d` chip = schedule variance.
+  - **Today marker:** a sky dashed vertical line (labeled "today") when the current date falls in the
+    charted window, so "where are we now" reads at a glance.
+  - **Schedule variance chips:** a leaf whose finish moved off its baseline shows a `+Nd` (red, late)
+    or `−Nd` (canopy, early) chip past its bar — the numeric twin of the gray baseline strip (§C4).
+  - **Collapse WBS:** summary rows with children carry a `▾`/`▸` chevron; clicking it hides that
+    phase's descendants so a large tree stays navigable (client-side, not persisted).
 
 ### C6a. Ownership on the Gantt — owner chips + filter **[new]**
 - **UI:** each assigned row shows the owner's **initials chip** in the label column (full name in

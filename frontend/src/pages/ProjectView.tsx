@@ -16,6 +16,7 @@ import type {
   TaskType,
 } from "../api/types";
 import GanttChart from "../components/GanttChart";
+import WhatIfPanel from "../components/WhatIfPanel";
 import CapacityView from "../components/CapacityView";
 import RoadmapView from "../components/RoadmapView";
 import DeliveryView from "../components/DeliveryView";
@@ -216,6 +217,14 @@ export default function ProjectView() {
 
   const baselinesOn = featureOn(features, "planning.baselines");
   const forecastOn = featureOn(features, "tracking.forecast");
+  const whatifOn = featureOn(features, "planning.whatif");
+  // Latest scheduled finish across the plan — the baseline the what-if projection is measured against.
+  const currentEnd = useMemo(() => {
+    const ends = (gantt.data?.tasks ?? [])
+      .map((t) => t.end_date)
+      .filter((d): d is string => Boolean(d));
+    return ends.length ? ends.reduce((a, b) => (a > b ? a : b)) : null;
+  }, [gantt.data]);
   // Staged changes awaiting review for THIS project (agent proposals — §AA).
   const openProposals = useQuery({
     queryKey: ["proposals", "open", "project", id],
@@ -440,6 +449,9 @@ export default function ProjectView() {
             <p className="text-sm text-slate-500">
               No tasks yet — add tasks below, then run “Schedule (CPM)”.
             </p>
+          )}
+          {whatifOn && gantt.data && gantt.data.tasks.length > 0 && (
+            <WhatIfPanel projectId={id} tasks={gantt.data.tasks} currentEnd={currentEnd} />
           )}
           {forecast.data && (
             <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
