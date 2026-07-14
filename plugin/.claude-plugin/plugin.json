@@ -15,27 +15,36 @@
   "userConfig": {
     "api_base_url": {
       "type": "string",
-      "description": "Base URL of the canopy backend, e.g. http://localhost:8000",
-      "default": "http://localhost:8000"
-    },
-    "dashboard_url": {
-      "type": "string",
-      "description": "Base URL of the canopy web dashboard, used for review links (change proposals). In production this is usually the same origin as the API; for local dev use the Vite server, e.g. http://localhost:5173",
-      "default": "http://localhost:5173"
+      "title": "Canopy API base URL",
+      "description": "Base URL of the canopy backend, e.g. http://localhost:8000 (in production, your dashboard's origin).",
+      "default": "http://localhost:8000",
+      "required": true
     },
     "api_token": {
       "type": "string",
-      "description": "JWT for the canopy API (obtain from POST /api/v1/auth/login)",
-      "sensitive": true
+      "title": "Canopy agent token",
+      "description": "Agent-scoped token minted from the canopy dashboard's Agent Setup page (or a JWT from POST /api/v1/auth/login).",
+      "sensitive": true,
+      "required": true
+    },
+    "dashboard_url": {
+      "type": "string",
+      "title": "Canopy dashboard URL (optional)",
+      "description": "Base URL of the canopy web dashboard, used for review links (change proposals). In production this is usually the same origin as the API; for local dev use the Vite server, e.g. http://localhost:5173. Leave blank to fall back to the API base URL.",
+      "default": ""
     },
     "api_email": {
       "type": "string",
-      "description": "Alternative to api_token: canopy account email the MCP server logs in as (auto-refreshes the JWT)"
+      "title": "Canopy account email (optional)",
+      "description": "Alternative to the token: canopy account email the MCP server logs in as (auto-refreshes the JWT). Leave blank when using a token.",
+      "default": ""
     },
     "api_password": {
       "type": "string",
-      "description": "Password for api_email (used to mint/refresh the JWT automatically)",
-      "sensitive": true
+      "title": "Canopy account password (optional)",
+      "description": "Password for the account email above (used to mint/refresh the JWT automatically). Leave blank when using a token.",
+      "sensitive": true,
+      "default": ""
     }
   }
 }

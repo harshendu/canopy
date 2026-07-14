@@ -325,7 +325,11 @@ exact steps to connect — as a full plugin or a bare MCP server.
   (list), `DELETE /auth/agent-tokens/{id}` (revoke) — see §A6. The token is consumed by the MCP
   server as `CANOPY_API_TOKEN` (plugin `api_token`), so the instructions mirror §L1.
 - **Notes:** the *Full plugin* path is `/plugin marketplace add … → /plugin install canopy@canopy →`
-  set `api_base_url` + `api_token`; the *MCP only* path clones the repo, `pip install`s
+  fill the enable-time **config dialog** with `api_base_url` + `api_token` (the other fields are
+  optional). Those two `userConfig` fields are `required:true` in `plugin/.claude-plugin/plugin.json`
+  so Claude Code actually prompts for them; the optional ones (`dashboard_url`/`api_email`/
+  `api_password`) carry a `default:""` so their `${user_config.*}` substitution in `.mcp.json` is
+  never undefined (was the "undefined parameters" install failure). The *MCP only* path clones the repo, `pip install`s
   `mcp_server/requirements.txt`, and drops a stdio `.mcp.json` (`CANOPY_API_BASE_URL` +
   `CANOPY_API_TOKEN`). The API URL defaults to the dashboard origin (with a local-dev
   `:8000` note); a shared always-on HTTP MCP server points at `docs/PRODUCTION.md` instead.

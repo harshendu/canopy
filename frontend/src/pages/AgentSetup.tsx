@@ -327,14 +327,21 @@ export default function AgentSetup() {
               <CodeBlock code="/plugin install canopy@canopy" />
             </li>
             <li>
-              <p className="font-medium">3. Configure it when prompted</p>
+              <p className="font-medium">3. Fill in the configuration dialog</p>
               <p className="mb-1 text-slate-500">
-                Set <code className="rounded bg-slate-100 px-1">api_base_url</code> and{" "}
-                <code className="rounded bg-slate-100 px-1">api_token</code> (leave{" "}
-                <code className="rounded bg-slate-100 px-1">api_email</code>/
-                <code className="rounded bg-slate-100 px-1">api_password</code> blank):
+                Installing opens a config dialog. Enter the two required values below; leave the
+                optional fields (<code className="rounded bg-slate-100 px-1">dashboard_url</code>,{" "}
+                <code className="rounded bg-slate-100 px-1">api_email</code>,{" "}
+                <code className="rounded bg-slate-100 px-1">api_password</code>) blank.
               </p>
-              <CodeBlock code={`api_base_url = ${apiBaseUrl}\napi_token    = ${activeToken}`} />
+              <CodeBlock
+                code={`Canopy API base URL   ${apiBaseUrl}\nCanopy agent token    ${activeToken}`}
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                If the dialog didn’t appear, run{" "}
+                <code className="rounded bg-slate-100 px-1">/plugin</code>, open{" "}
+                <strong>canopy</strong>, and choose <strong>Configure</strong>.
+              </p>
             </li>
             <li>
               <p className="font-medium">4. Start a session</p>
