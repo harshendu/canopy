@@ -207,18 +207,23 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   revoked. UI: the **Agent Setup** tab (`/agent-setup`, all users — mint/list/revoke + plugin & MCP
   setup instructions). USER_FLOWS §A6/§A11; roadmap gap #4 in AI_NATIVE_EXECUTION.md (the
   webhook that auto-runs guardrails on agent PRs stays agent-driven — the server can't crawl code, §N).
-- **Initiative lead teams + leadership notes:** an initiative is owned by its **core team**
-  (`InitiativeLead` seats: technical / product / design, `app/models/leadership.py`). Ownership
-  scopes *planning writes* — a planner-role user edits only the initiatives they lead and reads
-  every other one; admins are exempt; no leads = plain role rules — enforced centrally in
+- **Teams, pods, owners + leadership notes:** a **team** owns a product/platform and holds
+  **pods**; directors/managers sit in `TeamMember` seats (`app/models/org.py`). An initiative
+  belongs to a team and has **one or more owners** (`InitiativeLead`: technical / product /
+  design / manager; one person may own several); every **project has exactly one owner**
+  (`Project.owner_engineer_id`) and a pod; an initiative spans its projects' pods (derived).
+  Ownership scopes *planning writes* for planner roles — initiative owners plan the initiative,
+  team directors plan their team's initiatives, a project owner plans their project; everyone
+  else reads; admins exempt; no owners + no team = plain role rules — enforced centrally in
   `app/services/access.py` (`ensure_initiative_editable` / `ensure_project_editable`, called from
   the initiative/project/task/milestone/dependency/ADR/draft/scenario writes; 403
-  `{code:"not_initiative_lead"}`). `GET /initiatives/access`, `/projects/{id}/access`, rollup
-  `can_edit`+`leads`. **Leadership notes** (`LeadershipNote`, polymorphic initiative|project
-  scope + optional decision/risk/outcome/milestone target, kind watch|priority|feedback) are the
-  executive layer's one write (`function=leadership` or admin); leads acknowledge/resolve with a
-  response; `GET /leadership/review` is the business-review roll-up (gate `portfolio.leadership`,
-  UI `/review`, the leadership persona's landing). USER_FLOWS §R6 / §BR.
+  `{code:"not_initiative_lead"}`). `GET /teams`, `/initiatives/access`, `/projects/{id}/access`,
+  rollup `can_edit`/`leads`/`team_name`/`pods`. **Leadership notes** (`LeadershipNote`,
+  polymorphic initiative|project scope + optional decision/risk/outcome/milestone target, kind
+  watch|priority|feedback) are leadership's one write (`function=leadership`, team directors, or
+  admin); owners acknowledge/resolve with a response; `GET /leadership/review` is the
+  business-review roll-up grouped by team (gate `portfolio.leadership`, UI `/review`, the
+  leadership persona's landing). USER_FLOWS §R6 / §BR.
 - **Feature gates (admin on/off per surface):** two-level catalog (group → feature, e.g.
   `tracking` → `tracking.board`) in `app/services/features.py`; overrides are `FeatureFlag` rows
   (missing row = enabled; effective = own AND group). Enforced via `require_feature`/`FeatureGate`
@@ -309,8 +314,9 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   HTTP mock (`app/connectors/demo.py`) injected at `Connector.open_client`, so Jira/GitHub/Drive
   sync + reads work without credentials. Extend the seed as features grow (it backs e2e). A
   second narrative (`seed/agentic.py`, **Northstar** — AI Interviewer / Talent Pilot / Talent
-  Forge / Agent Builder / Dev Agents + Support Escalations + a Q4 enhancements bundle, each led
-  by its own `InitiativeLead` core team under an executive team with seeded leadership notes)
+  Forge / Agent Builder / Dev Agents + Support Escalations + a Q4 enhancements bundle, organised
+  into two teams with pods, directors and managers, owned via `InitiativeLead` seats, every
+  project with one owner, and Head of Engineering / Head of Product with seeded leadership notes)
   loads through the same
   generic loader: datasets are `Dataset` holders registered in `seed/__init__.py:DATASETS`,
   picked by `DEMO_DATASET` (default `helix`) or per reseed (`?dataset=`). USER_FLOWS §Z/§Z1a.

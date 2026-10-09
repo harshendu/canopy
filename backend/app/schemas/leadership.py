@@ -11,6 +11,7 @@ from app.models.base import (
     LeadershipTargetKind,
     LeadRole,
     ProjectHealth,
+    TeamRole,
 )
 
 _read = ConfigDict(from_attributes=True)
@@ -31,10 +32,51 @@ class InitiativeLeadRead(BaseModel):
 
 
 class InitiativeAccess(BaseModel):
-    """What the current user may edit, plus every initiative's lead team (one call)."""
+    """What the current user owns / may edit, plus every initiative's owners (one call)."""
 
-    led_initiative_ids: list[int]
+    led_initiative_ids: list[int]  # initiatives the user is an owner of
+    editable_initiative_ids: list[int] = []  # owned + those in teams the user directs
+    owned_project_ids: list[int] = []  # projects the user is the single owner of
     leads: list[InitiativeLeadRead]
+
+
+# --- teams & pods ----------------------------------------------------------------------------
+class PodRead(BaseModel):
+    id: int
+    team_id: int
+    name: str
+
+
+class TeamMemberRead(BaseModel):
+    team_id: int
+    engineer_id: int
+    engineer_name: str
+    role: TeamRole
+    user_id: int | None = None
+
+
+class TeamRead(BaseModel):
+    id: int
+    key: str
+    name: str
+    description: str | None = None
+    pods: list[PodRead] = []
+    members: list[TeamMemberRead] = []
+
+
+class TeamCreate(BaseModel):
+    key: str
+    name: str
+    description: str | None = None
+
+
+class PodCreate(BaseModel):
+    name: str
+
+
+class TeamMemberIn(BaseModel):
+    engineer_id: int
+    role: TeamRole = TeamRole.manager
 
 
 class ProjectAccess(BaseModel):
@@ -44,7 +86,10 @@ class ProjectAccess(BaseModel):
     initiative_id: int | None
     initiative_name: str | None
     can_edit: bool
-    leads: list[InitiativeLeadRead] = []
+    leads: list[InitiativeLeadRead] = []  # the initiative's owners
+    owner_name: str | None = None  # the project's single owner
+    pod_name: str | None = None
+    team_name: str | None = None
 
 
 # --- leadership notes ------------------------------------------------------------------------
@@ -100,6 +145,8 @@ class ReviewInitiative(BaseModel):
     id: int
     key: str
     name: str
+    team_id: int | None = None
+    pods: list[str] = []
     outcome_statement: str | None
     target_date: date | None
     health: ProjectHealth | None
@@ -124,6 +171,7 @@ class BusinessReview(BaseModel):
     outcomes, and the leadership notes still open — one page for the executive meeting."""
 
     generated_on: date
+    teams: list[TeamRead] = []  # grouping for the page (directors / managers / pods)
     initiatives: list[ReviewInitiative]
     open_note_count: int
     attention: list[str]

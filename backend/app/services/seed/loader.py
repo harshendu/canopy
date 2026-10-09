@@ -61,12 +61,14 @@ from app.models.base import (
     RiskStatus,
     SpecStatus,
     TaskType,
+    TeamRole,
     utcnow,
 )
 from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import Connection, ExternalRef, JiraLink, PullRequest
 from app.models.leadership import InitiativeLead, LeadershipNote
+from app.models.org import Pod, Team, TeamMember
 from app.models.outcome import Outcome
 from app.models.project import (
     Baseline,
@@ -207,6 +209,9 @@ class _Refs:
     tasks: dict[str, dict[str, Task]] = field(default_factory=dict)  # project_key -> name -> Task
     leaf_order: dict[str, list[Task]] = field(default_factory=dict)  # project_key -> leaves
 
+    teams: dict[str, Team] = field(default_factory=dict)
+    pods: dict[str, Pod] = field(default_factory=dict)  # pod name -> Pod (unique per dataset)
+
     def eng(self, name: str | None) -> int | None:
         if name is None:
             return None
@@ -252,6 +257,23 @@ async def _build_team(session: AsyncSession, refs: _Refs) -> None:
         ))
 
 
+async def _build_teams(session: AsyncSession, refs: _Refs) -> None:
+    """Teams → pods → director/manager seats (USER_FLOWS §R6)."""
+    for spec in refs.ds.teams:
+        team = await _add(session, Team(key=spec.key, name=spec.name,
+                                        description=spec.description))
+        refs.teams[spec.key] = team
+        for pod_name in spec.pods:
+            refs.pods[pod_name] = await _add(session, Pod(team_id=_req(team.id), name=pod_name))
+        for role, names in ((TeamRole.director, spec.directors),
+                            (TeamRole.manager, spec.managers)):
+            for name in names:
+                eng_id = refs.eng(name)
+                if eng_id is not None:
+                    await _add(session, TeamMember(team_id=_req(team.id), engineer_id=eng_id,
+                                                   role=role))
+
+
 async def _build_initiatives(session: AsyncSession, refs: _Refs) -> None:
     today = _today()
     for spec in refs.ds.initiatives:
@@ -261,6 +283,7 @@ async def _build_initiatives(session: AsyncSession, refs: _Refs) -> None:
             owner_engineer_id=refs.eng(spec.owner_engineer), tags=list(spec.tags),
             health=ProjectHealth(spec.health) if spec.health else None,
             status_note=spec.status_note, status_updated_at=utcnow(),
+            team_id=refs.teams[spec.team_key].id if spec.team_key in refs.teams else None,
         ))
         refs.initiatives[spec.key] = init
         for eng_name, lead_role in spec.leads:
@@ -324,6 +347,8 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
     project = await _add(session, Project(
         key=spec.key, name=spec.name, description=spec.description,
         initiative_id=init.id if init else None,
+        pod_id=refs.pods[spec.pod].id if spec.pod in refs.pods else None,
+        owner_engineer_id=refs.eng(spec.owner),
         start_date=_weeks(today, -spec.start_weeks_ago),
         target_date=_weeks(today, spec.target_weeks_ahead), skip_weekends=spec.skip_weekends,
         tags=list(spec.tags), health=ProjectHealth(spec.health) if spec.health else None,
@@ -837,6 +862,7 @@ async def load_seed_data(
     refs = _Refs(ds=dataset or HELIX)
     await _build_users(session, refs)
     await _build_team(session, refs)
+    await _build_teams(session, refs)
     await _build_initiatives(session, refs)
     await _build_projects(session, refs)
     await _build_allocations(session, refs)

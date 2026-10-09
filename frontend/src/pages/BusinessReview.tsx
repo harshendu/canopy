@@ -7,7 +7,8 @@ import ExportMenu from "../components/ExportMenu";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
 import { QueryError } from "../components/QueryError";
-import { leadTeamLabel } from "../lib/initiativeAccess";
+import type { Team } from "../api/types";
+import { leadTeamLabel, teamSeatsLabel } from "../lib/initiativeAccess";
 import { riskTone } from "../lib/risk";
 import { featureOn, useFeatures } from "../lib/useFeatures";
 
@@ -36,7 +37,7 @@ export default function BusinessReview() {
     <div className="space-y-5">
       <PageHeader
         title="Business review"
-        subtitle={`Every initiative, its lead team, outcomes and the leadership notes still open — as of ${r.generated_on}.`}
+        subtitle={`Every initiative by team — its pods, owners, outcomes and the leadership notes still open — as of ${r.generated_on}.`}
         actions={
           featureOn(features, "reporting.exports") ? (
             <ExportMenu scope="portfolio" />
@@ -69,13 +70,48 @@ export default function BusinessReview() {
         )}
       </section>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        {r.initiatives.map((i) => (
-          <InitiativeCard key={i.id} i={i} />
-        ))}
-      </div>
+      {teamSections(r.teams, r.initiatives).map((sec) => (
+        <section key={sec.team?.id ?? "none"} className="space-y-3">
+          <div>
+            <h2 className="text-lg font-semibold">
+              {sec.team ? `${sec.team.name} team` : "Other initiatives"}
+            </h2>
+            {sec.team && (
+              <p className="text-xs text-slate-500">
+                {[
+                  teamSeatsLabel(sec.team.members),
+                  sec.team.pods.length
+                    ? `Pods: ${sec.team.pods.map((p) => p.name).join(", ")}`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            )}
+          </div>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {sec.initiatives.map((i) => (
+              <InitiativeCard key={i.id} i={i} />
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
+}
+
+/** Initiatives grouped under their team (team order kept; teamless last). */
+function teamSections(
+  teams: Team[],
+  initiatives: ReviewInitiative[],
+): { team: Team | null; initiatives: ReviewInitiative[] }[] {
+  const out: { team: Team | null; initiatives: ReviewInitiative[] }[] = teams
+    .map((team) => ({ team, initiatives: initiatives.filter((i) => i.team_id === team.id) }))
+    .filter((s) => s.initiatives.length > 0);
+  const known = new Set(teams.map((t) => t.id));
+  const rest = initiatives.filter((i) => i.team_id == null || !known.has(i.team_id));
+  if (rest.length) out.push({ team: null, initiatives: rest });
+  return out;
 }
 
 function Stat({ label, value, tone }: { label: string; value: number; tone?: string }) {
@@ -103,7 +139,12 @@ function InitiativeCard({ i }: { i: ReviewInitiative }) {
             <p className="mt-0.5 text-sm text-slate-500">{i.outcome_statement}</p>
           )}
           <p className="mt-1 text-xs text-slate-500">
-            {team ? <>Lead team: {team}</> : "No lead team seated"}
+            {i.pods.length > 0 && (
+              <>
+                {i.pods.join(" + ")} pod{i.pods.length > 1 ? "s" : ""} ·{" "}
+              </>
+            )}
+            {team ? <>Owners: {team}</> : "No owners seated"}
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">

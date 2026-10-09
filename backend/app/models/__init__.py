@@ -28,6 +28,7 @@ from app.models.integration import (
     UserConnection,
 )
 from app.models.leadership import InitiativeLead, LeadershipNote
+from app.models.org import Pod, Team, TeamMember
 from app.models.outcome import Outcome
 from app.models.project import (
     Baseline,
@@ -92,6 +93,7 @@ __all__ = [
     "LeadershipNote",
     "Milestone",
     "Outcome",
+    "Pod",
     "Project",
     "Proposal",
     "ProposalItem",
@@ -113,6 +115,8 @@ __all__ = [
     "SpecCriterion",
     "Task",
     "TaskStatusHistory",
+    "Team",
+    "TeamMember",
     "User",
     "UserConnection",
 ]

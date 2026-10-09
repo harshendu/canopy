@@ -47,7 +47,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('initiative_id', sa.Integer(), nullable=False),
     sa.Column('engineer_id', sa.Integer(), nullable=False),
-    sa.Column('lead_role', sa.Enum('technical', 'product', 'design', name='leadrole'), nullable=False),
+    sa.Column('lead_role', sa.Enum('technical', 'product', 'design', 'manager', name='leadrole'), nullable=False),
     sa.ForeignKeyConstraint(['engineer_id'], ['engineer.id'], ),
     sa.ForeignKeyConstraint(['initiative_id'], ['initiative.id'], ),
     sa.PrimaryKeyConstraint('id')

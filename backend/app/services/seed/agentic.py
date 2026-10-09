@@ -67,6 +67,7 @@ from app.services.seed.catalog import (
     ScenarioSpec,
     SpecSpec,
     TaskSpec,
+    TeamSpec,
 )
 
 # --------------------------------------------------------------------------- #
@@ -74,11 +75,18 @@ from app.services.seed.catalog import (
 # --------------------------------------------------------------------------- #
 USERS: tuple[DemoUser, ...] = (
     DemoUser("admin@northstar.ai", "Rowan Ellis", UserRole.admin, UserFunction.management),
-    # The executive team — sees everything, writes nothing.
-    DemoUser("ceo@northstar.ai", "Victor Alvarez", UserRole.viewer, UserFunction.leadership),
-    DemoUser("cto@northstar.ai", "Maya Lindqvist", UserRole.viewer, UserFunction.leadership),
-    DemoUser("talent@northstar.ai", "Grace Tan", UserRole.viewer, UserFunction.leadership),
-    # Each initiative's core team: a technical, a product and a UX lead (architect role).
+    # Leadership — the heads of engineering and product. They read everything; their one write
+    # is a leadership note on a specific view (USER_FLOWS §BR).
+    DemoUser("maya@northstar.ai", "Maya Lindqvist", UserRole.viewer, UserFunction.leadership),
+    DemoUser("grace@northstar.ai", "Grace Tan", UserRole.viewer, UserFunction.leadership),
+    # Team level — a director and an engineering manager per team.
+    DemoUser("samir@northstar.ai", "Samir Kapoor", UserRole.engineering_manager,
+             UserFunction.management),
+    DemoUser("laura@northstar.ai", "Laura Bennett", UserRole.engineering_manager,
+             UserFunction.management),
+    DemoUser("owen@northstar.ai", "Owen Price", UserRole.engineering_manager,
+             UserFunction.management),
+    # Pod leads — a technical, a product and a UX lead per pod (architect role).
     DemoUser("priya@northstar.ai", "Priya Raman", UserRole.architect, UserFunction.engineering),
     DemoUser("daniel@northstar.ai", "Daniel Reyes", UserRole.architect, UserFunction.product),
     DemoUser("mei@northstar.ai", "Mei Nakamura", UserRole.architect, UserFunction.design),
@@ -101,7 +109,7 @@ USERS: tuple[DemoUser, ...] = (
     DemoUser("ben@northstar.ai", "Ben Carter", UserRole.architect, UserFunction.product),
     DemoUser("aiden@northstar.ai", "Aiden Walsh", UserRole.architect, UserFunction.engineering),
     DemoUser("zoe@northstar.ai", "Zoe Martin", UserRole.architect, UserFunction.product),
-    # Delivery organisation.
+    # Delivery organisation (Jonah is the Talent Acquisition team's engineering manager).
     DemoUser("em@northstar.ai", "Jonah Fields", UserRole.engineering_manager,
              UserFunction.management),
     DemoUser("leila@northstar.ai", "Leila Haddad", UserRole.engineer, UserFunction.engineering),
@@ -118,71 +126,81 @@ TEAM_ROLES: tuple[str, ...] = (
 
 ENGINEERS: tuple[DemoEngineer, ...] = (
     # AI Interviewer leads
-    DemoEngineer("Priya Raman", "Technical Lead, AI Interviewer",
+    DemoEngineer("Priya Raman", "Technical Lead, Interviewer pod",
                  ("architecture", "agents", "realtime"), "America/New_York", 30,
                  "priyaraman", "Core Team", "priya@northstar.ai"),
-    DemoEngineer("Daniel Reyes", "Product Lead, AI Interviewer",
+    DemoEngineer("Daniel Reyes", "Product Lead, Interviewer pod",
                  ("product", "recruiting", "roadmap"), "America/Chicago", 30, "danielreyes",
                  "Core Team", "daniel@northstar.ai"),
-    DemoEngineer("Mei Nakamura", "UX Lead, AI Interviewer",
+    DemoEngineer("Mei Nakamura", "UX Lead, Interviewer pod",
                  ("ux", "research", "conversation-design"), "America/Los_Angeles", 30,
                  "meinakamura", "Core Team", "mei@northstar.ai"),
     # Talent Pilot leads
-    DemoEngineer("Rafael Costa", "Technical Lead, Talent Pilot",
+    DemoEngineer("Rafael Costa", "Technical Lead, Integrations pod",
                  ("architecture", "integrations", "backend"), "America/Sao_Paulo", 30,
                  "rafaelcosta", "Core Team", "rafael@northstar.ai"),
-    DemoEngineer("Hannah Weiss", "Product Lead, Talent Pilot",
+    DemoEngineer("Hannah Weiss", "Product Lead, Recruiter Experience pod",
                  ("product", "recruiting", "workflows"), "Europe/Berlin", 30, "hannahweiss",
                  "Core Team", "hannah@northstar.ai"),
-    DemoEngineer("Jun Park", "UX Lead, Talent Pilot",
+    DemoEngineer("Jun Park", "UX Lead, Recruiter Experience pod",
                  ("ux", "research", "enterprise"), "Asia/Seoul", 30, "junpark",
                  "Core Team", "jun@northstar.ai"),
     # Talent Forge leads
-    DemoEngineer("Amara Okafor", "Technical Lead, Talent Forge",
+    DemoEngineer("Amara Okafor", "Technical Lead, Builder pod",
                  ("architecture", "platform", "multi-tenant"), "Europe/London", 30,
                  "amaraokafor", "Core Team", "amara@northstar.ai"),
-    DemoEngineer("Lucas Moreau", "Product Lead, Talent Forge",
+    DemoEngineer("Lucas Moreau", "Product Lead, Builder pod",
                  ("product", "platform", "partners"), "Europe/Paris", 30, "lucasmoreau",
                  "Core Team", "lucas@northstar.ai"),
-    DemoEngineer("Sofia Lind", "UX Lead, Talent Forge",
+    DemoEngineer("Sofia Lind", "UX Lead, Builder pod",
                  ("ux", "design-systems", "builder"), "Europe/Stockholm", 30, "sofialind",
                  "Core Team", "sofia@northstar.ai"),
     # Agent Builder leads
-    DemoEngineer("Ethan Brooks", "Technical Lead, Agent Builder",
+    DemoEngineer("Ethan Brooks", "Technical Lead, Runtime pod",
                  ("architecture", "runtime", "distributed-systems"), "America/Denver", 30,
                  "ethanbrooks", "Core Team", "ethan@northstar.ai"),
-    DemoEngineer("Nadia Hassan", "Product Lead, Agent Builder",
+    DemoEngineer("Nadia Hassan", "Product Lead, Runtime pod",
                  ("product", "platform", "developer-experience"), "Europe/Amsterdam", 30,
                  "nadiahassan", "Core Team", "nadia@northstar.ai"),
-    DemoEngineer("Theo Lambert", "UX Lead, Agent Builder",
+    DemoEngineer("Theo Lambert", "UX Lead, Runtime pod",
                  ("ux", "developer-tools", "research"), "Europe/Paris", 30, "theolambert",
                  "Core Team", "theo@northstar.ai"),
     # Dev Agents leads
-    DemoEngineer("Ivy Chen", "Technical Lead, Dev Agents",
+    DemoEngineer("Ivy Chen", "Technical Lead, Developer Productivity pod",
                  ("architecture", "sre", "observability"), "America/Vancouver", 30, "ivychen",
                  "Core Team", "ivy@northstar.ai"),
-    DemoEngineer("Marcus Dube", "Product Lead, Dev Agents",
+    DemoEngineer("Marcus Dube", "Product Lead, Developer Productivity pod",
                  ("product", "internal-tools", "developer-experience"), "Africa/Johannesburg",
                  30, "marcusdube", "Core Team", "marcus@northstar.ai"),
-    DemoEngineer("Elena Petrova", "UX Lead, Dev Agents",
+    DemoEngineer("Elena Petrova", "UX Lead, Developer Productivity pod",
                  ("ux", "developer-tools", "research"), "Europe/Sofia", 30, "elenapetrova",
                  "Core Team", "elena@northstar.ai"),
     # Customer Support Escalations leads
-    DemoEngineer("Nora Quinn", "Technical Lead, Support Escalations",
+    DemoEngineer("Nora Quinn", "Technical Lead, Support Engineering pod",
                  ("support-engineering", "backend", "tooling"), "Europe/Dublin", 30,
                  "noraquinn", "Core Team", "nora@northstar.ai"),
-    DemoEngineer("Ben Carter", "Product Lead, Support Escalations",
+    DemoEngineer("Ben Carter", "Product Lead, Support Engineering pod",
                  ("product", "support", "customer-success"), "America/New_York", 30,
                  "bencarter", "Core Team", "ben@northstar.ai"),
     # Q4 Product Enhancements leads
-    DemoEngineer("Aiden Walsh", "Technical Lead, Q4 Enhancements",
+    DemoEngineer("Aiden Walsh", "Senior Engineer, Recruiter Experience pod",
                  ("backend", "frontend", "generalist"), "Europe/London", 30, "aidenwalsh",
                  "Core Team", "aiden@northstar.ai"),
-    DemoEngineer("Zoe Martin", "Product Lead, Q4 Enhancements",
+    DemoEngineer("Zoe Martin", "Product Manager, Recruiter Experience pod",
                  ("product", "customer-requests", "triage"), "America/Toronto", 30,
                  "zoemartin", "Core Team", "zoe@northstar.ai"),
+    # Team-level directors / managers
+    DemoEngineer("Samir Kapoor", "Director of Engineering, Talent Acquisition",
+                 ("management", "recruiting", "strategy"), "America/Los_Angeles", 20,
+                 "samirkapoor", "Management", "samir@northstar.ai"),
+    DemoEngineer("Laura Bennett", "Director of Engineering, Agent Platform",
+                 ("management", "platform", "strategy"), "America/New_York", 20,
+                 "laurabennett", "Management", "laura@northstar.ai"),
+    DemoEngineer("Owen Price", "Engineering Manager, Agent Platform",
+                 ("management", "backend"), "Europe/London", 20, "owenprice", "Management",
+                 "owen@northstar.ai"),
     # Delivery team
-    DemoEngineer("Jonah Fields", "VP Engineering",
+    DemoEngineer("Jonah Fields", "Engineering Manager, Talent Acquisition",
                  ("management", "backend"), "Europe/London", 20, "jonahfields",
                  "Management", "em@northstar.ai"),
     DemoEngineer("Leila Haddad", "Realtime Engineer",
@@ -258,7 +276,8 @@ ALLOCATIONS: tuple[tuple[str, str, float], ...] = (
     # Support escalations / Q4 enhancements
     ("Nora Quinn", "SUPPORTOPS", 60), ("Ben Carter", "SUPPORTOPS", 30),
     ("Aiden Walsh", "SUPPORTOPS", 20),
-    ("Aiden Walsh", "Q4ENH", 70), ("Zoe Martin", "Q4ENH", 30), ("Chris Walker", "Q4ENH", 20),
+    ("Aiden Walsh", "Q4ENH", 50), ("Zoe Martin", "Q4ENH", 30), ("Chris Walker", "Q4ENH", 20),
+    ("Aiden Walsh", "Q4INT", 30), ("Priya Raman", "Q4INT", 10),
 )
 
 
@@ -290,6 +309,7 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
         ),
         leads=(("Priya Raman", "technical"), ("Daniel Reyes", "product"),
                ("Mei Nakamura", "design")),
+        team_key="TA",
     ),
     InitiativeSpec(
         "PILOT", "Talent Pilot",
@@ -314,6 +334,7 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
                     "https://drive.google.com/file/d/doc-prd-pilot/view", "drive"),
         ),
         leads=(("Rafael Costa", "technical"), ("Hannah Weiss", "product"), ("Jun Park", "design")),
+        team_key="TA",
     ),
     InitiativeSpec(
         "FORGE", "Talent Forge",
@@ -335,6 +356,7 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
         ),
         leads=(("Amara Okafor", "technical"), ("Lucas Moreau", "product"),
                ("Sofia Lind", "design")),
+        team_key="AP",
     ),
     InitiativeSpec(
         "BUILDER", "Agent Builder",
@@ -360,6 +382,7 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
         ),
         leads=(("Ethan Brooks", "technical"), ("Nadia Hassan", "product"),
                ("Theo Lambert", "design")),
+        team_key="AP",
     ),
     InitiativeSpec(
         "DEVAGENTS", "Dev Agents",
@@ -379,7 +402,9 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
                      "high", "open", "Yara Cohen",
                      "Approval gate in front of every production-affecting action."),
         ),
-        leads=(("Ivy Chen", "technical"), ("Marcus Dube", "product"), ("Elena Petrova", "design")),
+        leads=(("Ivy Chen", "technical"), ("Marcus Dube", "product"),
+               ("Elena Petrova", "design"), ("Owen Price", "manager")),
+        team_key="AP",
     ),
     InitiativeSpec(
         "SUPPORT", "Customer Support Escalations",
@@ -396,19 +421,26 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
                      "medium", "open", "Ben Carter",
                      "Staff a temporary escalation rota through the pilot."),
         ),
-        leads=(("Nora Quinn", "technical"), ("Ben Carter", "product")),
+        leads=(("Nora Quinn", "technical"), ("Ben Carter", "product"),
+               ("Jonah Fields", "manager")),
+        team_key="TA",
     ),
     InitiativeSpec(
         "ENHANCE", "Q4 Product Enhancements",
         "Ship the quarter's smaller customer-requested improvements without starving the "
         "larger initiatives of people.",
-        12, "Aiden Walsh", ("enhancements", "customer-requests", "quarterly"), "on_track",
-        "Eleven requests triaged; the first batch is in build, the second awaits capacity.",
+        12, "Zoe Martin", ("enhancements", "customer-requests", "quarterly"), "on_track",
+        "Eleven requests triaged across two pods; recruiter batch one is in build, the "
+        "interviewer batch is scheduled behind the pilot.",
         outcomes=(
             OutcomeSpec("Customer requests shipped", "requests shipped this quarter", "count",
                         0.0, 11.0, 4.0, "on_track", "Zoe Martin"),
         ),
-        leads=(("Aiden Walsh", "technical"), ("Zoe Martin", "product")),
+        # Spans the Recruiter Experience and Interviewer pods; Priya and Jonah each own
+        # another initiative too.
+        leads=(("Zoe Martin", "product"), ("Priya Raman", "technical"),
+               ("Jonah Fields", "manager")),
+        team_key="TA",
     ),
 )
 
@@ -551,6 +583,8 @@ _RUNTIME = ProjectSpec(
                      RetroCommentSpec("Ethan Brooks", "Let us lock hand-off contracts at "
                                       "design sign-off next time."))),
     deploy_weeks=10,
+    pod="Runtime",
+    owner="Ethan Brooks",
 )
 
 _GATEWAY = ProjectSpec(
@@ -675,6 +709,8 @@ _GATEWAY = ProjectSpec(
                                       "monitoring agent."),)),
     incidents=(IncidentSpec("Provider outage caused a failover loop", 12, 3, "router"),),
     deploy_weeks=8,
+    pod="Runtime",
+    owner="Ananya Bose",
 )
 
 
@@ -822,6 +858,8 @@ _SESSION = ProjectSpec(
     incidents=(IncidentSpec("Media pipeline restart dropped live sessions", 10, 2,
                             "media-pipeline"),),
     deploy_weeks=9,
+    pod="Interviewer",
+    owner="Leila Haddad",
 )
 
 _INTERVIEW = ProjectSpec(
@@ -1018,6 +1056,8 @@ _INTERVIEW = ProjectSpec(
     incidents=(IncidentSpec("Scoring latency spike after rubric deploy", 16, 5,
                             "scoring-service"),),
     deploy_weeks=9,
+    pod="Interviewer",
+    owner="Priya Raman",
 )
 
 
@@ -1146,6 +1186,8 @@ _ATSHUB = ProjectSpec(
                     ("connector-framework",),
                     (RetroCommentSpec("Kenji Mori", "Framework first was the right call."),)),
     deploy_weeks=8,
+    pod="Integrations",
+    owner="Rafael Costa",
 )
 
 _COPILOT = ProjectSpec(
@@ -1279,6 +1321,8 @@ _COPILOT = ProjectSpec(
                      DraftTaskSpec("Candidate-facing scheduling flow", "task", 4, 8.0),
                      DraftTaskSpec("Reschedule & cancellation handling", "task", 3, 5.0))),
     deploy_weeks=6,
+    pod="Recruiter Experience",
+    owner="Hannah Weiss",
 )
 
 
@@ -1407,6 +1451,8 @@ _STUDIO = ProjectSpec(
                     ("studio-ui",),
                     (RetroCommentSpec("Chris Walker", "Custom edges were worth it."),)),
     deploy_weeks=7,
+    pod="Builder",
+    owner="Amara Okafor",
 )
 
 _DEPLOY = ProjectSpec(
@@ -1536,6 +1582,8 @@ _DEPLOY = ProjectSpec(
                                       "forbids."),)),
     incidents=(IncidentSpec("Deploy controller stalled rollouts", 9, 4, "deploy-controller"),),
     deploy_weeks=6,
+    pod="Runtime",
+    owner="Ethan Brooks",
 )
 
 
@@ -1667,6 +1715,8 @@ _ONCALL = ProjectSpec(
                     (RetroCommentSpec("Sam Okoro", "The approval gate is non-negotiable."),)),
     incidents=(IncidentSpec("Triage agent restarted a healthy service", 14, 1, "triage-agent"),),
     deploy_weeks=8,
+    pod="Developer Productivity",
+    owner="Ivy Chen",
 )
 
 _DEVPROD = ProjectSpec(
@@ -1789,6 +1839,8 @@ _DEVPROD = ProjectSpec(
                     (RetroCommentSpec("Tomás Silva", "The signal is there; the delivery "
                                       "needs work."),)),
     deploy_weeks=6,
+    pod="Developer Productivity",
+    owner="Marcus Dube",
 )
 
 
@@ -1875,13 +1927,15 @@ _SUPPORTOPS = ProjectSpec(
                 "https://drive.google.com/file/d/doc-escalation-runbook/view", "drive"),
     ),
     deploy_weeks=6,
+    pod="Support Engineering",
+    owner="Nora Quinn",
 )
 
 _Q4ENH = ProjectSpec(
-    "Q4ENH", "Q4 Enhancements Bundle",
-    "The quarter's customer-requested improvements, triaged and delivered in two batches.",
+    "Q4ENH", "Q4 Recruiter Enhancements",
+    "The Recruiter Experience pod's share of the quarter's customer-requested improvements.",
     "ENHANCE", 5, 10, True, "on_track",
-    "Batch one in build; batch two is scheduled behind the Interviewer pilot capacity.",
+    "Batch one in build; the dashboard polish follows once batch one ships.",
     ("enhancements", "customer-requests"),
     phases=(
         PhaseSpec("Triage", (
@@ -1889,13 +1943,10 @@ _Q4ENH = ProjectSpec(
         )),
         PhaseSpec("Batch 1", (
             TaskSpec("Bulk candidate export", 3, "Done", 10, "Aiden Walsh", ("backend",)),
-            TaskSpec("Interview scheduling reminders", 3, "In Progress", 4, "Aiden Walsh",
-                     ("backend",)),
-            TaskSpec("Report filters by location", 2, "To Do", 0, "Aiden Walsh", ("frontend",)),
+            TaskSpec("Report filters by location", 2, "In Progress", 3, "Aiden Walsh",
+                     ("frontend",)),
         )),
         PhaseSpec("Batch 2", (
-            TaskSpec("Custom interview question banks", 4, "To Do", 0, "Aiden Walsh",
-                     ("backend",)),
             TaskSpec("Recruiter dashboard polish", 3, "To Do", 0, "Chris Walker", ("frontend",)),
             TaskSpec("Q4 enhancements complete", 0, "To Do", 0, None, (), None, True, 10),
         )),
@@ -1918,7 +1969,7 @@ _Q4ENH = ProjectSpec(
                 components=("recruiter-app",), created_days_ago=20),
     ),
     risks=(
-        RiskSpec("Batch two loses its engineer to the Interviewer pilot", "resource", "medium",
+        RiskSpec("Aiden is shared with the Interviewer pod during the pilot", "resource", "medium",
                  "medium", "open", "Zoe Martin", "Agree the capacity split with the "
                  "Interviewer leads before batch two starts."),
     ),
@@ -1931,12 +1982,44 @@ _Q4ENH = ProjectSpec(
                 "https://drive.google.com/file/d/doc-q4-requests/view", "drive"),
     ),
     deploy_weeks=8,
+    pod="Recruiter Experience",
+    owner="Aiden Walsh",
+)
+
+
+_Q4INT = ProjectSpec(
+    "Q4INT", "Q4 Interviewer Enhancements",
+    "The Interviewer pod's share of the quarter's customer-requested improvements.",
+    "ENHANCE", 4, 10, True, "on_track",
+    "Scheduling reminders in build; question banks start after the customer pilot.",
+    ("enhancements", "customer-requests", "interviews"),
+    phases=(
+        PhaseSpec("Build", (
+            TaskSpec("Interview scheduling reminders", 3, "In Progress", 4, "Aiden Walsh",
+                     ("backend",)),
+            TaskSpec("Custom interview question banks", 4, "To Do", 0, "Aiden Walsh",
+                     ("backend",)),
+            TaskSpec("Interviewer enhancements shipped", 0, "To Do", 0, None, (), None, True,
+                     10),
+        )),
+    ),
+    milestones=(MilestoneSpec("Question banks live", 9),),
+    components=(
+        ComponentSpec("interview-scheduler", "service", "business", "med", "Aiden Walsh"),
+    ),
+    risks=(
+        RiskSpec("Question banks wait on the pilot to finish", "schedule", "medium", "medium",
+                 "open", "Priya Raman", "Start the data model during the pilot freeze."),
+    ),
+    deploy_weeks=4,
+    pod="Interviewer",
+    owner="Priya Raman",
 )
 
 
 PROJECTS: tuple[ProjectSpec, ...] = (
     _RUNTIME, _GATEWAY, _SESSION, _INTERVIEW, _ATSHUB, _COPILOT, _STUDIO, _DEPLOY, _ONCALL,
-    _DEVPROD, _SUPPORTOPS, _Q4ENH,
+    _DEVPROD, _SUPPORTOPS, _Q4ENH, _Q4INT,
 )
 
 FLAGSHIP_KEY = "INTERVIEW"
@@ -2018,23 +2101,41 @@ SCENARIOS: tuple[ScenarioSpec, ...] = (
 )
 
 
+# The org: two teams, each owning a product/platform, each with pods, a director and a manager.
+TEAMS: tuple[TeamSpec, ...] = (
+    TeamSpec(
+        "TA", "Talent Acquisition",
+        "Owns the recruiting products: interviewing, the recruiter harness, ATS integrations "
+        "and support tooling.",
+        ("Interviewer", "Recruiter Experience", "Integrations", "Support Engineering"),
+        directors=("Samir Kapoor",), managers=("Jonah Fields",),
+    ),
+    TeamSpec(
+        "AP", "Agent Platform",
+        "Owns the shared agent runtime, the app builder and internal developer agents.",
+        ("Runtime", "Builder", "Developer Productivity"),
+        directors=("Laura Bennett",), managers=("Owen Price",),
+    ),
+)
+
+
 # Executive feedback left on specific views (USER_FLOWS §BR). Open ones roll up into the
 # business review; the lead teams answer them where the work is.
 LEADERSHIP_NOTES: tuple[LeadershipNoteSpec, ...] = (
     LeadershipNoteSpec(
-        "INTERVIEWER", "initiative", "cto@northstar.ai", "priority",
+        "INTERVIEWER", "initiative", "maya@northstar.ai", "priority",
         "The retention decision is now the single biggest schedule risk in the portfolio. "
         "Please close it this week; I am happy to join the review if it helps.",
         priority=1, target_kind="decision", target_title="Candidate data retention period",
         created_days_ago=2,
     ),
     LeadershipNoteSpec(
-        "INTERVIEWER", "initiative", "ceo@northstar.ai", "watch",
-        "Watching the customer pilot date for the board update at the end of the month.",
+        "INTERVIEWER", "initiative", "grace@northstar.ai", "watch",
+        "Watching the customer pilot date; it anchors the product launch plan.",
         target_kind="milestone", target_title="Customer pilot", created_days_ago=4,
     ),
     LeadershipNoteSpec(
-        "FORGE", "initiative", "cto@northstar.ai", "feedback",
+        "FORGE", "initiative", "maya@northstar.ai", "feedback",
         "Descoping custom domains from GA is the right call. Please confirm the design "
         "partners are aligned before we announce.",
         target_kind="risk", target_title="Deploy GA slips the Forge launch", created_days_ago=6,
@@ -2042,22 +2143,27 @@ LEADERSHIP_NOTES: tuple[LeadershipNoteSpec, ...] = (
         "with marketing.", responder_email="amara@northstar.ai",
     ),
     LeadershipNoteSpec(
-        "PILOT", "initiative", "talent@northstar.ai", "priority",
+        "PILOT", "initiative", "grace@northstar.ai", "priority",
         "Workday matters more than the sidebar polish for the two enterprise prospects. "
         "Please reconsider the deferral.",
         priority=2, target_kind="decision", target_title="Workday priority",
         created_days_ago=3,
     ),
     LeadershipNoteSpec(
-        "DEVAGENTS", "initiative", "cto@northstar.ai", "feedback",
+        "DEVAGENTS", "initiative", "maya@northstar.ai", "feedback",
         "Night pages halving in two weeks is the best result this quarter; worth a slide "
         "in the business review.", created_days_ago=8, status="resolved",
         response="Added to the review deck.", responder_email="ivy@northstar.ai",
     ),
     LeadershipNoteSpec(
-        "Q4ENH", "project", "talent@northstar.ai", "watch",
-        "Keeping an eye on batch two; two customers have asked for the question banks.",
+        "Q4INT", "project", "grace@northstar.ai", "watch",
+        "Keeping an eye on the question banks; two customers have asked for them.",
         created_days_ago=1,
+    ),
+    LeadershipNoteSpec(
+        "PILOT", "initiative", "samir@northstar.ai", "watch",
+        "Watching the Workday call; it shapes the team's roadmap for next quarter.",
+        target_kind="decision", target_title="Workday priority", created_days_ago=2,
     ),
 )
 
@@ -2112,4 +2218,5 @@ AGENTIC = Dataset(
     ),
     connections=demo_connections,
     leadership_notes=LEADERSHIP_NOTES,
+    teams=TEAMS,
 )

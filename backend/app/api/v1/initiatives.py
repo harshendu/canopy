@@ -12,6 +12,7 @@ from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
 from app.models.base import ADRStatus, ProjectHealth, TaskType, utcnow
 from app.models.leadership import InitiativeLead
+from app.models.org import Pod, Team
 from app.models.outcome import Outcome
 from app.models.project import (
     Blocker,
@@ -38,9 +39,11 @@ from app.schemas.entities import (
 from app.schemas.leadership import InitiativeAccess, InitiativeLeadIn, InitiativeLeadRead
 from app.services import digest as digest_service
 from app.services.access import (
+    directed_team_ids,
     ensure_initiative_editable,
     initiative_can_edit,
     led_initiative_ids,
+    owned_project_ids,
 )
 from app.services.burndown import done_dates_per_task
 from app.services.capacity import AvailabilitySpan
@@ -89,8 +92,23 @@ async def lead_reads(
 async def initiative_access(session: SessionDep, user: CurrentUser) -> InitiativeAccess:
     """Which initiatives the current user leads (and may edit), plus every lead team — one call
     for the Initiatives page to split "led by me" from the read-only rest (§R6)."""
+    led = await led_initiative_ids(session, user)
+    directed = await directed_team_ids(session, user)
+    in_directed = set()
+    if directed:
+        in_directed = {
+            i.id
+            for i in (
+                await session.execute(
+                    select(Initiative).where(col(Initiative.team_id).in_(directed))
+                )
+            ).scalars().all()
+            if i.id is not None
+        }
     return InitiativeAccess(
-        led_initiative_ids=sorted(await led_initiative_ids(session, user)),
+        led_initiative_ids=sorted(led),
+        editable_initiative_ids=sorted(led | in_directed),
+        owned_project_ids=sorted(await owned_project_ids(session, user)),
         leads=await lead_reads(session),
     )
 
@@ -150,6 +168,8 @@ async def create_initiative(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Initiative key exists")
     data = payload.model_dump()
     data["tags"] = normalize_tags(data.get("tags") or [])
+    if payload.team_id is not None and await session.get(Team, payload.team_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     initiative = Initiative(**data)
     session.add(initiative)
     await session.commit()
@@ -176,6 +196,8 @@ async def update_initiative(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Initiative not found")
     await ensure_initiative_editable(session, user, initiative_id)
     data = payload.model_dump(exclude_unset=True)
+    if data.get("team_id") is not None and await session.get(Team, data["team_id"]) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     if "tags" in data and data["tags"] is not None:
         data["tags"] = normalize_tags(data["tags"])
     for field, value in data.items():
@@ -232,6 +254,9 @@ async def initiative_rollup(
         e.id: e.name
         for e in (await session.execute(select(Engineer))).scalars().all()
         if e.id is not None
+    }
+    pod_names = {
+        p.id: p.name for p in (await session.execute(select(Pod))).scalars().all() if p.id
     }
     availability = [
         AvailabilitySpan(a.engineer_id, a.capacity_factor, a.start_date, a.end_date)
@@ -294,6 +319,7 @@ async def initiative_rollup(
                 today=today,
                 availability=availability,
                 open_risks=open_risks_by_project.get(project.id, 0),
+                pod_names=pod_names,
             )
         )
 
@@ -313,10 +339,15 @@ async def initiative_rollup(
     if initiative.target_date is not None and project_end is not None:
         on_track = project_end <= initiative.target_date
 
+    team = await session.get(Team, initiative.team_id) if initiative.team_id else None
+    span_pods = sorted({s.pod_name for s in summaries if s.pod_name})
     return InitiativeRollup(
         initiative=InitiativeRead.model_validate(initiative),
         can_edit=await initiative_can_edit(session, user, initiative_id),
         leads=await lead_reads(session, initiative_id),
+        team_id=initiative.team_id,
+        team_name=team.name if team is not None else None,
+        pods=span_pods,
         projects=summaries,
         total_tasks=total_tasks,
         completed_tasks=completed_tasks,

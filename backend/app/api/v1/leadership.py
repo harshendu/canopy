@@ -17,6 +17,7 @@ from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.api.v1.initiatives import initiative_rollup, lead_reads
+from app.api.v1.teams import team_reads
 from app.models.architecture import ArchitectureDecision
 from app.models.base import (
     ADRStatus,
@@ -40,13 +41,16 @@ from app.schemas.leadership import (
     ReviewInitiative,
     ReviewOutcome,
 )
-from app.services.access import initiative_can_edit
+from app.services.access import directed_team_ids, initiative_can_edit
 
 router = APIRouter()
 
 
-def _is_leadership(user: User) -> bool:
-    return user.role == UserRole.admin or user.function == UserFunction.leadership
+async def _is_leadership(session: SessionDep, user: User) -> bool:
+    """Heads of engineering/product (the leadership persona), team directors, or an admin."""
+    if user.role == UserRole.admin or user.function == UserFunction.leadership:
+        return True
+    return bool(await directed_team_ids(session, user))
 
 
 async def _validate_scope(
@@ -131,11 +135,11 @@ async def list_notes(
 async def create_note(
     session: SessionDep, user: CurrentUser, payload: LeadershipNoteCreate
 ) -> LeadershipNoteRead:
-    """Leave a note on a view. Leadership persona (any role) or admin."""
-    if not _is_leadership(user):
+    """Leave a note on a view. Leadership persona, a team director, or an admin."""
+    if not await _is_leadership(session, user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the leadership persona (or an admin) can leave leadership notes",
+            detail="Only leadership (heads, team directors) or an admin can leave leadership notes",
         )
     await _validate_scope(session, payload.scope_level, payload.scope_id)
     label = await _target_label(session, payload.target_kind, payload.target_id)
@@ -286,6 +290,8 @@ async def business_review(session: SessionDep, user: CurrentUser) -> BusinessRev
                 health=init.health,
                 status_note=init.status_note,
                 leads=await lead_reads(session, init.id),
+                team_id=init.team_id,
+                pods=rollup.pods,
                 project_count=len(rollup.projects),
                 avg_percent_complete=rollup.avg_percent_complete,
                 project_end=rollup.project_end,
@@ -326,6 +332,7 @@ async def business_review(session: SessionDep, user: CurrentUser) -> BusinessRev
         attention.append(f"{stuck} decision(s) still under discussion across the portfolio.")
     return BusinessReview(
         generated_on=date.today(),
+        teams=await team_reads(session),
         initiatives=out,
         open_note_count=len(note_reads),
         attention=attention,

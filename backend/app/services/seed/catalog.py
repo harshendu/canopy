@@ -309,6 +309,8 @@ class ProjectSpec:
     draft: DraftSpec | None = None
     incidents: tuple[IncidentSpec, ...] = ()
     deploy_weeks: int = 8  # weekly deploy events (DORA + activity feed)
+    pod: str | None = None  # the pod that runs the project (USER_FLOWS §R6)
+    owner: str | None = None  # the project's single owner (engineer name)
 
 
 @dataclass(frozen=True)
@@ -324,9 +326,23 @@ class InitiativeSpec:
     outcomes: tuple[OutcomeSpec, ...] = ()
     risks: tuple[RiskSpec, ...] = ()
     docs: tuple[DocSpec, ...] = ()
-    # The initiative's core team: (engineer name, lead role: technical | product | design).
-    # Empty = no lead team → plain role-based editing (USER_FLOWS §R6).
+    # The initiative's owners: (engineer name, seat: technical | product | design | manager).
+    # Several per initiative; one person may own several. Empty (and no team) → plain role
+    # rules (USER_FLOWS §R6).
     leads: tuple[tuple[str, str], ...] = ()
+    team_key: str | None = None  # the team (product/platform group) it belongs to
+
+
+@dataclass(frozen=True)
+class TeamSpec:
+    """A team that owns a product or platform: its pods and its director/manager seats."""
+
+    key: str
+    name: str
+    description: str
+    pods: tuple[str, ...]
+    directors: tuple[str, ...] = ()  # engineer names
+    managers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -458,6 +474,7 @@ class Dataset:
     pull_requests: tuple[PullRequestSpec, ...]
     connections: Callable[[int], list[DemoConnection]]  # flagship project id → connections
     leadership_notes: tuple[LeadershipNoteSpec, ...] = ()
+    teams: tuple[TeamSpec, ...] = ()
 
     def accounts(self) -> list[DemoAccount]:
         return [DemoAccount(u.email, u.full_name, u.role.value, u.function.value)

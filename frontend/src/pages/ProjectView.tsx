@@ -272,6 +272,21 @@ export default function ProjectView() {
           { label: project.data ? project.data.name : "Project" },
         ]}
         title={project.data ? project.data.name : "Project"}
+        subtitle={
+          access.data && (access.data.owner_name || access.data.pod_name) ? (
+            <span className="text-xs">
+              {access.data.team_name && <>{access.data.team_name} team · </>}
+              {access.data.pod_name && <>{access.data.pod_name} pod · </>}
+              {access.data.initiative_name && <>{access.data.initiative_name} · </>}
+              {access.data.owner_name && (
+                <>
+                  Project owner:{" "}
+                  <span className="font-medium text-slate-700">{access.data.owner_name}</span>
+                </>
+              )}
+            </span>
+          ) : undefined
+        }
         actions={
           <>
           {featureOn(features, "reporting.exports") && <ExportMenu scope="project" id={id} />}
@@ -343,7 +358,14 @@ export default function ProjectView() {
           <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-700">
             read-only
           </span>
-          Planning changes here are made by the lead team of{" "}
+          Planning changes here are made by
+          {access.data.owner_name && (
+            <>
+              {" "}its owner, <span className="font-medium text-slate-700">{access.data.owner_name}</span>,
+              {" "}and
+            </>
+          )}{" "}
+          the owners of{" "}
           <span className="font-medium text-slate-700">
             {access.data.initiative_name ?? "its initiative"}
           </span>

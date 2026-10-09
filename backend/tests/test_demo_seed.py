@@ -243,16 +243,27 @@ async def test_agentic_dataset_loads_with_the_same_depth(db_session):
     assert counts["connections"] == 3
     assert counts["users"] >= 12
 
-    # Each initiative has its own lead trio (architect role across engineering / product /
-    # design), and an executive layer reads everything as leadership viewers.
+    # Org model (§R6): every initiative has one or more owners and belongs to a team; every
+    # project has exactly one owner and a pod; some people own several initiatives.
+    assert counts["initiatives"] == 7 and counts["projects"] == 13
+    assert all(i.leads and i.team_key for i in ds.initiatives)
+    assert all(p.owner and p.pod for p in ds.projects)
+    seats: dict[str, int] = {}
+    for i in ds.initiatives:
+        for name, _ in i.leads:
+            seats[name] = seats.get(name, 0) + 1
+    assert {"Priya Raman", "Jonah Fields"} <= {n for n, c in seats.items() if c >= 2}
+    pods_of = {
+        i.key: {p.pod for p in ds.projects if p.initiative_key == i.key} for i in ds.initiatives
+    }
+    assert {k for k, pods in pods_of.items() if len(pods) > 1} >= {"PILOT", "FORGE", "ENHANCE"}
     leads = (
         await db_session.execute(select(User).where(User.role == UserRole.architect))
     ).scalars().all()
-    assert len(leads) == sum(len(i.leads) for i in ds.initiatives)  # one login per seat
-    assert all(len(i.leads) >= 2 for i in ds.initiatives)
     assert {u.function.value for u in leads} == {"engineering", "product", "design"}
-    assert counts["initiatives"] == 7 and counts["projects"] == 12
     execs = (
         await db_session.execute(select(User).where(User.role == UserRole.viewer))
     ).scalars().all()
-    assert any(u.function.value == "leadership" for u in execs)
+    assert {u.full_name for u in execs if u.function.value == "leadership"} == {
+        "Maya Lindqvist", "Grace Tan",
+    }

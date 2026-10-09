@@ -282,3 +282,98 @@ async def test_leadership_notes_and_business_review(client, world):
     assert (
         await client.delete(f"/api/v1/leadership/notes/{note['id']}", headers=cto)
     ).status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_team_directors_and_project_owners(client, world):
+    """A team director plans every initiative in their team; a project owner plans their own
+    project even inside an initiative they do not own; the teams endpoint shows the org."""
+    admin, people, engs, inits, projects = world
+    ada, bob = people["ada@example.com"]["h"], people["bob@example.com"]["h"]
+
+    team = await client.post(
+        "/api/v1/teams", json={"key": "TA", "name": "Talent Acquisition"}, headers=admin
+    )
+    assert team.status_code == 201, team.text
+    tid = team.json()["id"]
+    assert (await client.post("/api/v1/teams", json={"key": "TA", "name": "x"}, headers=ada)
+            ).status_code == 403  # admin-only
+    pod = (await client.post(f"/api/v1/teams/{tid}/pods", json={"name": "Interviewer"},
+                             headers=admin)).json()
+    seats = await client.put(
+        f"/api/v1/teams/{tid}/members",
+        json=[{"engineer_id": engs["Bob"], "role": "director"}],
+        headers=admin,
+    )
+    assert seats.status_code == 200 and seats.json()[0]["role"] == "director"
+
+    # A owned by Ada; B moved into the team; project B gets Ada as its single owner + the pod.
+    await client.put(
+        f"/api/v1/initiatives/{inits['A']}/leads",
+        json=[{"engineer_id": engs["Ada"], "lead_role": "technical"}],
+        headers=admin,
+    )
+    await client.patch(f"/api/v1/initiatives/{inits['A']}", json={"team_id": tid}, headers=admin)
+    await client.patch(
+        f"/api/v1/projects/{projects['B']}",
+        json={"owner_engineer_id": engs["Ada"], "pod_id": pod["id"]},
+        headers=admin,
+    )
+
+    # Bob directs the team that A belongs to → he may plan A although he does not own it.
+    assert (
+        await client.patch(
+            f"/api/v1/initiatives/{inits['A']}", json={"status_note": "director"}, headers=bob
+        )
+    ).status_code == 200
+    acc = (await client.get("/api/v1/initiatives/access", headers=bob)).json()
+    assert acc["led_initiative_ids"] == [] and inits["A"] in acc["editable_initiative_ids"]
+
+    # Project B now has an owner (Ada): Bob (not owner, B not in his team) is read-only there;
+    # Ada plans it even though she does not own initiative B.
+    assert (
+        await client.post(
+            "/api/v1/tasks",
+            json={"project_id": projects["B"], "name": "T", "duration": 1},
+            headers=bob,
+        )
+    ).status_code == 403
+    assert (
+        await client.post(
+            "/api/v1/tasks",
+            json={"project_id": projects["B"], "name": "T", "duration": 1},
+            headers=ada,
+        )
+    ).status_code == 201
+    assert (await client.get("/api/v1/initiatives/access", headers=ada)).json()[
+        "owned_project_ids"
+    ] == [projects["B"]]
+    # ...but owning a project does not grant initiative-level edits on B.
+    assert (
+        await client.patch(
+            f"/api/v1/initiatives/{inits['B']}", json={"status_note": "x"}, headers=ada
+        )
+    ).status_code == 200  # B is ungoverned (no owners, no team) → plain role rules
+
+    # The portfolio summary and rollup carry the org context.
+    roll = (await client.get(f"/api/v1/initiatives/{inits['A']}/rollup", headers=ada)).json()
+    assert roll["team_name"] == "Talent Acquisition"
+    folio = (await client.get("/api/v1/projects/portfolio", headers=ada)).json()["projects"]
+    pb = next(p for p in folio if p["id"] == projects["B"])
+    assert pb["owner_name"] == "Ada" and pb["pod_name"] == "Interviewer"
+
+    teams = (await client.get("/api/v1/teams", headers=bob)).json()
+    assert teams[0]["pods"][0]["name"] == "Interviewer"
+    assert teams[0]["members"][0]["engineer_name"] == "Bob"
+
+    # Directors may leave leadership notes; the review groups by team.
+    note = await client.post(
+        "/api/v1/leadership/notes",
+        json={"scope_level": "initiative", "scope_id": inits["A"], "kind": "watch",
+              "body": "Watching the pilot."},
+        headers=bob,
+    )
+    assert note.status_code == 201, note.text
+    review = (await client.get("/api/v1/leadership/review", headers=bob)).json()
+    assert review["teams"][0]["name"] == "Talent Acquisition"
+    assert next(i for i in review["initiatives"] if i["key"] == "A")["team_id"] == tid

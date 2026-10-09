@@ -1,6 +1,7 @@
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
@@ -8,7 +9,8 @@ from app.api.v1.drift import drift_score_from_events
 from app.api.v1.risk import report_for
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
-from app.models.base import RiskScope, RiskStatus, TaskType, UserRole, utcnow
+from app.models.base import RiskScope, RiskStatus, TaskType, utcnow
+from app.models.org import Pod, Team
 from app.models.project import Holiday, Initiative, Project, Task
 from app.models.risk_register import RiskItem
 from app.models.team import Allocation, Engineer, EngineerAvailability
@@ -23,10 +25,9 @@ from app.schemas.entities import (
 )
 from app.schemas.leadership import InitiativeLeadRead, ProjectAccess
 from app.services.access import (
-    OWNERSHIP_ROLES,
     ensure_initiative_editable,
     ensure_project_editable,
-    initiative_can_edit,
+    project_can_edit,
 )
 from app.services.capacity import AvailabilitySpan
 from app.services.cascade import delete_project_cascade
@@ -48,6 +49,7 @@ def summarize_project(
     today: date,
     availability: list[AvailabilitySpan] | None = None,
     open_risks: int = 0,
+    pod_names: dict[int, str] | None = None,
 ) -> ProjectSummary:
     """Build a project's portfolio summary (risk + drift + progress) from loaded rows.
 
@@ -91,7 +93,23 @@ def summarize_project(
         health=project.health,
         status_note=project.status_note,
         open_risks=open_risks,
+        pod_id=project.pod_id,
+        pod_name=(pod_names or {}).get(project.pod_id) if project.pod_id is not None else None,
+        owner_engineer_id=project.owner_engineer_id,
+        owner_name=(
+            engineer_names.get(project.owner_engineer_id)
+            if project.owner_engineer_id is not None
+            else None
+        ),
     )
+
+
+async def load_pod_names(session: AsyncSession) -> dict[int, str]:
+    return {
+        p.id: p.name
+        for p in (await session.execute(select(Pod))).scalars().all()
+        if p.id is not None
+    }
 
 
 _OPEN_RISK_STATUSES = {RiskStatus.open, RiskStatus.mitigating}
@@ -118,6 +136,7 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
         for e in (await session.execute(select(Engineer))).scalars().all()
         if e.id is not None
     }
+    pod_names = await load_pod_names(session)
     allocs_by_project: dict[int, list[Allocation]] = {}
     for a in all_allocations:
         if a.project_id is not None:
@@ -162,6 +181,7 @@ async def portfolio(session: SessionDep, _: CurrentUser) -> PortfolioResponse:
                 today=today,
                 availability=availability,
                 open_risks=open_risks_by_project.get(project.id, 0),
+                pod_names=pod_names,
             )
         )
     return PortfolioResponse(projects=summaries)
@@ -178,6 +198,7 @@ async def create_project(
     session: SessionDep, user: ArchitectWriter, payload: ProjectCreate
 ) -> Project:
     await ensure_initiative_editable(session, user, payload.initiative_id)
+    await _validate_org_refs(session, payload.pod_id, payload.owner_engineer_id)
     existing = await session.execute(select(Project).where(Project.key == payload.key))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project key exists")
@@ -240,6 +261,7 @@ async def project_summary(
         for e in (await session.execute(select(Engineer))).scalars().all()
         if e.id is not None
     }
+    pod_names = await load_pod_names(session)
     availability = [
         AvailabilitySpan(a.engineer_id, a.capacity_factor, a.start_date, a.end_date)
         for a in (await session.execute(select(EngineerAvailability))).scalars().all()
@@ -258,7 +280,17 @@ async def project_summary(
         today=date.today(),
         availability=availability,
         open_risks=open_risks,
+        pod_names=pod_names,
     )
+
+
+async def _validate_org_refs(
+    session: AsyncSession, pod_id: int | None, owner_engineer_id: int | None
+) -> None:
+    if pod_id is not None and await session.get(Pod, pod_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pod not found")
+    if owner_engineer_id is not None and await session.get(Engineer, owner_engineer_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Owner not found")
 
 
 async def _lead_reads(session: SessionDep, initiative_id: int) -> list[InitiativeLeadRead]:
@@ -277,10 +309,17 @@ async def project_access(session: SessionDep, user: CurrentUser, project_id: int
         await session.get(Initiative, project.initiative_id)
         if project.initiative_id is not None else None
     )
-    can = (
-        await initiative_can_edit(session, user, project.initiative_id)
-        if project.initiative_id is not None
-        else user.role == UserRole.admin or user.role in OWNERSHIP_ROLES
+    can = await project_can_edit(session, user, project)
+    owner = (
+        await session.get(Engineer, project.owner_engineer_id)
+        if project.owner_engineer_id is not None
+        else None
+    )
+    pod = await session.get(Pod, project.pod_id) if project.pod_id is not None else None
+    team = (
+        await session.get(Team, initiative.team_id)
+        if initiative is not None and initiative.team_id is not None
+        else None
     )
     return ProjectAccess(
         project_id=project_id,
@@ -288,6 +327,9 @@ async def project_access(session: SessionDep, user: CurrentUser, project_id: int
         initiative_name=initiative.name if initiative is not None else None,
         can_edit=can,
         leads=await _lead_reads(session, project.initiative_id) if project.initiative_id else [],
+        owner_name=owner.name if owner is not None else None,
+        pod_name=pod.name if pod is not None else None,
+        team_name=team.name if team is not None else None,
     )
 
 
@@ -302,6 +344,7 @@ async def update_project(
     data = payload.model_dump(exclude_unset=True)
     if data.get("initiative_id") not in (None, project.initiative_id):
         await ensure_initiative_editable(session, user, data["initiative_id"])
+    await _validate_org_refs(session, data.get("pod_id"), data.get("owner_engineer_id"))
     if "tags" in data and data["tags"] is not None:
         data["tags"] = normalize_tags(data["tags"])
     for field, value in data.items():

@@ -27,6 +27,8 @@ class Initiative(TimestampMixin, table=True):
     start_date: date | None = None
     target_date: date | None = None
     owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
+    # The team (product/platform group) this initiative belongs to; its directors may edit it.
+    team_id: int | None = Field(default=None, foreign_key="team.id", index=True)
     archived: bool = False
     # Free-form labels (theme/workstream/etc.); see Engineer.skill_tags for the precedent.
     tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
@@ -43,6 +45,10 @@ class Project(TimestampMixin, table=True):
     name: str
     description: str | None = Field(default=None, sa_column=Column(Text))
     initiative_id: int | None = Field(default=None, foreign_key="initiative.id", index=True)
+    # The pod that runs this project (an initiative spans the pods of its projects), and the
+    # project's single accountable owner, who may plan it (USER_FLOWS §R6).
+    pod_id: int | None = Field(default=None, foreign_key="pod.id", index=True)
+    owner_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
     start_date: date | None = None
     target_date: date | None = None
     archived: bool = False

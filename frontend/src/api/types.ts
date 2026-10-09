@@ -35,6 +35,9 @@ export interface Project {
   name: string;
   description: string | null;
   initiative_id: number | null;
+  /** The pod that runs the project and its single owner (USER_FLOWS §R6). */
+  pod_id?: number | null;
+  owner_engineer_id?: number | null;
   start_date: string | null;
   target_date: string | null;
   archived: boolean;
@@ -55,6 +58,8 @@ export interface Initiative {
   start_date: string | null;
   target_date: string | null;
   owner_engineer_id: number | null;
+  /** The team (product/platform group) the initiative belongs to (§R6). */
+  team_id?: number | null;
   archived: boolean;
   tags: string[];
   health: ProjectHealth | null;
@@ -103,6 +108,10 @@ export interface InitiativeRollup {
   /** Ownership (§R6): may the current user plan here, and who leads it. */
   can_edit: boolean;
   leads: InitiativeLead[];
+  team_id: number | null;
+  team_name: string | null;
+  /** Pods the initiative spans (derived from its projects' pods). */
+  pods: string[];
 }
 
 /** Manage-by-exception weekly roll-up (§R5) — leads with `attention`, the exception list. */
@@ -435,6 +444,10 @@ export interface ProjectSummary {
   health: ProjectHealth | null;
   status_note: string | null;
   open_risks: number;
+  pod_id?: number | null;
+  pod_name?: string | null;
+  owner_engineer_id?: number | null;
+  owner_name?: string | null;
 }
 
 export interface CodeBinding {
@@ -1195,7 +1208,7 @@ export interface ProposalApplyResult {
 }
 
 // --- Initiative lead teams / ownership (USER_FLOWS §R6) ---
-export type LeadRole = "technical" | "product" | "design";
+export type LeadRole = "technical" | "product" | "design" | "manager";
 
 export interface InitiativeLead {
   initiative_id: number;
@@ -1206,8 +1219,38 @@ export interface InitiativeLead {
 }
 
 export interface InitiativeAccess {
+  /** Initiatives the user is an owner of. */
   led_initiative_ids: number[];
+  /** Owned + every initiative in a team the user directs. */
+  editable_initiative_ids: number[];
+  /** Projects the user is the single owner of. */
+  owned_project_ids: number[];
   leads: InitiativeLead[];
+}
+
+export type TeamRole = "director" | "manager";
+
+export interface Pod {
+  id: number;
+  team_id: number;
+  name: string;
+}
+
+export interface TeamMember {
+  team_id: number;
+  engineer_id: number;
+  engineer_name: string;
+  role: TeamRole;
+  user_id: number | null;
+}
+
+export interface Team {
+  id: number;
+  key: string;
+  name: string;
+  description: string | null;
+  pods: Pod[];
+  members: TeamMember[];
 }
 
 export interface ProjectAccess {
@@ -1216,6 +1259,9 @@ export interface ProjectAccess {
   initiative_name: string | null;
   can_edit: boolean;
   leads: InitiativeLead[];
+  owner_name: string | null;
+  pod_name: string | null;
+  team_name: string | null;
 }
 
 // --- Leadership notes + business review (USER_FLOWS §BR) ---
@@ -1257,6 +1303,8 @@ export interface ReviewInitiative {
   id: number;
   key: string;
   name: string;
+  team_id: number | null;
+  pods: string[];
   outcome_statement: string | null;
   target_date: string | null;
   health: ProjectHealth | null;
@@ -1278,6 +1326,7 @@ export interface ReviewInitiative {
 
 export interface BusinessReview {
   generated_on: string;
+  teams: Team[];
   initiatives: ReviewInitiative[];
   open_note_count: number;
   attention: string[];

@@ -120,7 +120,7 @@ export default function LeadershipNotesPanel({
         <h2 className="font-semibold">
           Leadership notes{" "}
           <span className="ml-1 text-xs font-normal text-slate-400">
-            watch · priority · feedback from the executive team
+            watch · priority · feedback from leadership
           </span>
         </h2>
         {mayWrite && !adding && (

@@ -36,6 +36,7 @@ from app.api.v1 import (
     specs,
     tasks,
     team,
+    teams,
 )
 
 api_router = APIRouter()
@@ -54,6 +55,7 @@ api_router.include_router(milestones.router, prefix="/milestones", tags=["milest
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(dependencies.router, prefix="/dependencies", tags=["dependencies"])
 api_router.include_router(team.router, prefix="/team", tags=["team"])
+api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(
     architecture.router,
     prefix="/architecture",

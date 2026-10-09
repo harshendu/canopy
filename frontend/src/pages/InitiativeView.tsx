@@ -140,13 +140,24 @@ export default function InitiativeView() {
           <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-700">
             read-only
           </span>
-          You have full visibility of this initiative; planning changes are made by its lead team
+          You have full visibility of this initiative; planning changes are made by its owners
           {leadTeam ? <> — {leadTeam}.</> : "."}
         </div>
       )}
-      {canEdit && leadTeam && (
-        <p className="text-xs text-slate-500">
-          Lead team: <span className="text-slate-700">{leadTeam}</span>
+      {(r.team_name || r.pods.length > 0 || leadTeam) && (
+        <p className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+          {r.team_name && <span className="text-slate-700">{r.team_name} team</span>}
+          {r.pods.map((p) => (
+            <span key={p} className="rounded bg-canopy-50 px-1.5 py-0.5 text-canopy-700">
+              {p} pod
+            </span>
+          ))}
+          {r.pods.length > 1 && <span>spans pods</span>}
+          {leadTeam && (
+            <span>
+              · Owners: <span className="text-slate-700">{leadTeam}</span>
+            </span>
+          )}
         </p>
       )}
 
@@ -319,6 +330,13 @@ export default function InitiativeView() {
                       </span>
                     </span>
                   </div>
+                  {(p.pod_name || p.owner_name) && (
+                    <div className="mt-1 text-xs text-slate-500">
+                      {p.pod_name && <span>{p.pod_name} pod</span>}
+                      {p.pod_name && p.owner_name && " · "}
+                      {p.owner_name && <span>Owner: {p.owner_name}</span>}
+                    </div>
+                  )}
                   <div className="mt-2 text-xs text-slate-400">
                     {p.avg_percent_complete}% · {p.completed_tasks}/{p.total_tasks} tasks ·{" "}
                     {p.critical_tasks} critical · {p.project_end ? `ends ${p.project_end}` : "unscheduled"}

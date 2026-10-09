@@ -297,11 +297,20 @@ class UserFunction(StrEnum):
 
 
 class LeadRole(StrEnum):
-    """A seat on an initiative's core team (the leads who jointly own it)."""
+    """An initiative owner's seat: a pod's technical / product / design lead, or a manager.
+    An initiative may have several owners, and one person may own several initiatives."""
 
     technical = "technical"
     product = "product"
     design = "design"
+    manager = "manager"
+
+
+class TeamRole(StrEnum):
+    """A team-level seat above the pods: the team's director(s) and engineering manager(s)."""
+
+    director = "director"
+    manager = "manager"
 
 
 class LeadershipScope(StrEnum):
