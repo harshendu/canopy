@@ -206,3 +206,64 @@ async def test_demo_jira_sync_uses_offline_mock(client, db_session, monkeypatch)
     )
     assert pulls.status_code == 200
     assert len(pulls.json()) >= 1
+
+
+@pytest.mark.asyncio
+async def test_agentic_dataset_loads_with_the_same_depth(db_session):
+    """The alternate (Northstar / agentic) narrative builds through the same generic loader and
+    is as fully populated as the default: every project has its ADRs, specs, risks, outcomes,
+    and every initiative a what-if scenario."""
+    from app.services.seed import DATASETS, get_dataset
+
+    assert set(DATASETS) >= {"helix", "agentic"}
+    ds = get_dataset("agentic")
+    assert {i.key for i in ds.initiatives} >= {
+        "INTERVIEWER", "PILOT", "FORGE", "BUILDER", "DEVAGENTS", "SUPPORT", "ENHANCE",
+    }
+    # Every referenced task name resolves (hand-offs, scenarios, baseline, PRs, Jira keys).
+    names = {p.key: {t.name for ph in p.phases for t in ph.tasks} for p in ds.projects}
+    for (pk, t_pred), (sk, t_succ) in ds.cross_project_handoffs:
+        assert t_pred in names[pk] and t_succ in names[sk]
+    for sc in ds.scenarios:
+        for name, _ in sc.duration_overrides:
+            assert name in names[sc.project_key]
+        for name in sc.removed_tasks:
+            assert name in names[sc.project_key]
+    assert ds.baseline_inflight_task in names[ds.flagship_key]
+    for pr in ds.pull_requests:
+        assert pr.task_name in names[ds.flagship_key]
+    for _, _, name in ds.jira_task_keys:
+        assert name in names[ds.flagship_key]
+
+    counts = await seed.load_seed_data(db_session, set(), ds)
+    assert counts["tasks"] > 60
+    assert counts["decisions"] >= 30
+    assert counts["specs"] >= 10
+    assert counts["scenarios"] == 5
+    assert counts["connections"] == 3
+    assert counts["users"] >= 12
+
+    # Org model (§R6): every initiative has one or more owners and belongs to a team; every
+    # project has exactly one owner and a pod; some people own several initiatives.
+    assert counts["initiatives"] == 7 and counts["projects"] == 13
+    assert all(i.leads and i.team_key for i in ds.initiatives)
+    assert all(p.owner and p.pod for p in ds.projects)
+    seats: dict[str, int] = {}
+    for i in ds.initiatives:
+        for name, _ in i.leads:
+            seats[name] = seats.get(name, 0) + 1
+    assert {"Priya Raman", "Jonah Fields"} <= {n for n, c in seats.items() if c >= 2}
+    pods_of = {
+        i.key: {p.pod for p in ds.projects if p.initiative_key == i.key} for i in ds.initiatives
+    }
+    assert {k for k, pods in pods_of.items() if len(pods) > 1} >= {"PILOT", "FORGE", "ENHANCE"}
+    leads = (
+        await db_session.execute(select(User).where(User.role == UserRole.architect))
+    ).scalars().all()
+    assert {u.function.value for u in leads} == {"engineering", "product", "design"}
+    execs = (
+        await db_session.execute(select(User).where(User.role == UserRole.viewer))
+    ).scalars().all()
+    assert {u.full_name for u in execs if u.function.value == "leadership"} == {
+        "Maya Lindqvist", "Grace Tan",
+    }

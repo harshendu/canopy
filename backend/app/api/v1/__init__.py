@@ -22,6 +22,7 @@ from app.api.v1 import (
     gantt,
     initiatives,
     jira_links,
+    leadership,
     me,
     meta,
     milestones,
@@ -35,6 +36,7 @@ from app.api.v1 import (
     specs,
     tasks,
     team,
+    teams,
 )
 
 api_router = APIRouter()
@@ -53,6 +55,7 @@ api_router.include_router(milestones.router, prefix="/milestones", tags=["milest
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(dependencies.router, prefix="/dependencies", tags=["dependencies"])
 api_router.include_router(team.router, prefix="/team", tags=["team"])
+api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(
     architecture.router,
     prefix="/architecture",
@@ -85,6 +88,12 @@ api_router.include_router(
 )
 api_router.include_router(
     outcomes.router, tags=["outcomes"], dependencies=[FeatureGate("portfolio.outcomes")]
+)
+api_router.include_router(
+    leadership.router,
+    prefix="/leadership",
+    tags=["leadership"],
+    dependencies=[FeatureGate("portfolio.leadership")],
 )
 api_router.include_router(
     proposals.router,

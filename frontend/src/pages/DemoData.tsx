@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { api } from "../api/client";
 import type { DemoStatus } from "../api/types";
@@ -40,8 +41,13 @@ export default function DemoData() {
     qc.invalidateQueries(); // the whole dataset changed — refresh every view
   };
 
+  // Which narrative to load; "" = the backend default (DEMO_DATASET).
+  const [dataset, setDataset] = useState<string>("");
   const reseed = useMutation({
-    mutationFn: () => api.post<DemoStatus>("/admin/demo/reseed"),
+    mutationFn: () =>
+      api.post<DemoStatus>(
+        dataset ? `/admin/demo/reseed?dataset=${encodeURIComponent(dataset)}` : "/admin/demo/reseed",
+      ),
     onSuccess: afterMutate,
   });
   const clear = useMutation({
@@ -79,7 +85,29 @@ export default function DemoData() {
         subtitle="Load a full, coherent demo dataset — or wipe everything back to empty. Resetting keeps you (and the configured superuser) signed in and recreates all demo users. Connectors are served by an offline mock, so “Sync from Jira” and provider reads work without real credentials."
       />
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        {data && data.datasets.length > 1 && (
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <span>Dataset</span>
+            <select
+              value={dataset}
+              onChange={(e) => setDataset(e.target.value)}
+              disabled={busy}
+              className="rounded border border-slate-300 bg-white px-2 py-1.5 text-sm"
+              title={
+                data.datasets.find((d) => d.key === (dataset || data.dataset))?.description ??
+                undefined
+              }
+            >
+              {data.datasets.map((d) => (
+                <option key={d.key} value={d.key === data.dataset ? "" : d.key}>
+                  {d.name}
+                  {d.key === data.dataset ? " (default)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button
           onClick={() => {
             if (window.confirm("Wipe ALL data and reload the demo dataset from scratch?")) {

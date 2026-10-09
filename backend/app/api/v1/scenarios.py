@@ -61,6 +61,7 @@ from app.schemas.scenarios import (
     ScenarioTaskUpdate,
     ScenarioUpdate,
 )
+from app.services.access import ensure_initiative_editable
 from app.services.cross_project import CPDep, CPTask, cross_project_critical_path
 from app.services.scenario_apply import (
     ScenarioApplyError,
@@ -122,10 +123,11 @@ async def list_scenarios(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_scenario(
-    session: SessionDep, _: PlannerWriter, initiative_id: int, payload: ScenarioCreate
+    session: SessionDep, user: PlannerWriter, initiative_id: int, payload: ScenarioCreate
 ) -> Scenario:
     if await session.get(Initiative, initiative_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Initiative not found")
+    await ensure_initiative_editable(session, user, initiative_id)
     scenario = Scenario(
         initiative_id=initiative_id, title=payload.title, description=payload.description
     )
@@ -170,9 +172,10 @@ async def get_scenario(session: SessionDep, _: CurrentUser, scenario_id: int) ->
 
 @router.patch("/scenarios/{scenario_id}", response_model=ScenarioRead)
 async def update_scenario(
-    session: SessionDep, _: PlannerWriter, scenario_id: int, payload: ScenarioUpdate
+    session: SessionDep, user: PlannerWriter, scenario_id: int, payload: ScenarioUpdate
 ) -> Scenario:
     scenario = await _get_scenario(session, scenario_id)
+    await ensure_initiative_editable(session, user, scenario.initiative_id)
     data = payload.model_dump(exclude_unset=True)
     if "status" in data and data["status"] not in ("draft", "ready", "archived"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status")
@@ -184,10 +187,11 @@ async def update_scenario(
 
 
 @router.delete("/scenarios/{scenario_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_scenario(session: SessionDep, _: PlannerWriter, scenario_id: int) -> None:
+async def delete_scenario(session: SessionDep, user: PlannerWriter, scenario_id: int) -> None:
     scenario = await session.get(Scenario, scenario_id)
     if scenario is None:
         return
+    await ensure_initiative_editable(session, user, scenario.initiative_id)
     for model in (
         ScenarioTask,
         ScenarioDependency,
@@ -631,9 +635,11 @@ async def compare_scenario(
 # --- Apply ---
 @router.post("/scenarios/{scenario_id}/apply", response_model=ScenarioApplyResult)
 async def apply_scenario_view(
-    session: SessionDep, _: PlannerWriter, __: HumanOnly, scenario_id: int,
+    session: SessionDep, user: PlannerWriter, __: HumanOnly, scenario_id: int,
     payload: ScenarioApplyRequest | None = None,
 ) -> ScenarioApplyResult:
+    scenario = await _get_scenario(session, scenario_id)
+    await ensure_initiative_editable(session, user, scenario.initiative_id)
     force = payload.force if payload else False
     try:
         result = await apply_scenario(session, scenario_id, force=force)

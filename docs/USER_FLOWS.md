@@ -395,6 +395,54 @@ projects and rolls up their health.
   project, total working days, `spans_projects`, and the `handoffs`; cyclic cross-project deps →
   409) · **MCP:** `get_initiative_critical_path`.
 
+### R6. Teams, pods & ownership-scoped editing **[new]**
+The org model above initiatives (`app/models/org.py`, `app/models/leadership.py`):
+- A **team** owns a product or a platform and holds several **pods**. Its **directors** and
+  **managers** sit in `TeamMember` seats.
+- An **initiative** belongs to a team (`Initiative.team_id`) and has **one or more owners**
+  (`InitiativeLead` seats: a pod's technical / product / design lead, or a `manager`). One person
+  may own several initiatives at the same time.
+- Every **project** has exactly **one owner** (`Project.owner_engineer_id`) and is run by one pod
+  (`Project.pod_id`). An initiative **spans the pods of its projects** (derived, never stored).
+
+The role matrix (§A3a) still says *what kind* of write a role may make; ownership says *where*.
+For a planner-role user (architect / engineering manager / legacy member):
+- an **initiative owner** plans the whole initiative and every project in it;
+- a **team director** plans every initiative in their team;
+- a **project owner** plans their own project, even inside an initiative they do not own;
+- everyone else has **read-only visibility** — complete lateral visibility, no cross-team edits.
+
+Admins are exempt. An initiative with **no owners and no team** keeps the plain role rules
+(back-compat; the Helix demo sets neither). Contributor writes by engineers (own-task progress,
+blockers, criterion verdicts, decision comments) are **not** scoped — they stay role-governed.
+Enforced centrally in `app/services/access.py` (`ensure_initiative_editable` for initiative-level
+writes, `ensure_project_editable` for project-level ones) and called from: initiative
+edit/delete, project create-into/edit/delete, replan, task / milestone / dependency
+create-edit-delete, ADR create/edit, draft plans (incl. push), scenario
+create/edit/delete/apply. A denied write is `403 {code:"not_initiative_lead", initiative_id,
+message}`.
+- **UI:** `/initiatives` shows **Initiatives I own** first (for planners who own any), then every
+  initiative **grouped by team** (director, manager, pods in the heading), each row with its pods
+  ("spans pods" when more than one), its owners and an `owner` / `editable` / `read-only` chip.
+  The initiative cockpit shows team · pods · owners and a **read-only banner** when the user
+  cannot plan it; sub-project cards show each project's pod and owner. The project cockpit's
+  header shows team · pod · initiative · project owner, with a read-only banner naming the project
+  owner and the initiative's owners. Planning controls are hidden when `can_edit` is false
+  (deeper controls that are still rendered are rejected by the server).
+- **API:** `GET /api/v1/teams` (teams with pods + director/manager seats; open to all) · admin:
+  `POST /teams`, `POST /teams/{id}/pods`, `PUT /teams/{id}/members` · `GET /initiatives/access`
+  → `{led_initiative_ids, editable_initiative_ids, owned_project_ids, leads[]}` ·
+  `GET|PUT /initiatives/{id}/leads` (replace the owner seats; admin or a current owner) ·
+  `GET /initiatives/{id}/rollup` carries `can_edit`, `leads`, `team_id`, `team_name`, `pods` ·
+  `GET /projects/{id}/access` → `{can_edit, initiative_id, initiative_name, leads, owner_name,
+  pod_name, team_name}` · `team_id` on initiative create/update; `pod_id` + `owner_engineer_id`
+  on project create/update; the portfolio / rollup project summaries carry `pod_name` +
+  `owner_name`.
+- **Not built:** UI editors for teams, pods, team seats, initiative owners and project
+  owner/pod (set via the API / the seed); validation that a project's pod belongs to its
+  initiative's team; scoping of the row-level edits inside a scenario workspace (the scenario's
+  create/edit/delete/apply are scoped, its task/milestone/allocation rows are not yet).
+
 ### R5. Initiative digest — manage-by-exception weekly roll-up **[updated — now in the UI]**
 - A synthesized health digest that **leads with what needs attention** (roadmap gap #6 / `PF L-R2`;
   37signals/Cagan: green is silent, surface exceptions). Reuses the **rollup** (§R3) + **forecast**
@@ -411,6 +459,32 @@ projects and rolls up their health.
   digest §I).
 
 ---
+
+## BR. Leadership review & feedback (business review) **[new]**
+The leadership layer's surface. Leadership — the heads of engineering and product
+(`function = leadership`, any role — typically `viewer`) — and **team directors** (§R6) read
+everything and **write one thing: leadership notes** on a specific view —
+something to **watch**, a **priority** call (P1–P3), or free-form **feedback** — optionally pinned
+to a decision / risk / outcome / milestone inside an initiative or project. The initiative's lead
+team **acknowledges / resolves** each note with a response, so the loop closes where the work is.
+`GET /leadership/review` rolls every initiative up for the **monthly business review**, grouped
+by team (directors, managers, pods): owners, pods spanned,
+headline health (progress, on-track, worst risk/drift, open decisions, open blockers), outcomes,
+and the notes still open — plus an `attention` list. Gate: `portfolio.leadership`.
+- **UI:** sidebar **Business review** (`/review`, the leadership persona's landing page) — the
+  attention list, then a section per team (director · manager · pods) with one card per
+  initiative showing its pods, owners, health, outcomes and open notes; the **Leadership notes** panel on the initiative cockpit and the project overview lists
+  notes and (for the leadership persona / admin) adds one with an optional target picker; leads
+  acknowledge / resolve inline with a response. The portfolio/initiative **Export** (§S) remains
+  the PDF hand-out for the meeting.
+- **API:** `GET /api/v1/leadership/notes?scope_level&scope_id&status` · `POST /leadership/notes`
+  (leadership persona, a team director, or admin; `target_kind` + `target_id` resolve to a captured
+  `target_label`) · `PATCH /leadership/notes/{id}` (author edits body/priority; the scope's lead
+  team, the author or an admin sets `status`/`response`) · `DELETE /leadership/notes/{id}`
+  (author/admin) · `GET /leadership/review`.
+- **Not built:** Slack/email delivery of a new note (a hook over this data, like §I); notes on
+  tasks; a decision-level "flagged by leadership" chip in the ADR list (the panel shows the
+  target label instead); the seed is the only way to pre-populate notes.
 
 ## B. Projects & portfolio
 
@@ -1874,14 +1948,45 @@ Compare/Capacity/Gantt/Milestones tabs all show a real delta), three demo **conn
 and project state that makes the **alerts** digest fire (deadline miss, overdue milestone,
 over-allocation, overdue risk, open blocker).
 
+### Z1a. Alternate dataset — Northstar (agentic products) **[new]**
+A second, selectable narrative lives in `backend/app/services/seed/agentic.py` and loads through
+the same generic loader (`Dataset` holder in `catalog.py`; registry `DATASETS` in the package
+init). **Northstar** is a talent-technology company building agentic products — five initiatives
+(**AI Interviewer** — voice/video sessions between an AI agent and a human; **Talent Pilot** — an
+integrated agent harness for recruiters; **Talent Forge** — an agent harness to build and deploy
+fully customizable applications; **Agent Builder** — the runtime engine behind every agent;
+**Dev Agents** — internal monitoring / on-call / productivity agents) plus two smaller,
+non-product initiatives every org runs alongside (**Customer Support Escalations**, a **Q4 Product
+Enhancements** bundle) over **13 projects**. There is no single architect: **each initiative is
+owned by its own owners** seated as `InitiativeLead` rows, organised into **two teams**
+(Talent Acquisition, Agent Platform) with **pods**, a **director** and a **manager** each (§R6).
+Some initiatives span pods (Talent Pilot, Talent Forge, the Q4 bundle); some people own several
+(a pod lead and a manager each own two); every project has one owner and a pod. **Leadership**
+(Head of Engineering, Head of Product — `viewer` logins with the `leadership` function) sits
+above them with seeded **leadership notes** (§BR). The lead
+teams get lateral visibility across initiatives (read-only outside their own; the shared decision
+queue, team view, portfolio), while the executives read the business review and roll-ups. Same
+depth as Helix: WBS + cross-project hand-offs, ADR threads +
+fitness functions, drift, specs, risks, outcomes, docs, blockers, retros, draft plans, a what-if
+scenario per initiative, a flagship baseline (Interview Orchestrator) and demo connections.
+- **Pick it:** `DEMO_DATASET=agentic` (env; default `helix`) makes it the default — the login
+  screen's click-to-fill accounts and a plain reseed use it — or choose it per reseed from the
+  **Dataset** dropdown on `/admin/demo` (`POST /admin/demo/reseed?dataset=agentic`).
+- **Known limit:** the offline connector mock (`app/connectors/demo.py`) still serves the fixed
+  Helix-flavoured Jira/GitHub/Drive fixtures, so *Sync from Jira* on the Northstar data pulls
+  `HELIX-…` issues; the seeded Jira links / PR cache on the flagship are Northstar's own.
+
 ### Z2. Reset / reload from the UI *(admin, demo mode)*
 - **UI:** sidebar **"Demo data"** (admin only) → **`/admin/demo`**. Shows current row counts + the
-  demo logins, with **"Reset & load demo data"** (wipe everything, then rebuild) and
-  **"Clear all data"** (wipe to empty). Both keep the acting admin **and** the configured superuser
-  signed in; everything else (including other users) is wiped and re-seeded.
-- **API:** `GET /api/v1/admin/demo/status` · `POST /api/v1/admin/demo/reseed` ·
-  `POST /api/v1/admin/demo/clear` — all admin-gated **and** double-gated on `DEMO_MODE` (they 403
-  when it is off, so they can never run against prod). `GET /api/v1/health` reports `demo_mode`.
+  demo logins, with **"Reset & load demo data"** (wipe everything, then rebuild — a **Dataset**
+  dropdown picks the narrative when more than one is registered, §Z1a) and **"Clear all data"**
+  (wipe to empty). Both keep the acting admin **and** the configured superuser signed in;
+  everything else (including other users) is wiped and re-seeded.
+- **API:** `GET /api/v1/admin/demo/status` (counts + logins + the default `dataset` and the
+  registered `datasets`) · `POST /api/v1/admin/demo/reseed?dataset=` (optional; default
+  `DEMO_DATASET`, unknown key → 400) · `POST /api/v1/admin/demo/clear` — all admin-gated **and**
+  double-gated on `DEMO_MODE` (they 403 when it is off, so they can never run against prod).
+  `GET /api/v1/health` reports `demo_mode`.
 - **Login helper:** `GET /api/v1/admin/demo/public` (unauthenticated) lists the demo accounts +
   shared password when demo mode is on; the **login screen** shows them as click-to-fill (empty
   otherwise). Every demo login uses the password `canopy-demo`.

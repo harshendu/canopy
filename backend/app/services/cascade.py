@@ -31,10 +31,11 @@ from app.models.architecture import (
     DriftScan,
     DriftSuppression,
 )
-from app.models.base import DocScope, ProposalScope, RiskScope
+from app.models.base import DocScope, LeadershipScope, ProposalScope, RiskScope
 from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import ExternalRef, JiraLink, PullRequest
+from app.models.leadership import LeadershipNote
 from app.models.outcome import Outcome
 from app.models.project import (
     Baseline,
@@ -200,6 +201,12 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
         update(ScenarioMilestone)
         .where(col(ScenarioMilestone.live_milestone_id).in_(mile_ids))
         .values(live_milestone_id=None)
+    )
+    await session.execute(
+        delete(LeadershipNote).where(
+            col(LeadershipNote.scope_level) == LeadershipScope.project,
+            col(LeadershipNote.scope_id) == pid,
+        )
     )
     await session.execute(
         update(ScenarioAllocation)

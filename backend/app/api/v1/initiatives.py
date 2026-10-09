@@ -11,6 +11,8 @@ from app.api.v1.projects import open_project_risk_counts, summarize_project
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
 from app.models.base import ADRStatus, ProjectHealth, TaskType, utcnow
+from app.models.leadership import InitiativeLead
+from app.models.org import Pod, Team
 from app.models.outcome import Outcome
 from app.models.project import (
     Blocker,
@@ -34,7 +36,15 @@ from app.schemas.entities import (
     InitiativeUpdate,
     ProjectSummary,
 )
+from app.schemas.leadership import InitiativeAccess, InitiativeLeadIn, InitiativeLeadRead
 from app.services import digest as digest_service
+from app.services.access import (
+    directed_team_ids,
+    ensure_initiative_editable,
+    initiative_can_edit,
+    led_initiative_ids,
+    owned_project_ids,
+)
 from app.services.burndown import done_dates_per_task
 from app.services.capacity import AvailabilitySpan
 from app.services.cross_project import CPDep, CPTask, cross_project_critical_path
@@ -54,6 +64,101 @@ async def list_initiatives(session: SessionDep, _: CurrentUser) -> list[Initiati
     return list(result.scalars().all())
 
 
+async def lead_reads(
+    session: SessionDep, initiative_id: int | None = None
+) -> list[InitiativeLeadRead]:
+    """Lead-team rows (with engineer names) for one initiative, or for all when `None`."""
+    stmt = (
+        select(InitiativeLead, Engineer)
+        .join(Engineer, col(Engineer.id) == col(InitiativeLead.engineer_id))
+        .order_by(col(InitiativeLead.initiative_id), col(InitiativeLead.lead_role))
+    )
+    if initiative_id is not None:
+        stmt = stmt.where(InitiativeLead.initiative_id == initiative_id)
+    rows = (await session.execute(stmt)).all()
+    return [
+        InitiativeLeadRead(
+            initiative_id=lead.initiative_id,
+            engineer_id=lead.engineer_id,
+            engineer_name=eng.name,
+            lead_role=lead.lead_role,
+            user_id=eng.user_id,
+        )
+        for lead, eng in rows
+    ]
+
+
+@router.get("/access", response_model=InitiativeAccess)
+async def initiative_access(session: SessionDep, user: CurrentUser) -> InitiativeAccess:
+    """Which initiatives the current user leads (and may edit), plus every lead team — one call
+    for the Initiatives page to split "led by me" from the read-only rest (§R6)."""
+    led = await led_initiative_ids(session, user)
+    directed = await directed_team_ids(session, user)
+    in_directed = set()
+    if directed:
+        in_directed = {
+            i.id
+            for i in (
+                await session.execute(
+                    select(Initiative).where(col(Initiative.team_id).in_(directed))
+                )
+            ).scalars().all()
+            if i.id is not None
+        }
+    return InitiativeAccess(
+        led_initiative_ids=sorted(led),
+        editable_initiative_ids=sorted(led | in_directed),
+        owned_project_ids=sorted(await owned_project_ids(session, user)),
+        leads=await lead_reads(session),
+    )
+
+
+@router.get("/{initiative_id}/leads", response_model=list[InitiativeLeadRead])
+async def get_initiative_leads(
+    session: SessionDep, _: CurrentUser, initiative_id: int
+) -> list[InitiativeLeadRead]:
+    if await session.get(Initiative, initiative_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Initiative not found")
+    return await lead_reads(session, initiative_id)
+
+
+@router.put("/{initiative_id}/leads", response_model=list[InitiativeLeadRead])
+async def set_initiative_leads(
+    session: SessionDep,
+    user: ArchitectWriter,
+    initiative_id: int,
+    payload: list[InitiativeLeadIn],
+) -> list[InitiativeLeadRead]:
+    """Replace the initiative's core team. An admin, or a current lead, may change it; once an
+    initiative has leads, planning writes inside it are scoped to them (§R6)."""
+    if await session.get(Initiative, initiative_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Initiative not found")
+    await ensure_initiative_editable(session, user, initiative_id)
+    for item in payload:
+        if await session.get(Engineer, item.engineer_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Engineer {item.engineer_id} not found",
+            )
+    for lead in (
+        await session.execute(
+            select(InitiativeLead).where(InitiativeLead.initiative_id == initiative_id)
+        )
+    ).scalars().all():
+        await session.delete(lead)
+    await session.flush()
+    for item in payload:
+        session.add(
+            InitiativeLead(
+                initiative_id=initiative_id,
+                engineer_id=item.engineer_id,
+                lead_role=item.lead_role,
+            )
+        )
+    await session.commit()
+    return await lead_reads(session, initiative_id)
+
+
 @router.post("", response_model=InitiativeRead, status_code=status.HTTP_201_CREATED)
 async def create_initiative(
     session: SessionDep, _: ArchitectWriter, payload: InitiativeCreate
@@ -63,6 +168,8 @@ async def create_initiative(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Initiative key exists")
     data = payload.model_dump()
     data["tags"] = normalize_tags(data.get("tags") or [])
+    if payload.team_id is not None and await session.get(Team, payload.team_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     initiative = Initiative(**data)
     session.add(initiative)
     await session.commit()
@@ -82,12 +189,15 @@ async def get_initiative(
 
 @router.patch("/{initiative_id}", response_model=InitiativeRead)
 async def update_initiative(
-    session: SessionDep, _: ArchitectWriter, initiative_id: int, payload: InitiativeUpdate
+    session: SessionDep, user: ArchitectWriter, initiative_id: int, payload: InitiativeUpdate
 ) -> Initiative:
     initiative = await session.get(Initiative, initiative_id)
     if initiative is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Initiative not found")
+    await ensure_initiative_editable(session, user, initiative_id)
     data = payload.model_dump(exclude_unset=True)
+    if data.get("team_id") is not None and await session.get(Team, data["team_id"]) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
     if "tags" in data and data["tags"] is not None:
         data["tags"] = normalize_tags(data["tags"])
     for field, value in data.items():
@@ -101,11 +211,18 @@ async def update_initiative(
 
 @router.delete("/{initiative_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_initiative(
-    session: SessionDep, _: ArchitectWriter, initiative_id: int
+    session: SessionDep, user: ArchitectWriter, initiative_id: int
 ) -> None:
     initiative = await session.get(Initiative, initiative_id)
     if initiative is None:
         return
+    await ensure_initiative_editable(session, user, initiative_id)
+    for lead in (
+        await session.execute(
+            select(InitiativeLead).where(InitiativeLead.initiative_id == initiative_id)
+        )
+    ).scalars().all():
+        await session.delete(lead)
     # Unlink sub-projects rather than cascade-deleting them (projects outlive initiatives).
     projects = (
         await session.execute(select(Project).where(Project.initiative_id == initiative_id))
@@ -118,7 +235,7 @@ async def delete_initiative(
 
 @router.get("/{initiative_id}/rollup", response_model=InitiativeRollup)
 async def initiative_rollup(
-    session: SessionDep, _: CurrentUser, initiative_id: int
+    session: SessionDep, user: CurrentUser, initiative_id: int
 ) -> InitiativeRollup:
     initiative = await session.get(Initiative, initiative_id)
     if initiative is None:
@@ -137,6 +254,9 @@ async def initiative_rollup(
         e.id: e.name
         for e in (await session.execute(select(Engineer))).scalars().all()
         if e.id is not None
+    }
+    pod_names = {
+        p.id: p.name for p in (await session.execute(select(Pod))).scalars().all() if p.id
     }
     availability = [
         AvailabilitySpan(a.engineer_id, a.capacity_factor, a.start_date, a.end_date)
@@ -199,6 +319,7 @@ async def initiative_rollup(
                 today=today,
                 availability=availability,
                 open_risks=open_risks_by_project.get(project.id, 0),
+                pod_names=pod_names,
             )
         )
 
@@ -218,8 +339,15 @@ async def initiative_rollup(
     if initiative.target_date is not None and project_end is not None:
         on_track = project_end <= initiative.target_date
 
+    team = await session.get(Team, initiative.team_id) if initiative.team_id else None
+    span_pods = sorted({s.pod_name for s in summaries if s.pod_name})
     return InitiativeRollup(
         initiative=InitiativeRead.model_validate(initiative),
+        can_edit=await initiative_can_edit(session, user, initiative_id),
+        leads=await lead_reads(session, initiative_id),
+        team_id=initiative.team_id,
+        team_name=team.name if team is not None else None,
+        pods=span_pods,
         projects=summaries,
         total_tasks=total_tasks,
         completed_tasks=completed_tasks,

@@ -119,6 +119,11 @@ FEATURE_CATALOG: tuple[FeatureDef, ...] = (
         "dependencies.", "portfolio",
     ),
     FeatureDef(
+        "portfolio.leadership", "Leadership review & feedback",
+        "The business-review page and leadership notes (watch / priority / feedback) on "
+        "initiatives and projects.", "portfolio",
+    ),
+    FeatureDef(
         "portfolio.outcomes", "Outcomes",
         "Track a project/initiative as a measurable bet: hypothesis, metric, verdict.",
         "portfolio",

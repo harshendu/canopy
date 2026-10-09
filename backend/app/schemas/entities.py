@@ -32,6 +32,7 @@ from app.models.base import (
     WriteStrategy,
 )
 from app.schemas.auth import UserRead
+from app.schemas.leadership import InitiativeLeadRead
 from app.services import metadata
 from app.services import outcomes as outcomes_service
 
@@ -44,6 +45,8 @@ class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
     initiative_id: int | None = None
+    pod_id: int | None = None
+    owner_engineer_id: int | None = None  # the project's single accountable owner (§R6)
     start_date: date | None = None
     target_date: date | None = None
     tags: list[str] = []
@@ -53,6 +56,8 @@ class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     initiative_id: int | None = None
+    pod_id: int | None = None
+    owner_engineer_id: int | None = None
     start_date: date | None = None
     target_date: date | None = None
     archived: bool | None = None
@@ -71,6 +76,8 @@ class ProjectRead(BaseModel):
     name: str
     description: str | None
     initiative_id: int | None
+    pod_id: int | None = None
+    owner_engineer_id: int | None = None
     start_date: date | None
     target_date: date | None
     archived: bool
@@ -768,6 +775,11 @@ class ProjectSummary(BaseModel):
     health: ProjectHealth | None = None
     status_note: str | None = None
     open_risks: int = 0  # open/mitigating register risks (separate from the risk score)
+    # Org context (§R6): the pod that runs the project and its single owner.
+    pod_id: int | None = None
+    pod_name: str | None = None
+    owner_engineer_id: int | None = None
+    owner_name: str | None = None
 
 
 class PortfolioResponse(BaseModel):
@@ -782,6 +794,7 @@ class InitiativeCreate(BaseModel):
     start_date: date | None = None
     target_date: date | None = None
     owner_engineer_id: int | None = None
+    team_id: int | None = None
     tags: list[str] = []
 
 
@@ -791,6 +804,7 @@ class InitiativeUpdate(BaseModel):
     start_date: date | None = None
     target_date: date | None = None
     owner_engineer_id: int | None = None
+    team_id: int | None = None
     archived: bool | None = None
     tags: list[str] | None = None
     health: ProjectHealth | None = None
@@ -806,6 +820,7 @@ class InitiativeRead(BaseModel):
     start_date: date | None
     target_date: date | None
     owner_engineer_id: int | None
+    team_id: int | None = None
     archived: bool
     tags: list[str] = []
     health: ProjectHealth | None = None
@@ -874,6 +889,13 @@ class InitiativeRollup(BaseModel):
     drift_level: str
     open_decisions: int  # ADRs proposed / under discussion across the initiative
     on_track: bool | None  # latest end <= target_date (None if no target)
+    # Ownership (§R6): may the current user plan here, who owns it, its team, and the pods it
+    # spans (derived from its projects' pods).
+    can_edit: bool = True
+    leads: list[InitiativeLeadRead] = []
+    team_id: int | None = None
+    team_name: str | None = None
+    pods: list[str] = []
 
 
 # --- Alerts / digest ---

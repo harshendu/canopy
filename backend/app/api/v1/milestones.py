@@ -4,6 +4,7 @@ from sqlmodel import col, select
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.models.project import Milestone
 from app.schemas.entities import MilestoneCreate, MilestoneRead
+from app.services.access import ensure_project_editable
 
 router = APIRouter()
 
@@ -21,8 +22,9 @@ async def list_milestones(
 
 @router.post("", response_model=MilestoneRead, status_code=status.HTTP_201_CREATED)
 async def create_milestone(
-    session: SessionDep, _: PlannerWriter, payload: MilestoneCreate
+    session: SessionDep, user: PlannerWriter, payload: MilestoneCreate
 ) -> Milestone:
+    await ensure_project_editable(session, user, payload.project_id)
     milestone = Milestone(**payload.model_dump())
     session.add(milestone)
     await session.commit()
@@ -31,8 +33,9 @@ async def create_milestone(
 
 
 @router.delete("/{milestone_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_milestone(session: SessionDep, _: PlannerWriter, milestone_id: int) -> None:
+async def delete_milestone(session: SessionDep, user: PlannerWriter, milestone_id: int) -> None:
     milestone = await session.get(Milestone, milestone_id)
     if milestone is not None:
+        await ensure_project_editable(session, user, milestone.project_id)
         await session.delete(milestone)
         await session.commit()

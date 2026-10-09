@@ -35,6 +35,9 @@ export interface Project {
   name: string;
   description: string | null;
   initiative_id: number | null;
+  /** The pod that runs the project and its single owner (USER_FLOWS §R6). */
+  pod_id?: number | null;
+  owner_engineer_id?: number | null;
   start_date: string | null;
   target_date: string | null;
   archived: boolean;
@@ -55,6 +58,8 @@ export interface Initiative {
   start_date: string | null;
   target_date: string | null;
   owner_engineer_id: number | null;
+  /** The team (product/platform group) the initiative belongs to (§R6). */
+  team_id?: number | null;
   archived: boolean;
   tags: string[];
   health: ProjectHealth | null;
@@ -100,6 +105,13 @@ export interface InitiativeRollup {
   drift_level: string;
   open_decisions: number;
   on_track: boolean | null;
+  /** Ownership (§R6): may the current user plan here, and who leads it. */
+  can_edit: boolean;
+  leads: InitiativeLead[];
+  team_id: number | null;
+  team_name: string | null;
+  /** Pods the initiative spans (derived from its projects' pods). */
+  pods: string[];
 }
 
 /** Manage-by-exception weekly roll-up (§R5) — leads with `attention`, the exception list. */
@@ -432,6 +444,10 @@ export interface ProjectSummary {
   health: ProjectHealth | null;
   status_note: string | null;
   open_risks: number;
+  pod_id?: number | null;
+  pod_name?: string | null;
+  owner_engineer_id?: number | null;
+  owner_name?: string | null;
 }
 
 export interface CodeBinding {
@@ -632,12 +648,21 @@ export interface DemoAccount {
   function: string;
 }
 
+export interface DemoDataset {
+  key: string;
+  name: string;
+  description: string;
+}
+
 export interface DemoStatus {
   demo_mode: boolean;
   seeded: boolean;
   counts: Record<string, number>;
   password: string | null;
   accounts: DemoAccount[];
+  /** The default dataset key (`DEMO_DATASET`) — what the login screen's accounts come from. */
+  dataset: string | null;
+  datasets: DemoDataset[];
 }
 
 export interface DemoPublic {
@@ -1180,4 +1205,129 @@ export interface ProposalApplyResult {
   applied: number;
   skipped: number;
   replanned_projects: number[];
+}
+
+// --- Initiative lead teams / ownership (USER_FLOWS §R6) ---
+export type LeadRole = "technical" | "product" | "design" | "manager";
+
+export interface InitiativeLead {
+  initiative_id: number;
+  engineer_id: number;
+  engineer_name: string;
+  lead_role: LeadRole;
+  user_id: number | null;
+}
+
+export interface InitiativeAccess {
+  /** Initiatives the user is an owner of. */
+  led_initiative_ids: number[];
+  /** Owned + every initiative in a team the user directs. */
+  editable_initiative_ids: number[];
+  /** Projects the user is the single owner of. */
+  owned_project_ids: number[];
+  leads: InitiativeLead[];
+}
+
+export type TeamRole = "director" | "manager";
+
+export interface Pod {
+  id: number;
+  team_id: number;
+  name: string;
+}
+
+export interface TeamMember {
+  team_id: number;
+  engineer_id: number;
+  engineer_name: string;
+  role: TeamRole;
+  user_id: number | null;
+}
+
+export interface Team {
+  id: number;
+  key: string;
+  name: string;
+  description: string | null;
+  pods: Pod[];
+  members: TeamMember[];
+}
+
+export interface ProjectAccess {
+  project_id: number;
+  initiative_id: number | null;
+  initiative_name: string | null;
+  can_edit: boolean;
+  leads: InitiativeLead[];
+  owner_name: string | null;
+  pod_name: string | null;
+  team_name: string | null;
+}
+
+// --- Leadership notes + business review (USER_FLOWS §BR) ---
+export type LeadershipScope = "initiative" | "project";
+export type LeadershipNoteKind = "watch" | "priority" | "feedback";
+export type LeadershipTargetKind = "decision" | "risk" | "outcome" | "milestone";
+export type LeadershipNoteStatus = "open" | "acknowledged" | "resolved";
+
+export interface LeadershipNote {
+  id: number;
+  scope_level: LeadershipScope;
+  scope_id: number;
+  target_kind: LeadershipTargetKind | null;
+  target_id: number | null;
+  target_label: string | null;
+  kind: LeadershipNoteKind;
+  priority: number | null;
+  body: string;
+  author_user_id: number;
+  author_name: string | null;
+  status: LeadershipNoteStatus;
+  response: string | null;
+  responded_by_user_id: number | null;
+  responded_by_name: string | null;
+  responded_at: string | null;
+  created_at: string;
+}
+
+export interface ReviewOutcome {
+  id: number;
+  statement: string;
+  status: string;
+  current_value: number | null;
+  target_value: number | null;
+  unit: string | null;
+}
+
+export interface ReviewInitiative {
+  id: number;
+  key: string;
+  name: string;
+  team_id: number | null;
+  pods: string[];
+  outcome_statement: string | null;
+  target_date: string | null;
+  health: ProjectHealth | null;
+  status_note: string | null;
+  leads: InitiativeLead[];
+  project_count: number;
+  avg_percent_complete: number;
+  project_end: string | null;
+  on_track: boolean | null;
+  risk_score: number;
+  risk_level: string;
+  drift_score: number;
+  drift_level: string;
+  open_decisions: number;
+  open_blockers: number;
+  outcomes: ReviewOutcome[];
+  open_notes: LeadershipNote[];
+}
+
+export interface BusinessReview {
+  generated_on: string;
+  teams: Team[];
+  initiatives: ReviewInitiative[];
+  open_note_count: number;
+  attention: string[];
 }

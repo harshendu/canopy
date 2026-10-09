@@ -19,7 +19,9 @@ describe("personaHome with feature gates", () => {
     // Product/leadership/design land on the cross-project Home (§B1) — read-first, and always
     // on (unlike /initiatives, which needs portfolio.initiatives), so no gate fallback applies.
     expect(personaHome("product", {})).toBe("/portfolio");
-    expect(personaHome("leadership", {})).toBe("/portfolio");
+    // Leadership lands on the business review (§BR) while its gate is on, else the portfolio.
+    expect(personaHome("leadership", {})).toBe("/review");
+    expect(personaHome("leadership", { "portfolio.leadership": false })).toBe("/portfolio");
     expect(personaHome("design", {})).toBe("/portfolio");
     expect(personaHome("architecture", {})).toBe("/decisions");
     expect(personaHome("engineering", {})).toBe("/me");

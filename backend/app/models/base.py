@@ -294,3 +294,50 @@ class UserFunction(StrEnum):
     architecture = "architecture"
     management = "management"  # eng manager / director
     leadership = "leadership"  # executive
+
+
+class LeadRole(StrEnum):
+    """An initiative owner's seat: a pod's technical / product / design lead, or a manager.
+    An initiative may have several owners, and one person may own several initiatives."""
+
+    technical = "technical"
+    product = "product"
+    design = "design"
+    manager = "manager"
+
+
+class TeamRole(StrEnum):
+    """A team-level seat above the pods: the team's director(s) and engineering manager(s)."""
+
+    director = "director"
+    manager = "manager"
+
+
+class LeadershipScope(StrEnum):
+    """What a leadership note hangs off of (polymorphic, like OutcomeScope)."""
+
+    initiative = "initiative"
+    project = "project"
+
+
+class LeadershipNoteKind(StrEnum):
+    """Why leadership left the note: something to watch, a priority call, or feedback."""
+
+    watch = "watch"
+    priority = "priority"
+    feedback = "feedback"
+
+
+class LeadershipTargetKind(StrEnum):
+    """An optional finer target inside the scope a note points at."""
+
+    decision = "decision"
+    risk = "risk"
+    outcome = "outcome"
+    milestone = "milestone"
+
+
+class LeadershipNoteStatus(StrEnum):
+    open = "open"
+    acknowledged = "acknowledged"
+    resolved = "resolved"
