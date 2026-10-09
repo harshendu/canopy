@@ -12,9 +12,13 @@ Five initiatives mirror the product portfolio:
   * **Dev Agents** — internal agents for monitoring, remediation, on-call support and developer
     productivity.
 
-Instead of a single architect, a cross-functional **core team of project leads** — a technical
-lead, a product lead and a UX lead — jointly plays the "architect" role (each holds the
-``architect`` role with a different ``function``). Ten projects (two per initiative) are fully
+There is no single architect. **Each initiative is led by its own core team** — a technical
+lead, a product lead and a UX lead (each an ``architect``-role login with a different
+``function``) — and an **executive team** (CEO / CTO / Head of Talent, ``viewer`` logins with
+the ``leadership`` function) sits above all five. canopy gives the lead teams lateral
+visibility and coordination across initiatives (shared decision queue, cross-initiative
+dependencies, one team view), while the executives get the portfolio and initiative roll-ups.
+Ten projects (two per initiative) are fully
 populated: a scheduled WBS with cross-project hand-offs, ADRs with review threads and fitness
 functions, drift, specs, risks, outcomes, docs, blockers, retros, draft plans and a what-if
 scenario per initiative. Pure data; the generic loader turns it into rows.
@@ -66,18 +70,36 @@ from app.services.seed.catalog import (
 # --------------------------------------------------------------------------- #
 USERS: tuple[DemoUser, ...] = (
     DemoUser("admin@northstar.ai", "Rowan Ellis", UserRole.admin, UserFunction.management),
+    # The executive team — sees everything, writes nothing.
+    DemoUser("ceo@northstar.ai", "Victor Alvarez", UserRole.viewer, UserFunction.leadership),
     DemoUser("cto@northstar.ai", "Maya Lindqvist", UserRole.viewer, UserFunction.leadership),
-    # The core team: three project leads who jointly hold the architect role.
-    DemoUser("tech@northstar.ai", "Priya Raman", UserRole.architect, UserFunction.engineering),
-    DemoUser("product@northstar.ai", "Daniel Reyes", UserRole.architect, UserFunction.product),
-    DemoUser("ux@northstar.ai", "Mei Nakamura", UserRole.architect, UserFunction.design),
+    DemoUser("talent@northstar.ai", "Grace Tan", UserRole.viewer, UserFunction.leadership),
+    # Each initiative's core team: a technical, a product and a UX lead (architect role).
+    DemoUser("priya@northstar.ai", "Priya Raman", UserRole.architect, UserFunction.engineering),
+    DemoUser("daniel@northstar.ai", "Daniel Reyes", UserRole.architect, UserFunction.product),
+    DemoUser("mei@northstar.ai", "Mei Nakamura", UserRole.architect, UserFunction.design),
+    DemoUser("rafael@northstar.ai", "Rafael Costa", UserRole.architect,
+             UserFunction.engineering),
+    DemoUser("hannah@northstar.ai", "Hannah Weiss", UserRole.architect, UserFunction.product),
+    DemoUser("jun@northstar.ai", "Jun Park", UserRole.architect, UserFunction.design),
+    DemoUser("amara@northstar.ai", "Amara Okafor", UserRole.architect,
+             UserFunction.engineering),
+    DemoUser("lucas@northstar.ai", "Lucas Moreau", UserRole.architect, UserFunction.product),
+    DemoUser("sofia@northstar.ai", "Sofia Lind", UserRole.architect, UserFunction.design),
+    DemoUser("ethan@northstar.ai", "Ethan Brooks", UserRole.architect,
+             UserFunction.engineering),
+    DemoUser("nadia@northstar.ai", "Nadia Hassan", UserRole.architect, UserFunction.product),
+    DemoUser("theo@northstar.ai", "Theo Lambert", UserRole.architect, UserFunction.design),
+    DemoUser("ivy@northstar.ai", "Ivy Chen", UserRole.architect, UserFunction.engineering),
+    DemoUser("marcus@northstar.ai", "Marcus Dube", UserRole.architect, UserFunction.product),
+    DemoUser("elena@northstar.ai", "Elena Petrova", UserRole.architect, UserFunction.design),
+    # Delivery organisation.
     DemoUser("em@northstar.ai", "Jonah Fields", UserRole.engineering_manager,
              UserFunction.management),
     DemoUser("leila@northstar.ai", "Leila Haddad", UserRole.engineer, UserFunction.engineering),
     DemoUser("tomas@northstar.ai", "Tomás Silva", UserRole.engineer, UserFunction.engineering),
     DemoUser("ananya@northstar.ai", "Ananya Bose", UserRole.engineer, UserFunction.engineering),
     DemoUser("chris@northstar.ai", "Chris Walker", UserRole.engineer, UserFunction.engineering),
-    DemoUser("talent@northstar.ai", "Grace Tan", UserRole.viewer, UserFunction.product),
     DemoUser("noor@northstar.ai", "Noor Abadi", UserRole.member, UserFunction.engineering),
 )
 
@@ -87,16 +109,58 @@ TEAM_ROLES: tuple[str, ...] = (
 )
 
 ENGINEERS: tuple[DemoEngineer, ...] = (
-    DemoEngineer("Priya Raman", "Technical Lead (core team)",
-                 ("architecture", "agents", "distributed-systems"), "America/New_York", 30,
-                 "priyaraman", "Core Team", "tech@northstar.ai"),
-    DemoEngineer("Daniel Reyes", "Product Lead (core team)",
+    # AI Interviewer leads
+    DemoEngineer("Priya Raman", "Technical Lead, AI Interviewer",
+                 ("architecture", "agents", "realtime"), "America/New_York", 30,
+                 "priyaraman", "Core Team", "priya@northstar.ai"),
+    DemoEngineer("Daniel Reyes", "Product Lead, AI Interviewer",
                  ("product", "recruiting", "roadmap"), "America/Chicago", 30, "danielreyes",
-                 "Core Team", "product@northstar.ai"),
-    DemoEngineer("Mei Nakamura", "UX Lead (core team)",
+                 "Core Team", "daniel@northstar.ai"),
+    DemoEngineer("Mei Nakamura", "UX Lead, AI Interviewer",
                  ("ux", "research", "conversation-design"), "America/Los_Angeles", 30,
-                 "meinakamura", "Core Team", "ux@northstar.ai"),
-    DemoEngineer("Jonah Fields", "Engineering Manager",
+                 "meinakamura", "Core Team", "mei@northstar.ai"),
+    # Talent Pilot leads
+    DemoEngineer("Rafael Costa", "Technical Lead, Talent Pilot",
+                 ("architecture", "integrations", "backend"), "America/Sao_Paulo", 30,
+                 "rafaelcosta", "Core Team", "rafael@northstar.ai"),
+    DemoEngineer("Hannah Weiss", "Product Lead, Talent Pilot",
+                 ("product", "recruiting", "workflows"), "Europe/Berlin", 30, "hannahweiss",
+                 "Core Team", "hannah@northstar.ai"),
+    DemoEngineer("Jun Park", "UX Lead, Talent Pilot",
+                 ("ux", "research", "enterprise"), "Asia/Seoul", 30, "junpark",
+                 "Core Team", "jun@northstar.ai"),
+    # Talent Forge leads
+    DemoEngineer("Amara Okafor", "Technical Lead, Talent Forge",
+                 ("architecture", "platform", "multi-tenant"), "Europe/London", 30,
+                 "amaraokafor", "Core Team", "amara@northstar.ai"),
+    DemoEngineer("Lucas Moreau", "Product Lead, Talent Forge",
+                 ("product", "platform", "partners"), "Europe/Paris", 30, "lucasmoreau",
+                 "Core Team", "lucas@northstar.ai"),
+    DemoEngineer("Sofia Lind", "UX Lead, Talent Forge",
+                 ("ux", "design-systems", "builder"), "Europe/Stockholm", 30, "sofialind",
+                 "Core Team", "sofia@northstar.ai"),
+    # Agent Builder leads
+    DemoEngineer("Ethan Brooks", "Technical Lead, Agent Builder",
+                 ("architecture", "runtime", "distributed-systems"), "America/Denver", 30,
+                 "ethanbrooks", "Core Team", "ethan@northstar.ai"),
+    DemoEngineer("Nadia Hassan", "Product Lead, Agent Builder",
+                 ("product", "platform", "developer-experience"), "Europe/Amsterdam", 30,
+                 "nadiahassan", "Core Team", "nadia@northstar.ai"),
+    DemoEngineer("Theo Lambert", "UX Lead, Agent Builder",
+                 ("ux", "developer-tools", "research"), "Europe/Paris", 30, "theolambert",
+                 "Core Team", "theo@northstar.ai"),
+    # Dev Agents leads
+    DemoEngineer("Ivy Chen", "Technical Lead, Dev Agents",
+                 ("architecture", "sre", "observability"), "America/Vancouver", 30, "ivychen",
+                 "Core Team", "ivy@northstar.ai"),
+    DemoEngineer("Marcus Dube", "Product Lead, Dev Agents",
+                 ("product", "internal-tools", "developer-experience"), "Africa/Johannesburg",
+                 30, "marcusdube", "Core Team", "marcus@northstar.ai"),
+    DemoEngineer("Elena Petrova", "UX Lead, Dev Agents",
+                 ("ux", "developer-tools", "research"), "Europe/Sofia", 30, "elenapetrova",
+                 "Core Team", "elena@northstar.ai"),
+    # Delivery team
+    DemoEngineer("Jonah Fields", "VP Engineering",
                  ("management", "backend"), "Europe/London", 20, "jonahfields",
                  "Management", "em@northstar.ai"),
     DemoEngineer("Leila Haddad", "Realtime Engineer",
@@ -140,19 +204,33 @@ AVAILABILITY: tuple[DemoAvailability, ...] = (
 
 # Engineer-to-project allocations (Leila and Tomás span projects → over-allocation alerts).
 ALLOCATIONS: tuple[tuple[str, str, float], ...] = (
+    # Agent Builder
+    ("Ethan Brooks", "RUNTIME", 30), ("Nadia Hassan", "RUNTIME", 20),
+    ("Ethan Brooks", "GATEWAY", 30), ("Theo Lambert", "GATEWAY", 20),
     ("Tomás Silva", "RUNTIME", 50), ("Olivia Grant", "RUNTIME", 40),
     ("Ananya Bose", "GATEWAY", 60), ("Yara Cohen", "GATEWAY", 20),
+    # AI Interviewer (Leila and Tomás span projects → over-allocation alerts)
+    ("Priya Raman", "SESSION", 30), ("Mei Nakamura", "SESSION", 20),
+    ("Priya Raman", "INTERVIEW", 30), ("Daniel Reyes", "INTERVIEW", 30),
+    ("Mei Nakamura", "INTERVIEW", 30),
     ("Leila Haddad", "SESSION", 70), ("Yara Cohen", "SESSION", 30),
     ("Leila Haddad", "INTERVIEW", 50), ("Tomás Silva", "INTERVIEW", 30),
     ("Ananya Bose", "INTERVIEW", 40), ("Chris Walker", "INTERVIEW", 30),
-    ("Noor Abadi", "INTERVIEW", 40), ("Priya Raman", "INTERVIEW", 30),
-    ("Mei Nakamura", "INTERVIEW", 30), ("Olivia Grant", "INTERVIEW", 20),
+    ("Noor Abadi", "INTERVIEW", 40), ("Olivia Grant", "INTERVIEW", 20),
+    # Talent Pilot
+    ("Rafael Costa", "ATSHUB", 30), ("Hannah Weiss", "ATSHUB", 20),
+    ("Rafael Costa", "COPILOT", 30), ("Hannah Weiss", "COPILOT", 30), ("Jun Park", "COPILOT", 30),
     ("Kenji Mori", "ATSHUB", 70), ("Olivia Grant", "ATSHUB", 40),
     ("Tomás Silva", "COPILOT", 30), ("Kenji Mori", "COPILOT", 30),
-    ("Chris Walker", "COPILOT", 20), ("Daniel Reyes", "COPILOT", 30),
-    ("Chris Walker", "STUDIO", 60), ("Mei Nakamura", "STUDIO", 30),
-    ("Noor Abadi", "STUDIO", 30),
+    ("Chris Walker", "COPILOT", 20),
+    # Talent Forge
+    ("Amara Okafor", "STUDIO", 30), ("Lucas Moreau", "STUDIO", 30), ("Sofia Lind", "STUDIO", 30),
+    ("Amara Okafor", "DEPLOY", 30), ("Lucas Moreau", "DEPLOY", 20),
+    ("Chris Walker", "STUDIO", 60), ("Noor Abadi", "STUDIO", 30),
     ("Sam Okoro", "DEPLOY", 50), ("Yara Cohen", "DEPLOY", 40),
+    # Dev Agents
+    ("Ivy Chen", "ONCALL", 30), ("Marcus Dube", "ONCALL", 20),
+    ("Ivy Chen", "DEVPROD", 30), ("Marcus Dube", "DEVPROD", 20), ("Elena Petrova", "DEVPROD", 30),
     ("Sam Okoro", "ONCALL", 50), ("Tomás Silva", "ONCALL", 20),
     ("Noor Abadi", "DEVPROD", 30),
 )
@@ -166,7 +244,7 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
         "INTERVIEWER", "AI Interviewer",
         "Run structured voice and video screening interviews with an AI agent, at a candidate "
         "satisfaction level on par with human screens.",
-        18, "Leila Haddad", ("voice", "video", "conversation"), "at_risk",
+        18, "Priya Raman", ("voice", "video", "conversation"), "at_risk",
         "The session service is stable; the orchestrator's turn-taking integration is the "
         "critical path and currently at risk.",
         outcomes=(
@@ -189,12 +267,12 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
         "PILOT", "Talent Pilot",
         "Give every recruiter an integrated agent harness that handles sourcing, screening "
         "and scheduling inside the tools they already use.",
-        16, "Kenji Mori", ("recruiting", "copilot", "integrations"), "on_track",
+        16, "Rafael Costa", ("recruiting", "copilot", "integrations"), "on_track",
         "The ATS integration hub is live with two vendors; the copilot's scheduling flows are "
         "in build.",
         outcomes=(
             OutcomeSpec("Recruiter hours saved per hire", "hours saved per hire", "h",
-                        0.0, 10.0, 6.0, "on_track", "Daniel Reyes"),
+                        0.0, 10.0, 6.0, "on_track", "Hannah Weiss"),
             OutcomeSpec("Faster time to first screen", "days from req to first screen", "days",
                         9.0, 2.0, 4.0, "on_track", "Kenji Mori"),
         ),
@@ -212,18 +290,18 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
         "FORGE", "Talent Forge",
         "Let customers build and deploy fully customizable agent applications on the platform "
         "without engineering involvement.",
-        20, "Chris Walker", ("builder", "low-code", "deployment"), "on_track",
+        20, "Amara Okafor", ("builder", "low-code", "deployment"), "on_track",
         "The Studio designer is in private beta; the multi-tenant deploy pipeline is the long "
         "pole.",
         outcomes=(
             OutcomeSpec("Apps built without engineering help", "share of apps self-built", "%",
-                        0.0, 80.0, 45.0, "on_track", "Mei Nakamura"),
+                        0.0, 80.0, 45.0, "on_track", "Sofia Lind"),
             OutcomeSpec("Faster deploys", "minutes from publish to live", "min",
                         90.0, 10.0, 35.0, "on_track", "Sam Okoro"),
         ),
         risks=(
             RiskSpec("Customization surface outgrows the guardrails", "scope", "medium", "high",
-                     "mitigating", "Priya Raman",
+                     "mitigating", "Amara Okafor",
                      "Ship a constrained template set first; expand with design partners."),
         ),
     ),
@@ -231,7 +309,7 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
         "BUILDER", "Agent Builder",
         "Provide one runtime engine that every agent in the company runs on, with evaluation "
         "and guardrails built in.",
-        14, "Tomás Silva", ("runtime", "platform", "evals"), "on_track",
+        14, "Ethan Brooks", ("runtime", "platform", "evals"), "on_track",
         "The runtime core is generally available for internal agents; model-gateway routing "
         "and the eval harness are landing.",
         outcomes=(
@@ -254,14 +332,14 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
         "DEVAGENTS", "Dev Agents",
         "Reduce on-call load and raise developer throughput with internal agents for "
         "monitoring, remediation and code review.",
-        12, "Sam Okoro", ("internal", "on-call", "productivity"), "on_track",
+        12, "Ivy Chen", ("internal", "on-call", "productivity"), "on_track",
         "The monitoring agent triages alerts in production; the productivity agents are in "
         "early rollout.",
         outcomes=(
             OutcomeSpec("Alerts auto-triaged", "share of alerts triaged by the agent", "%",
                         0.0, 70.0, 40.0, "on_track", "Sam Okoro"),
             OutcomeSpec("Faster PR review turnaround", "hours to first review", "h",
-                        26.0, 8.0, 14.0, "on_track", "Priya Raman"),
+                        26.0, 8.0, 14.0, "on_track", "Ivy Chen"),
         ),
         risks=(
             RiskSpec("Agent-suggested remediations applied without review", "security", "low",
@@ -284,7 +362,7 @@ _RUNTIME = ProjectSpec(
     ("runtime", "platform", "backend"),
     phases=(
         PhaseSpec("Design", (
-            TaskSpec("Runtime architecture", 3, "Done", 50, "Priya Raman", ("architecture",)),
+            TaskSpec("Runtime architecture", 3, "Done", 50, "Ethan Brooks", ("architecture",)),
             TaskSpec("Tool-calling contract", 4, "Done", 40, "Tomás Silva", ("design",),
                      (3, 4, 7)),
         )),
@@ -326,7 +404,7 @@ _RUNTIME = ProjectSpec(
     bindings=(BindingSpec("orchestrator", "runtime/orchestrator/**", "northstar.runtime"),),
     adrs=(
         ADRSpec("Tools run sandboxed and never call models directly", "accepted", "one_way",
-                "Priya Raman", "Tomás Silva",
+                "Ethan Brooks", "Tomás Silva",
                 "Tools that reach a model on their own bypass guardrails, metering and evals.",
                 "All model calls go through the orchestrator; tools are pure functions over "
                 "their inputs.",
@@ -341,11 +419,11 @@ _RUNTIME = ProjectSpec(
                 "Proposed: relational store with embedded summaries; a vector index only for "
                 "long-tail recall.",
                 components=("memory-store",),
-                stakeholders=("Olivia Grant", "Tomás Silva", "Priya Raman"),
+                stakeholders=("Olivia Grant", "Tomás Silva", "Ethan Brooks"),
                 comments=(
                     ADRCommentSpec("Tomás Silva", "Relational keeps retention policies simple.",
                                    "approve"),
-                    ADRCommentSpec("Priya Raman", "Please specify the retention window before "
+                    ADRCommentSpec("Ethan Brooks", "Please specify the retention window before "
                                    "we accept.", "request_changes"),
                     ADRCommentSpec("Ananya Bose", "Recall quality should be part of the eval "
                                    "suite.", "comment"),
@@ -407,7 +485,7 @@ _RUNTIME = ProjectSpec(
                     "## Actions\n- Agree cross-team contracts at design sign-off.",
                     ("orchestrator",),
                     (RetroCommentSpec("Tomás Silva", "The contract-first approach paid off."),
-                     RetroCommentSpec("Priya Raman", "Let us lock hand-off contracts at "
+                     RetroCommentSpec("Ethan Brooks", "Let us lock hand-off contracts at "
                                       "design sign-off next time."))),
     deploy_weeks=10,
 )
@@ -460,7 +538,7 @@ _GATEWAY = ProjectSpec(
     bindings=(BindingSpec("router", "gateway/router/**", "northstar.gateway"),),
     adrs=(
         ADRSpec("Every model call is metered through the gateway", "accepted", "one_way",
-                "Priya Raman", "Ananya Bose",
+                "Ethan Brooks", "Ananya Bose",
                 "Cost attribution and rate control require one chokepoint for model traffic.",
                 "The gateway API records every call in the usage ledger before routing it.",
                 "Accurate cost per agent; the ledger becomes a critical dependency.",
@@ -473,11 +551,11 @@ _GATEWAY = ProjectSpec(
                 "Outages at a single provider must not take agents down.",
                 "Proposed: quality-ranked primary with a latency-ranked fallback per task class.",
                 components=("router",),
-                stakeholders=("Ananya Bose", "Tomás Silva", "Daniel Reyes"),
+                stakeholders=("Ananya Bose", "Tomás Silva", "Nadia Hassan"),
                 comments=(
                     ADRCommentSpec("Tomás Silva", "Task-class routing matches how agents are "
                                    "built.", "approve"),
-                    ADRCommentSpec("Daniel Reyes", "Please include a cost ceiling per class.",
+                    ADRCommentSpec("Nadia Hassan", "Please include a cost ceiling per class.",
                                    "request_changes"),
                 ),
                 created_days_ago=8),
@@ -932,7 +1010,7 @@ _ATSHUB = ProjectSpec(
     bindings=(BindingSpec("connector-framework", "hub/connectors/**", "northstar.hub"),),
     adrs=(
         ADRSpec("Candidate data is normalised once; the API never calls a vendor directly",
-                "accepted", "one_way", "Priya Raman", "Kenji Mori",
+                "accepted", "one_way", "Rafael Costa", "Kenji Mori",
                 "Vendor schemas differ and change; consumers must not inherit that churn.",
                 "All reads go through the normalised candidate store; only the connector "
                 "framework talks to vendors.",
@@ -946,15 +1024,15 @@ _ATSHUB = ProjectSpec(
                 "Webhooks are fresher but not every vendor offers them reliably.",
                 "Proposed: webhooks where available, with polling as a reconciliation pass.",
                 components=("sync-worker",),
-                stakeholders=("Kenji Mori", "Olivia Grant", "Daniel Reyes"),
+                stakeholders=("Kenji Mori", "Olivia Grant", "Hannah Weiss"),
                 comments=(
                     ADRCommentSpec("Olivia Grant", "Reconciliation keeps us honest when a "
                                    "webhook is lost.", "approve"),
-                    ADRCommentSpec("Daniel Reyes", "Please quantify freshness per vendor.",
+                    ADRCommentSpec("Hannah Weiss", "Please quantify freshness per vendor.",
                                    "request_changes"),
                 ),
                 created_days_ago=9),
-        ADRSpec("Workday priority", "deferred", owner="Daniel Reyes",
+        ADRSpec("Workday priority", "deferred", owner="Hannah Weiss",
                 context="Two enterprise prospects require Workday; the connector is the "
                         "largest single item on the plan.",
                 created_days_ago=18, decide_by_weeks=-1),
@@ -1016,8 +1094,8 @@ _COPILOT = ProjectSpec(
     ("recruiting", "copilot", "frontend"),
     phases=(
         PhaseSpec("Design", (
-            TaskSpec("Recruiter journey map", 4, "Done", 36, "Mei Nakamura", ("design",)),
-            TaskSpec("Copilot architecture", 3, "Done", 30, "Priya Raman", ("architecture",)),
+            TaskSpec("Recruiter journey map", 4, "Done", 36, "Jun Park", ("design",)),
+            TaskSpec("Copilot architecture", 3, "Done", 30, "Rafael Costa", ("architecture",)),
         )),
         PhaseSpec("Build", (
             TaskSpec("Consume candidate sync", 3, "In Progress", 6, "Tomás Silva",
@@ -1054,7 +1132,7 @@ _COPILOT = ProjectSpec(
     bindings=(BindingSpec("recruiter-agent", "copilot/agent/**", "northstar.copilot"),),
     adrs=(
         ADRSpec("The copilot drafts; the recruiter sends", "accepted", "one_way",
-                "Priya Raman", "Daniel Reyes",
+                "Rafael Costa", "Hannah Weiss",
                 "Recruiters must stay accountable for every candidate-facing message.",
                 "Outreach and scheduling are drafted by the agent and sent only after the "
                 "recruiter confirms; only the scheduling agent may write to calendars.",
@@ -1065,19 +1143,19 @@ _COPILOT = ProjectSpec(
                                     "may write to calendars."),
                 created_days_ago=28),
         ADRSpec("Where the copilot lives: ATS sidebar vs standalone app", "under_discussion",
-                "two_way", "Mei Nakamura", "Mei Nakamura",
+                "two_way", "Jun Park", "Jun Park",
                 "Recruiters resist leaving the ATS; a sidebar limits what we can show.",
                 "Proposed: ATS sidebar first, with a standalone review surface for summaries.",
                 components=("copilot-api",),
-                stakeholders=("Mei Nakamura", "Daniel Reyes", "Chris Walker"),
+                stakeholders=("Jun Park", "Hannah Weiss", "Chris Walker"),
                 comments=(
-                    ADRCommentSpec("Daniel Reyes", "Sidebar first matches the pilot "
+                    ADRCommentSpec("Hannah Weiss", "Sidebar first matches the pilot "
                                    "recruiters' feedback.", "approve"),
                     ADRCommentSpec("Chris Walker", "We should scope the sidebar's data "
                                    "access carefully.", "comment"),
                 ),
                 created_days_ago=12),
-        ADRSpec("Outreach personalisation depth", "deferred", owner="Daniel Reyes",
+        ADRSpec("Outreach personalisation depth", "deferred", owner="Hannah Weiss",
                 context="Deeper personalisation raises response rates and compliance "
                         "questions in equal measure.",
                 created_days_ago=6, decide_by_weeks=3),
@@ -1092,7 +1170,7 @@ _COPILOT = ProjectSpec(
         SpecSpec("Recruiter in the loop",
                  "No candidate-facing action happens without an explicit recruiter "
                  "confirmation.",
-                 "approved", "Daniel Reyes",
+                 "approved", "Hannah Weiss",
                  adr_title="The copilot drafts; the recruiter sends",
                  criteria=(
                      CriterionSpec("Every outbound message shows a confirmation step.", "met",
@@ -1109,7 +1187,7 @@ _COPILOT = ProjectSpec(
                  "mitigating", "Ananya Bose", "Evidence-linked summaries; eval on labelled "
                  "set."),
         RiskSpec("Pilot recruiters churn before GA", "resource", "low", "medium", "open",
-                 "Daniel Reyes", "Weekly office hours with the pilot group."),
+                 "Hannah Weiss", "Weekly office hours with the pilot group."),
     ),
     outcomes=(
         OutcomeSpec("Summary acceptance rate", "share of summaries used as-is", "%",
@@ -1130,7 +1208,7 @@ _COPILOT = ProjectSpec(
                     "## Improve\n- Involve engineering in the research sessions.\n\n"
                     "## Actions\n- One engineer attends every research session.",
                     ("recruiter-agent",),
-                    (RetroCommentSpec("Mei Nakamura", "Research changed the plan for the "
+                    (RetroCommentSpec("Jun Park", "Research changed the plan for the "
                                       "better."),)),
     draft=DraftSpec("Scheduling agent plan", "Proposed breakdown of the scheduling agent.",
                     "Scheduling",
@@ -1153,9 +1231,9 @@ _STUDIO = ProjectSpec(
     ("builder", "frontend", "low-code"),
     phases=(
         PhaseSpec("Design", (
-            TaskSpec("Studio information architecture", 4, "Done", 44, "Mei Nakamura",
+            TaskSpec("Studio information architecture", 4, "Done", 44, "Sofia Lind",
                      ("design",)),
-            TaskSpec("Bundle format ADR", 3, "Done", 38, "Priya Raman", ("architecture",)),
+            TaskSpec("Bundle format ADR", 3, "Done", 38, "Amara Okafor", ("architecture",)),
         )),
         PhaseSpec("Build", (
             TaskSpec("Flow designer canvas", 6, "Done", 22, "Chris Walker", ("frontend",),
@@ -1164,7 +1242,7 @@ _STUDIO = ProjectSpec(
             TaskSpec("Live preview sandbox", 5, "In Progress", 7, "Tomás Silva",
                      ("backend",), (4, 5, 9)),
             TaskSpec("Publish app bundle", 3, "To Do", 0, "Chris Walker", ("backend",)),
-            TaskSpec("Theming & branding", 3, "To Do", 0, "Mei Nakamura", ("design",)),
+            TaskSpec("Theming & branding", 3, "To Do", 0, "Sofia Lind", ("design",)),
         )),
         PhaseSpec("Rollout", (
             TaskSpec("Design-partner beta", 4, "To Do", 0, "Noor Abadi", ("qa",)),
@@ -1193,7 +1271,7 @@ _STUDIO = ProjectSpec(
     bindings=(BindingSpec("designer-service", "studio/designer/**", "northstar.studio"),),
     adrs=(
         ADRSpec("Previews run in an isolated sandbox and never publish", "accepted", "one_way",
-                "Priya Raman", "Tomás Silva",
+                "Amara Okafor", "Tomás Silva",
                 "A preview that can publish is a path from an unreviewed draft to production.",
                 "The preview sandbox has no production data and no write path to the bundle "
                 "registry; publishing is an explicit designer action.",
@@ -1208,15 +1286,15 @@ _STUDIO = ProjectSpec(
                 "The designer needs custom edge semantics the off-the-shelf canvas lacks.",
                 "Proposed: keep React Flow and extend with custom edge renderers.",
                 components=("studio-ui",),
-                stakeholders=("Chris Walker", "Mei Nakamura", "Priya Raman"),
+                stakeholders=("Chris Walker", "Sofia Lind", "Amara Okafor"),
                 comments=(
-                    ADRCommentSpec("Mei Nakamura", "The custom edges cover the interaction "
+                    ADRCommentSpec("Sofia Lind", "The custom edges cover the interaction "
                                    "patterns from research.", "approve"),
-                    ADRCommentSpec("Priya Raman", "Fine, provided we keep the upgrade path.",
+                    ADRCommentSpec("Amara Okafor", "Fine, provided we keep the upgrade path.",
                                    "comment"),
                 ),
                 created_days_ago=7),
-        ADRSpec("Template marketplace", "deferred", owner="Daniel Reyes",
+        ADRSpec("Template marketplace", "deferred", owner="Lucas Moreau",
                 context="Partners want to share templates; moderation and licensing are open "
                         "questions.",
                 created_days_ago=5, decide_by_weeks=4),
@@ -1229,7 +1307,7 @@ _STUDIO = ProjectSpec(
     specs=(
         SpecSpec("Builder usability",
                  "A non-engineer can publish a working application in under thirty minutes.",
-                 "in_progress", "Mei Nakamura",
+                 "in_progress", "Sofia Lind",
                  criteria=(
                      CriterionSpec("A new user completes the template flow unaided.", "met",
                                    "4 of 5 usability participants succeeded."),
@@ -1246,7 +1324,7 @@ _STUDIO = ProjectSpec(
     ),
     outcomes=(
         OutcomeSpec("Time to first published app", "median minutes", "min",
-                    120.0, 30.0, 55.0, "on_track", "Mei Nakamura"),
+                    120.0, 30.0, 55.0, "on_track", "Sofia Lind"),
     ),
     docs=(
         DocSpec("design", "Studio design system (Figma)",
@@ -1279,7 +1357,7 @@ _DEPLOY = ProjectSpec(
     phases=(
         PhaseSpec("Design", (
             TaskSpec("Deploy architecture", 3, "Done", 34, "Sam Okoro", ("architecture",)),
-            TaskSpec("Tenancy model ADR", 3, "Done", 28, "Priya Raman", ("architecture",)),
+            TaskSpec("Tenancy model ADR", 3, "Done", 28, "Amara Okafor", ("architecture",)),
         )),
         PhaseSpec("Build", (
             TaskSpec("Consume app bundles", 4, "In Progress", 8, "Sam Okoro", ("infra",)),
@@ -1315,7 +1393,7 @@ _DEPLOY = ProjectSpec(
     bindings=(BindingSpec("deploy-controller", "deploy/controller/**", "northstar.deploy"),),
     adrs=(
         ADRSpec("Tenant applications run isolated and never read the vault", "accepted",
-                "one_way", "Priya Raman", "Yara Cohen",
+                "one_way", "Amara Okafor", "Yara Cohen",
                 "Customer-built applications are untrusted code from the platform's point of "
                 "view.",
                 "Each tenant app runs in its own runtime with secrets injected by the "
@@ -1330,11 +1408,11 @@ _DEPLOY = ProjectSpec(
                 "Customer apps need safe upgrades without a maintenance window.",
                 "Proposed: canary per tenant with automatic rollback on error rate.",
                 components=("deploy-controller",),
-                stakeholders=("Sam Okoro", "Priya Raman", "Noor Abadi"),
+                stakeholders=("Sam Okoro", "Amara Okafor", "Noor Abadi"),
                 comments=(
                     ADRCommentSpec("Noor Abadi", "Canary gives us a real signal before "
                                    "full rollout.", "approve"),
-                    ADRCommentSpec("Priya Raman", "Define the rollback trigger thresholds.",
+                    ADRCommentSpec("Amara Okafor", "Define the rollback trigger thresholds.",
                                    "request_changes"),
                 ),
                 created_days_ago=8),
@@ -1364,13 +1442,13 @@ _DEPLOY = ProjectSpec(
     ),
     risks=(
         RiskSpec("Deploy GA slips the Forge launch", "schedule", "high", "high", "open",
-                 "Daniel Reyes", "Descope custom domains from GA.", target_weeks=-1),
+                 "Lucas Moreau", "Descope custom domains from GA.", target_weeks=-1),
         RiskSpec("Isolation review finds a blocking issue", "security", "medium", "high",
                  "mitigating", "Yara Cohen", "Review in two passes; fix as we go."),
     ),
     mitigations=(
         MitigationSpec("deadline_violations", "Proposing to descope custom domains from GA.",
-                       "Daniel Reyes", False, 1),
+                       "Lucas Moreau", False, 1),
     ),
     outcomes=(
         OutcomeSpec("Deploy success rate", "share of deploys without rollback", "%",
@@ -1450,7 +1528,7 @@ _ONCALL = ProjectSpec(
     bindings=(BindingSpec("triage-agent", "devagents/oncall/**", "northstar.oncall"),),
     adrs=(
         ADRSpec("Remediations require human approval before touching production",
-                "accepted", "one_way", "Priya Raman", "Yara Cohen",
+                "accepted", "one_way", "Ivy Chen", "Yara Cohen",
                 "An agent acting on production without review can turn a minor alert into "
                 "an outage.",
                 "Only the runbook executor may change production, and only after an on-call "
@@ -1538,9 +1616,9 @@ _DEVPROD = ProjectSpec(
     ("internal", "productivity", "developer-experience"),
     phases=(
         PhaseSpec("Design", (
-            TaskSpec("Productivity agent portfolio", 3, "Done", 32, "Priya Raman",
+            TaskSpec("Productivity agent portfolio", 3, "Done", 32, "Ivy Chen",
                      ("design",)),
-            TaskSpec("Review agent guidelines", 2, "Done", 26, "Priya Raman", ("design",)),
+            TaskSpec("Review agent guidelines", 2, "Done", 26, "Ivy Chen", ("design",)),
         )),
         PhaseSpec("Build", (
             TaskSpec("PR review agent", 5, "Done", 14, "Tomás Silva", ("backend",),
@@ -1577,7 +1655,7 @@ _DEVPROD = ProjectSpec(
     bindings=(BindingSpec("review-agent", "devagents/review/**", "northstar.review"),),
     adrs=(
         ADRSpec("Agents comment and propose; merging remains a human action", "accepted",
-                "one_way", "Priya Raman", "Priya Raman",
+                "one_way", "Ivy Chen", "Ivy Chen",
                 "Review agents are advisory; a human owns what ships.",
                 "The review agent may comment, suggest and open pull requests, but it never "
                 "merges.",
@@ -1586,13 +1664,13 @@ _DEVPROD = ProjectSpec(
                 fitness=FitnessSpec("forbid", "review-agent", "merge-gate",
                                     "The review agent must not call the merge gate."),
                 created_days_ago=24),
-        ADRSpec("Review agent tone and scope", "under_discussion", "two_way", "Mei Nakamura",
-                "Mei Nakamura",
+        ADRSpec("Review agent tone and scope", "under_discussion", "two_way", "Elena Petrova",
+                "Elena Petrova",
                 "Early feedback: the agent is thorough but reads as abrupt.",
                 "Proposed: lead with the one blocking finding; everything else as a "
                 "collapsed list.",
                 components=("review-agent",),
-                stakeholders=("Mei Nakamura", "Tomás Silva", "Jonah Fields"),
+                stakeholders=("Elena Petrova", "Tomás Silva", "Jonah Fields"),
                 comments=(
                     ADRCommentSpec("Jonah Fields", "Fewer, better comments will land "
                                    "better with the team.", "approve"),
@@ -1613,7 +1691,7 @@ _DEVPROD = ProjectSpec(
     specs=(
         SpecSpec("Useful, humane code review",
                  "Engineers act on the agent's findings and do not mute it.",
-                 "approved", "Mei Nakamura",
+                 "approved", "Elena Petrova",
                  adr_title="Review agent tone and scope",
                  criteria=(
                      CriterionSpec("At least half of findings are resolved by the author.",
@@ -1625,11 +1703,11 @@ _DEVPROD = ProjectSpec(
     ),
     risks=(
         RiskSpec("Noisy findings erode trust", "quality", "medium", "medium", "mitigating",
-                 "Mei Nakamura", "Confidence ranking; cap comments per PR."),
+                 "Elena Petrova", "Confidence ranking; cap comments per PR."),
     ),
     outcomes=(
         OutcomeSpec("Findings acted on", "share of findings resolved", "%",
-                    30.0, 70.0, 58.0, "on_track", "Priya Raman"),
+                    30.0, 70.0, 58.0, "on_track", "Ivy Chen"),
     ),
     docs=(
         DocSpec("other", "Review agent guidelines",
@@ -1761,8 +1839,8 @@ AGENTIC = Dataset(
     key="agentic",
     name="Northstar — agentic talent platform",
     description="AI Interviewer, Talent Pilot, Talent Forge, Agent Builder and Dev Agents "
-                "(5 initiatives, 10 projects) run by a cross-functional core team of project "
-                "leads.",
+                "(5 initiatives, 10 projects), each led by its own core team of leads under "
+                "one executive team.",
     users=USERS, team_roles=TEAM_ROLES, engineers=ENGINEERS, availability=AVAILABILITY,
     allocations=ALLOCATIONS, initiatives=INITIATIVES, projects=PROJECTS,
     cross_project_handoffs=CROSS_PROJECT_HANDOFFS, scenarios=SCENARIOS,

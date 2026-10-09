@@ -245,8 +245,14 @@ async def test_agentic_dataset_loads_with_the_same_depth(db_session):
     assert counts["connections"] == 3
     assert counts["users"] >= 12
 
-    # The core team: three architect-role logins across engineering / product / design.
+    # Each initiative has its own lead trio (architect role across engineering / product /
+    # design), and an executive layer reads everything as leadership viewers.
     leads = (
         await db_session.execute(select(User).where(User.role == UserRole.architect))
     ).scalars().all()
-    assert {u.function.value for u in leads} >= {"engineering", "product", "design"}
+    assert len(leads) == 3 * counts["initiatives"]
+    assert {u.function.value for u in leads} == {"engineering", "product", "design"}
+    execs = (
+        await db_session.execute(select(User).where(User.role == UserRole.viewer))
+    ).scalars().all()
+    assert any(u.function.value == "leadership" for u in execs)

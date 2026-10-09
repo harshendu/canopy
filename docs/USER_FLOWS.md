@@ -1881,10 +1881,13 @@ init). **Northstar** is a talent-technology company building agentic products �
 (**AI Interviewer** — voice/video sessions between an AI agent and a human; **Talent Pilot** — an
 integrated agent harness for recruiters; **Talent Forge** — an agent harness to build and deploy
 fully customizable applications; **Agent Builder** — the runtime engine behind every agent;
-**Dev Agents** — internal monitoring / on-call / productivity agents) over **10 projects**. Instead
-of a single architect, a cross-functional **core team of project leads** (a technical lead, a
-product lead and a UX lead — each an `architect`-role login with a different `function`) jointly
-plays the architect role. Same depth as Helix: WBS + cross-project hand-offs, ADR threads +
+**Dev Agents** — internal monitoring / on-call / productivity agents) over **10 projects**. There
+is no single architect: **each initiative is led by its own core team** (a technical lead, a
+product lead and a UX lead — each an `architect`-role login with a different `function`), and an
+**executive team** (CEO / CTO / Head of Talent — `viewer` logins with the `leadership` function)
+sits above all five. The lead teams get lateral visibility and coordination across initiatives
+(the shared decision queue, cross-initiative team view, portfolio), while the executives read
+the portfolio and initiative roll-ups. Same depth as Helix: WBS + cross-project hand-offs, ADR threads +
 fitness functions, drift, specs, risks, outcomes, docs, blockers, retros, draft plans, a what-if
 scenario per initiative, a flagship baseline (Interview Orchestrator) and demo connections.
 - **Pick it:** `DEMO_DATASET=agentic` (env; default `helix`) makes it the default — the login
