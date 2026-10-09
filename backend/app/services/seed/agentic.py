@@ -11,6 +11,9 @@ Five initiatives mirror the product portfolio:
   * **Agent Builder** — the runtime engine that powers every agent in the company.
   * **Dev Agents** — internal agents for monitoring, remediation, on-call support and developer
     productivity.
+  * plus two smaller, non-product initiatives every org runs alongside — **Customer Support
+    Escalations** and a **Q4 Product Enhancements** bundle — so the portfolio is not only
+    flagship bets.
 
 There is no single architect. **Each initiative is led by its own core team** — a technical
 lead, a product lead and a UX lead (each an ``architect``-role login with a different
@@ -46,6 +49,7 @@ from app.services.seed.catalog import (
     FitnessSpec,
     IncidentSpec,
     InitiativeSpec,
+    LeadershipNoteSpec,
     LinkSpec,
     MilestoneSpec,
     MitigationSpec,
@@ -93,6 +97,10 @@ USERS: tuple[DemoUser, ...] = (
     DemoUser("ivy@northstar.ai", "Ivy Chen", UserRole.architect, UserFunction.engineering),
     DemoUser("marcus@northstar.ai", "Marcus Dube", UserRole.architect, UserFunction.product),
     DemoUser("elena@northstar.ai", "Elena Petrova", UserRole.architect, UserFunction.design),
+    DemoUser("nora@northstar.ai", "Nora Quinn", UserRole.architect, UserFunction.engineering),
+    DemoUser("ben@northstar.ai", "Ben Carter", UserRole.architect, UserFunction.product),
+    DemoUser("aiden@northstar.ai", "Aiden Walsh", UserRole.architect, UserFunction.engineering),
+    DemoUser("zoe@northstar.ai", "Zoe Martin", UserRole.architect, UserFunction.product),
     # Delivery organisation.
     DemoUser("em@northstar.ai", "Jonah Fields", UserRole.engineering_manager,
              UserFunction.management),
@@ -159,6 +167,20 @@ ENGINEERS: tuple[DemoEngineer, ...] = (
     DemoEngineer("Elena Petrova", "UX Lead, Dev Agents",
                  ("ux", "developer-tools", "research"), "Europe/Sofia", 30, "elenapetrova",
                  "Core Team", "elena@northstar.ai"),
+    # Customer Support Escalations leads
+    DemoEngineer("Nora Quinn", "Technical Lead, Support Escalations",
+                 ("support-engineering", "backend", "tooling"), "Europe/Dublin", 30,
+                 "noraquinn", "Core Team", "nora@northstar.ai"),
+    DemoEngineer("Ben Carter", "Product Lead, Support Escalations",
+                 ("product", "support", "customer-success"), "America/New_York", 30,
+                 "bencarter", "Core Team", "ben@northstar.ai"),
+    # Q4 Product Enhancements leads
+    DemoEngineer("Aiden Walsh", "Technical Lead, Q4 Enhancements",
+                 ("backend", "frontend", "generalist"), "Europe/London", 30, "aidenwalsh",
+                 "Core Team", "aiden@northstar.ai"),
+    DemoEngineer("Zoe Martin", "Product Lead, Q4 Enhancements",
+                 ("product", "customer-requests", "triage"), "America/Toronto", 30,
+                 "zoemartin", "Core Team", "zoe@northstar.ai"),
     # Delivery team
     DemoEngineer("Jonah Fields", "VP Engineering",
                  ("management", "backend"), "Europe/London", 20, "jonahfields",
@@ -233,6 +255,10 @@ ALLOCATIONS: tuple[tuple[str, str, float], ...] = (
     ("Ivy Chen", "DEVPROD", 30), ("Marcus Dube", "DEVPROD", 20), ("Elena Petrova", "DEVPROD", 30),
     ("Sam Okoro", "ONCALL", 50), ("Tomás Silva", "ONCALL", 20),
     ("Noor Abadi", "DEVPROD", 30),
+    # Support escalations / Q4 enhancements
+    ("Nora Quinn", "SUPPORTOPS", 60), ("Ben Carter", "SUPPORTOPS", 30),
+    ("Aiden Walsh", "SUPPORTOPS", 20),
+    ("Aiden Walsh", "Q4ENH", 70), ("Zoe Martin", "Q4ENH", 30), ("Chris Walker", "Q4ENH", 20),
 )
 
 
@@ -262,6 +288,8 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
             DocSpec("prd", "AI Interviewer PRD",
                     "https://drive.google.com/file/d/doc-prd-interviewer/view", "drive"),
         ),
+        leads=(("Priya Raman", "technical"), ("Daniel Reyes", "product"),
+               ("Mei Nakamura", "design")),
     ),
     InitiativeSpec(
         "PILOT", "Talent Pilot",
@@ -285,6 +313,7 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
             DocSpec("prd", "Talent Pilot PRD",
                     "https://drive.google.com/file/d/doc-prd-pilot/view", "drive"),
         ),
+        leads=(("Rafael Costa", "technical"), ("Hannah Weiss", "product"), ("Jun Park", "design")),
     ),
     InitiativeSpec(
         "FORGE", "Talent Forge",
@@ -304,6 +333,8 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
                      "mitigating", "Amara Okafor",
                      "Ship a constrained template set first; expand with design partners."),
         ),
+        leads=(("Amara Okafor", "technical"), ("Lucas Moreau", "product"),
+               ("Sofia Lind", "design")),
     ),
     InitiativeSpec(
         "BUILDER", "Agent Builder",
@@ -327,6 +358,8 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
             DocSpec("architecture", "Agent Builder reference architecture",
                     "https://drive.google.com/file/d/doc-arch-builder/view", "drive"),
         ),
+        leads=(("Ethan Brooks", "technical"), ("Nadia Hassan", "product"),
+               ("Theo Lambert", "design")),
     ),
     InitiativeSpec(
         "DEVAGENTS", "Dev Agents",
@@ -346,6 +379,36 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
                      "high", "open", "Yara Cohen",
                      "Approval gate in front of every production-affecting action."),
         ),
+        leads=(("Ivy Chen", "technical"), ("Marcus Dube", "product"), ("Elena Petrova", "design")),
+    ),
+    InitiativeSpec(
+        "SUPPORT", "Customer Support Escalations",
+        "Cut escalation resolution time in half with better tooling for the support team and "
+        "clearer hand-offs into engineering.",
+        10, "Nora Quinn", ("support", "operations", "customer"), "on_track",
+        "The escalation console is live; engineering hand-off automation is in build.",
+        outcomes=(
+            OutcomeSpec("Faster escalation resolution", "median hours to resolve an escalation",
+                        "h", 48.0, 24.0, 31.0, "on_track", "Nora Quinn"),
+        ),
+        risks=(
+            RiskSpec("Support volume spikes after the Interviewer pilot", "external", "medium",
+                     "medium", "open", "Ben Carter",
+                     "Staff a temporary escalation rota through the pilot."),
+        ),
+        leads=(("Nora Quinn", "technical"), ("Ben Carter", "product")),
+    ),
+    InitiativeSpec(
+        "ENHANCE", "Q4 Product Enhancements",
+        "Ship the quarter's smaller customer-requested improvements without starving the "
+        "larger initiatives of people.",
+        12, "Aiden Walsh", ("enhancements", "customer-requests", "quarterly"), "on_track",
+        "Eleven requests triaged; the first batch is in build, the second awaits capacity.",
+        outcomes=(
+            OutcomeSpec("Customer requests shipped", "requests shipped this quarter", "count",
+                        0.0, 11.0, 4.0, "on_track", "Zoe Martin"),
+        ),
+        leads=(("Aiden Walsh", "technical"), ("Zoe Martin", "product")),
     ),
 )
 
@@ -1729,9 +1792,151 @@ _DEVPROD = ProjectSpec(
 )
 
 
+# =========================================================================== #
+# CUSTOMER SUPPORT ESCALATIONS / Q4 ENHANCEMENTS (smaller, non-product initiatives)
+# =========================================================================== #
+_SUPPORTOPS = ProjectSpec(
+    "SUPPORTOPS", "Escalation Tooling",
+    "The support team's escalation console and the automated hand-off into engineering "
+    "on-call.",
+    "SUPPORT", 6, 7, True, "on_track",
+    "Escalation console live; the engineering hand-off automation is in build.",
+    ("support", "tooling", "operations"),
+    phases=(
+        PhaseSpec("Design", (
+            TaskSpec("Escalation workflow mapping", 3, "Done", 30, "Ben Carter", ("design",)),
+        )),
+        PhaseSpec("Build", (
+            TaskSpec("Escalation console", 5, "Done", 14, "Nora Quinn", ("frontend",),
+                     (4, 5, 8)),
+            TaskSpec("Engineering hand-off automation", 4, "In Progress", 6, "Nora Quinn",
+                     ("backend",)),
+            TaskSpec("Customer status notifications", 3, "To Do", 0, "Aiden Walsh",
+                     ("backend",)),
+        )),
+        PhaseSpec("Rollout", (
+            TaskSpec("Support team training", 2, "To Do", 0, "Ben Carter", ("rollout",)),
+            TaskSpec("Escalation tooling GA", 0, "To Do", 0, None, (), None, True, 7),
+        )),
+    ),
+    milestones=(
+        MilestoneSpec("Console live", -2, "hit"),
+        MilestoneSpec("Escalation tooling GA", 7),
+    ),
+    components=(
+        ComponentSpec("escalation-console", "ui", "presentation", "med", "Nora Quinn"),
+        ComponentSpec("handoff-service", "service", "business", "med", "Nora Quinn"),
+        ComponentSpec("oncall-platform", "external", "infra", "high"),
+    ),
+    component_links=(
+        LinkSpec("escalation-console", "handoff-service", "calls"),
+        LinkSpec("handoff-service", "oncall-platform", "calls"),
+    ),
+    adrs=(
+        ADRSpec("Escalations page engineering through the on-call platform, never directly",
+                "accepted", "two_way", "Nora Quinn", "Nora Quinn",
+                "Direct pings bypass the rota and the incident record.",
+                "The hand-off service opens an incident on the on-call platform; nothing pages "
+                "an engineer directly.",
+                "One record per escalation; a small delay for urgent cases.",
+                components=("handoff-service",), created_days_ago=18),
+        ADRSpec("Customer-visible status language", "under_discussion", "two_way",
+                "Ben Carter", "Ben Carter",
+                "Customers see raw internal status names in notifications.",
+                "Proposed: a small customer-facing vocabulary mapped from internal states.",
+                components=("escalation-console",),
+                stakeholders=("Ben Carter", "Nora Quinn"),
+                comments=(ADRCommentSpec("Nora Quinn", "Mapping table is trivial; agreed.",
+                                         "approve"),),
+                created_days_ago=5),
+    ),
+    specs=(
+        SpecSpec("Escalation hand-off",
+                 "Every escalation reaches on-call engineering with full context in one step.",
+                 "approved", "Nora Quinn",
+                 criteria=(
+                     CriterionSpec("An escalation opens an on-call incident automatically.",
+                                   "open"),
+                     CriterionSpec("The incident carries the customer context and timeline.",
+                                   "open"),
+                 ),
+                 task_names=("Engineering hand-off automation",)),
+    ),
+    risks=(
+        RiskSpec("On-call platform API limits during incident storms", "external", "low",
+                 "medium", "open", "Nora Quinn", "Queue and batch hand-offs."),
+    ),
+    outcomes=(
+        OutcomeSpec("Hand-off time", "minutes from escalation to incident", "min",
+                    45.0, 5.0, 20.0, "on_track", "Nora Quinn"),
+    ),
+    docs=(
+        DocSpec("runbook", "Escalation runbook",
+                "https://drive.google.com/file/d/doc-escalation-runbook/view", "drive"),
+    ),
+    deploy_weeks=6,
+)
+
+_Q4ENH = ProjectSpec(
+    "Q4ENH", "Q4 Enhancements Bundle",
+    "The quarter's customer-requested improvements, triaged and delivered in two batches.",
+    "ENHANCE", 5, 10, True, "on_track",
+    "Batch one in build; batch two is scheduled behind the Interviewer pilot capacity.",
+    ("enhancements", "customer-requests"),
+    phases=(
+        PhaseSpec("Triage", (
+            TaskSpec("Request triage & sizing", 3, "Done", 24, "Zoe Martin", ("product",)),
+        )),
+        PhaseSpec("Batch 1", (
+            TaskSpec("Bulk candidate export", 3, "Done", 10, "Aiden Walsh", ("backend",)),
+            TaskSpec("Interview scheduling reminders", 3, "In Progress", 4, "Aiden Walsh",
+                     ("backend",)),
+            TaskSpec("Report filters by location", 2, "To Do", 0, "Aiden Walsh", ("frontend",)),
+        )),
+        PhaseSpec("Batch 2", (
+            TaskSpec("Custom interview question banks", 4, "To Do", 0, "Aiden Walsh",
+                     ("backend",)),
+            TaskSpec("Recruiter dashboard polish", 3, "To Do", 0, "Chris Walker", ("frontend",)),
+            TaskSpec("Q4 enhancements complete", 0, "To Do", 0, None, (), None, True, 10),
+        )),
+    ),
+    milestones=(
+        MilestoneSpec("Batch 1 shipped", 2),
+        MilestoneSpec("Batch 2 shipped", 10),
+    ),
+    components=(
+        ComponentSpec("recruiter-app", "ui", "presentation", "med", "Aiden Walsh"),
+        ComponentSpec("reporting-service", "service", "business", "med"),
+    ),
+    component_links=(LinkSpec("recruiter-app", "reporting-service", "calls"),),
+    adrs=(
+        ADRSpec("Enhancements ship behind feature flags", "accepted", "two_way",
+                "Aiden Walsh", "Zoe Martin",
+                "Small improvements should not wait for a release train.",
+                "Every enhancement ships dark behind a flag and is enabled per customer.",
+                "Continuous delivery for small work; a flag clean-up chore each quarter.",
+                components=("recruiter-app",), created_days_ago=20),
+    ),
+    risks=(
+        RiskSpec("Batch two loses its engineer to the Interviewer pilot", "resource", "medium",
+                 "medium", "open", "Zoe Martin", "Agree the capacity split with the "
+                 "Interviewer leads before batch two starts."),
+    ),
+    outcomes=(
+        OutcomeSpec("Requests shipped", "requests shipped this quarter", "count",
+                    0.0, 11.0, 4.0, "on_track", "Zoe Martin"),
+    ),
+    docs=(
+        DocSpec("prd", "Q4 enhancement requests (triage sheet)",
+                "https://drive.google.com/file/d/doc-q4-requests/view", "drive"),
+    ),
+    deploy_weeks=8,
+)
+
+
 PROJECTS: tuple[ProjectSpec, ...] = (
     _RUNTIME, _GATEWAY, _SESSION, _INTERVIEW, _ATSHUB, _COPILOT, _STUDIO, _DEPLOY, _ONCALL,
-    _DEVPROD,
+    _DEVPROD, _SUPPORTOPS, _Q4ENH,
 )
 
 FLAGSHIP_KEY = "INTERVIEW"
@@ -1813,6 +2018,50 @@ SCENARIOS: tuple[ScenarioSpec, ...] = (
 )
 
 
+# Executive feedback left on specific views (USER_FLOWS §BR). Open ones roll up into the
+# business review; the lead teams answer them where the work is.
+LEADERSHIP_NOTES: tuple[LeadershipNoteSpec, ...] = (
+    LeadershipNoteSpec(
+        "INTERVIEWER", "initiative", "cto@northstar.ai", "priority",
+        "The retention decision is now the single biggest schedule risk in the portfolio. "
+        "Please close it this week; I am happy to join the review if it helps.",
+        priority=1, target_kind="decision", target_title="Candidate data retention period",
+        created_days_ago=2,
+    ),
+    LeadershipNoteSpec(
+        "INTERVIEWER", "initiative", "ceo@northstar.ai", "watch",
+        "Watching the customer pilot date for the board update at the end of the month.",
+        target_kind="milestone", target_title="Customer pilot", created_days_ago=4,
+    ),
+    LeadershipNoteSpec(
+        "FORGE", "initiative", "cto@northstar.ai", "feedback",
+        "Descoping custom domains from GA is the right call. Please confirm the design "
+        "partners are aligned before we announce.",
+        target_kind="risk", target_title="Deploy GA slips the Forge launch", created_days_ago=6,
+        status="acknowledged", response="Partners aligned on Tuesday; announcement draft "
+        "with marketing.", responder_email="amara@northstar.ai",
+    ),
+    LeadershipNoteSpec(
+        "PILOT", "initiative", "talent@northstar.ai", "priority",
+        "Workday matters more than the sidebar polish for the two enterprise prospects. "
+        "Please reconsider the deferral.",
+        priority=2, target_kind="decision", target_title="Workday priority",
+        created_days_ago=3,
+    ),
+    LeadershipNoteSpec(
+        "DEVAGENTS", "initiative", "cto@northstar.ai", "feedback",
+        "Night pages halving in two weeks is the best result this quarter; worth a slide "
+        "in the business review.", created_days_ago=8, status="resolved",
+        response="Added to the review deck.", responder_email="ivy@northstar.ai",
+    ),
+    LeadershipNoteSpec(
+        "Q4ENH", "project", "talent@northstar.ai", "watch",
+        "Keeping an eye on batch two; two customers have asked for the question banks.",
+        created_days_ago=1,
+    ),
+)
+
+
 def demo_connections(flagship_project_id: int) -> list[DemoConnection]:
     return [
         DemoConnection("jira", "Jira — northstar.atlassian.net", {
@@ -1862,4 +2111,5 @@ AGENTIC = Dataset(
                         "Conversation flow engine"),
     ),
     connections=demo_connections,
+    leadership_notes=LEADERSHIP_NOTES,
 )

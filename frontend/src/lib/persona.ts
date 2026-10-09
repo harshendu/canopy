@@ -16,7 +16,8 @@ export function personaHome(
 ): string {
   const preferred = (() => {
     switch (fn) {
-      case "leadership": // executive — outcome + confidence at the portfolio altitude
+      case "leadership": // executive — the business review (notes + roll-ups), else portfolio
+        return featureOn(features, "portfolio.leadership") ? "/review" : "/portfolio";
       case "product": // PM — outcomes, roadmap, the program layer
       case "design": // UX — cross-project context before drilling into one project
         return "/portfolio";

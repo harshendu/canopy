@@ -32,6 +32,7 @@ from app.models.base import (
     WriteStrategy,
 )
 from app.schemas.auth import UserRead
+from app.schemas.leadership import InitiativeLeadRead
 from app.services import metadata
 from app.services import outcomes as outcomes_service
 
@@ -874,6 +875,9 @@ class InitiativeRollup(BaseModel):
     drift_level: str
     open_decisions: int  # ADRs proposed / under discussion across the initiative
     on_track: bool | None  # latest end <= target_date (None if no target)
+    # Ownership (§R6): may the current user make planning writes here, and who leads it.
+    can_edit: bool = True
+    leads: list[InitiativeLeadRead] = []
 
 
 # --- Alerts / digest ---

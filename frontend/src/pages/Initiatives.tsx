@@ -2,9 +2,10 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Initiative } from "../api/types";
+import type { Initiative, InitiativeAccess } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
-import { canWriteProjects } from "../lib/permissions";
+import { canWriteProjects, isPlanner } from "../lib/permissions";
+import { groupByOwnership, leadTeamLabel, leadsFor } from "../lib/initiativeAccess";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
 
@@ -21,6 +22,14 @@ export default function Initiatives() {
     queryKey: ["initiatives"],
     queryFn: () => api.get<Initiative[]>("/initiatives"),
   });
+  // Ownership (§R6): which initiatives the current user leads, plus every lead team.
+  const access = useQuery({
+    queryKey: ["initiative-access"],
+    queryFn: () => api.get<InitiativeAccess>("/initiatives/access"),
+  });
+  const grouped = groupByOwnership(initiatives, access.data?.led_initiative_ids);
+  // A planner who leads something sees the split; everyone else sees one list.
+  const split = isPlanner(me?.role) && grouped.led.length > 0;
 
   const create = useMutation({
     mutationFn: () =>
@@ -90,34 +99,87 @@ export default function Initiatives() {
 
       {isLoading ? (
         <p className="text-sm text-slate-500">Loading…</p>
+      ) : split ? (
+        <>
+          <InitiativeList
+            title="Initiatives I lead"
+            hint="your core team owns these — full planning controls"
+            items={grouped.led}
+            leads={access.data?.leads}
+          />
+          <InitiativeList
+            title="Other initiatives"
+            hint="read-only — complete visibility, no edits outside your lead team"
+            items={grouped.others}
+            leads={access.data?.leads}
+            readOnly
+          />
+        </>
       ) : (
-        <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
-          {initiatives.map((i) => (
+        <InitiativeList items={initiatives} leads={access.data?.leads} />
+      )}
+    </div>
+  );
+}
+
+function InitiativeList({
+  title,
+  hint,
+  items,
+  leads,
+  readOnly = false,
+}: {
+  title?: string;
+  hint?: string;
+  items: Initiative[];
+  leads: InitiativeAccess["leads"] | undefined;
+  readOnly?: boolean;
+}) {
+  return (
+    <section className="space-y-2">
+      {title && (
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+          {title}
+          {hint && <span className="ml-2 font-normal normal-case tracking-normal">{hint}</span>}
+        </h2>
+      )}
+      <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+        {items.map((i) => {
+          const team = leadTeamLabel(leadsFor(leads, i.id));
+          return (
             <li key={i.id}>
               <PreviewLink
                 target={{ kind: "initiative", id: i.id }}
-                className="flex items-center justify-between px-4 py-3 hover:bg-slate-50"
+                className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50"
               >
-                <span>
+                <span className="min-w-0">
                   <span className="font-mono text-xs text-slate-400">{i.key}</span>{" "}
                   <span className="font-medium">{i.name}</span>
                   {i.outcome_statement && (
                     <span className="ml-2 text-sm text-slate-400">{i.outcome_statement}</span>
                   )}
+                  {team && <span className="mt-0.5 block text-xs text-slate-400">{team}</span>}
                 </span>
-                <span className="text-xs text-slate-400">
+                <span className="flex shrink-0 items-center gap-2 text-xs text-slate-400">
+                  {readOnly && (
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500">
+                      read-only
+                    </span>
+                  )}
                   {i.target_date ? `target ${i.target_date}` : "no target"}
                 </span>
               </PreviewLink>
             </li>
-          ))}
-          {initiatives.length === 0 && (
-            <li className="px-4 py-6 text-center text-sm text-slate-400">
-              No initiatives yet — create one above, then link projects to it.
-            </li>
-          )}
-        </ul>
-      )}
-    </div>
+          );
+        })}
+        {items.length === 0 && (
+          <li className="px-4 py-6 text-center text-sm text-slate-400">
+            {title
+              ? "Nothing here."
+              : "No initiatives yet — create one above, then link projects to it."}
+          </li>
+        )}
+      </ul>
+    </section>
   );
 }

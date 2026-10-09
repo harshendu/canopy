@@ -27,6 +27,7 @@ from app.models.integration import (
     PullRequest,
     UserConnection,
 )
+from app.models.leadership import InitiativeLead, LeadershipNote
 from app.models.outcome import Outcome
 from app.models.project import (
     Baseline,
@@ -85,8 +86,10 @@ __all__ = [
     "FeatureFlag",
     "Holiday",
     "Initiative",
+    "InitiativeLead",
     "IntegrationSetting",
     "JiraLink",
+    "LeadershipNote",
     "Milestone",
     "Outcome",
     "Project",

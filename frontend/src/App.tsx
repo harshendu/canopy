@@ -36,6 +36,7 @@ import ImpersonationBanner from "./components/ImpersonationBanner";
 import { GetStarted } from "./components/GetStarted";
 
 const Portfolio = lazy(() => import("./pages/Portfolio")); // Recharts — load on demand
+const BusinessReview = lazy(() => import("./pages/BusinessReview"));
 
 function Loading() {
   return <div className="p-6 text-sm text-slate-400">Loading…</div>;
@@ -121,6 +122,14 @@ export default function App() {
           element={
             <Suspense fallback={<Loading />}>
               <Portfolio />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/review"
+          element={
+            <Suspense fallback={<div className="p-2 text-sm text-slate-400">Loading…</div>}>
+              <BusinessReview />
             </Suspense>
           }
         />

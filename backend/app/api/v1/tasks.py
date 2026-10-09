@@ -17,6 +17,13 @@ from app.schemas.entities import (
     TaskStatusHistoryRead,
     TaskUpdate,
 )
+from app.services.access import (
+    ensure_project_editable,
+    ensure_task_editable,
+)
+from app.services.access import (
+    ensure_project_editable as ensure_initiative_editable_for_project,
+)
 from app.services.cascade import delete_task_cascade
 from app.services.links import collect_task_links
 from app.services.metadata import normalize_tags
@@ -36,7 +43,8 @@ async def list_tasks(
 
 
 @router.post("", response_model=TaskRead, status_code=status.HTTP_201_CREATED)
-async def create_task(session: SessionDep, _: PlannerWriter, payload: TaskCreate) -> Task:
+async def create_task(session: SessionDep, user: PlannerWriter, payload: TaskCreate) -> Task:
+    await ensure_project_editable(session, user, payload.project_id)
     data = payload.model_dump()
     data["tags"] = normalize_tags(data.get("tags") or [])
     task = Task(**data)
@@ -85,7 +93,8 @@ async def update_task(
     task = await session.get(Task, task_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    # Planners can edit any task; an engineer may only edit a task assigned to them.
+    # Planners edit tasks inside the initiatives they lead; an engineer only their own tasks.
+    await ensure_initiative_editable_for_project(session, user, task.project_id)
     if not is_planner(user):
         engineer = await current_engineer(session, user)
         if engineer is None or task.assignee_engineer_id != engineer.id:
@@ -104,7 +113,8 @@ async def update_task(
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_task(session: SessionDep, _: PlannerWriter, task_id: int) -> None:
+async def delete_task(session: SessionDep, user: PlannerWriter, task_id: int) -> None:
+    await ensure_task_editable(session, user, task_id)
     # Clear FK-referencing rows first (deps, history, blockers, allocations, PR/scenario refs)
     # and promote children — a bare delete 500s on Postgres/MySQL for any linked task.
     await delete_task_cascade(session, task_id)

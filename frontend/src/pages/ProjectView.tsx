@@ -14,6 +14,7 @@ import type {
   ReplanResult,
   Task,
   TaskType,
+  ProjectAccess,
 } from "../api/types";
 import GanttChart from "../components/GanttChart";
 import WhatIfPanel from "../components/WhatIfPanel";
@@ -42,6 +43,7 @@ import {
 } from "../lib/projectNav";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
+import { leadTeamLabel } from "../lib/initiativeAccess";
 import { featureOn, useFeatures } from "../lib/useFeatures";
 
 // Heavy (React Flow / Recharts) — code-split.
@@ -98,8 +100,14 @@ export default function ProjectView() {
     if (def) goToTab(def);
   };
 
-  const mayPlan = isPlanner(me?.role);
-  const mayWriteProject = canWriteProjects(me?.role);
+  // Ownership (§R6): planning controls only inside the initiatives the user leads.
+  const access = useQuery({
+    queryKey: ["project-access", id],
+    queryFn: () => api.get<ProjectAccess>(`/projects/${id}/access`),
+  });
+  const canEdit = access.data?.can_edit ?? true;
+  const mayPlan = isPlanner(me?.role) && canEdit;
+  const mayWriteProject = canWriteProjects(me?.role) && canEdit;
   const mayContribute = canContribute(me?.role);
 
   const project = useQuery({
@@ -330,6 +338,19 @@ export default function ProjectView() {
         }
       />
 
+      {access.data && !access.data.can_edit && isPlanner(me?.role) && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
+          <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-700">
+            read-only
+          </span>
+          Planning changes here are made by the lead team of{" "}
+          <span className="font-medium text-slate-700">
+            {access.data.initiative_name ?? "its initiative"}
+          </span>
+          {access.data.leads.length > 0 && <> — {leadTeamLabel(access.data.leads)}</>}.
+        </div>
+      )}
+
       {pendingReviews > 0 && (
         <Link
           to="/reviews"
@@ -438,7 +459,13 @@ export default function ProjectView() {
       </div>
 
       {activeGroup === "overview" && (
-        <ProjectOverview projectId={id} mayPlan={mayPlan} isOn={isOn} onOpenTab={goToTab} />
+        <ProjectOverview
+          projectId={id}
+          mayPlan={mayPlan}
+          canRespond={canEdit}
+          isOn={isOn}
+          onOpenTab={goToTab}
+        />
       )}
 
       {activeTab === "gantt" && (

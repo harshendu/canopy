@@ -395,6 +395,32 @@ projects and rolls up their health.
   project, total working days, `spans_projects`, and the `handoffs`; cyclic cross-project deps →
   409) · **MCP:** `get_initiative_critical_path`.
 
+### R6. Initiative lead teams & ownership-scoped editing **[new]**
+An initiative is owned by its **core team of leads** — a technical, a product and a design/UX
+lead (`InitiativeLead`, `app/models/leadership.py`; any mix of seats, one or more people). The
+role matrix (§A3a) still says *what kind* of write a role may make; ownership says *where*: a
+planner-role user (architect / engineering manager / legacy member) makes **planning writes only
+inside the initiatives they lead** and has **read-only visibility of every other initiative** —
+complete lateral visibility, no cross-team edits. Admins are exempt. An initiative with **no
+leads** keeps the plain role rules (back-compat; the Helix demo sets none). Contributor writes by
+engineers (own-task progress, blockers, criterion verdicts, decision comments) are **not**
+scoped — they stay role-governed. Enforced centrally in `app/services/access.py`
+(`ensure_initiative_editable` / `ensure_project_editable`) and called from the planning writes:
+initiative edit/delete, project create-into/edit/delete, replan, task / milestone / dependency
+create-edit-delete, ADR create/edit, draft plans (incl. push), scenario create/edit/delete/apply.
+A denied write is `403 {code:"not_initiative_lead", initiative_id, message}`.
+- **UI:** `/initiatives` splits **Initiatives I lead** from **Other initiatives (read-only)** and
+  shows each lead team; the initiative cockpit and the project cockpit show a **read-only banner**
+  naming the lead team and hide the planning controls when `can_edit` is false (deeper controls
+  that are still rendered are rejected by the server with the message above).
+- **API:** `GET /api/v1/initiatives/access` → `{led_initiative_ids, leads[]}` for the current
+  user · `GET /initiatives/{id}/leads` · `PUT /initiatives/{id}/leads` (replace the seats; admin
+  or a current lead) · `GET /initiatives/{id}/rollup` now carries `can_edit` + `leads` ·
+  `GET /projects/{id}/access` → `{can_edit, initiative_id, initiative_name, leads}`.
+- **Not built:** the lead-seat editor in the UI (seats are set via the API / the seed); scoping
+  of the sub-edits inside a scenario workspace (the scenario's create/edit/delete/apply are
+  scoped; its task/milestone/allocation rows are not yet).
+
 ### R5. Initiative digest — manage-by-exception weekly roll-up **[updated — now in the UI]**
 - A synthesized health digest that **leads with what needs attention** (roadmap gap #6 / `PF L-R2`;
   37signals/Cagan: green is silent, surface exceptions). Reuses the **rollup** (§R3) + **forecast**
@@ -411,6 +437,30 @@ projects and rolls up their health.
   digest §I).
 
 ---
+
+## BR. Leadership review & feedback (business review) **[new]**
+The executive layer's surface. Executives (`function = leadership`, any role — typically
+`viewer`) read everything and **write one thing: leadership notes** on a specific view —
+something to **watch**, a **priority** call (P1–P3), or free-form **feedback** — optionally pinned
+to a decision / risk / outcome / milestone inside an initiative or project. The initiative's lead
+team **acknowledges / resolves** each note with a response, so the loop closes where the work is.
+`GET /leadership/review` rolls every initiative up for the **monthly business review**: lead team,
+headline health (progress, on-track, worst risk/drift, open decisions, open blockers), outcomes,
+and the notes still open — plus an `attention` list. Gate: `portfolio.leadership`.
+- **UI:** sidebar **Business review** (`/review`, the leadership persona's landing page) — the
+  attention list, then one card per initiative with its lead team, health, outcomes and open
+  notes; the **Leadership notes** panel on the initiative cockpit and the project overview lists
+  notes and (for the leadership persona / admin) adds one with an optional target picker; leads
+  acknowledge / resolve inline with a response. The portfolio/initiative **Export** (§S) remains
+  the PDF hand-out for the meeting.
+- **API:** `GET /api/v1/leadership/notes?scope_level&scope_id&status` · `POST /leadership/notes`
+  (leadership persona or admin; `target_kind` + `target_id` resolve to a captured
+  `target_label`) · `PATCH /leadership/notes/{id}` (author edits body/priority; the scope's lead
+  team, the author or an admin sets `status`/`response`) · `DELETE /leadership/notes/{id}`
+  (author/admin) · `GET /leadership/review`.
+- **Not built:** Slack/email delivery of a new note (a hook over this data, like §I); notes on
+  tasks; a decision-level "flagged by leadership" chip in the ADR list (the panel shows the
+  target label instead); the seed is the only way to pre-populate notes.
 
 ## B. Projects & portfolio
 
@@ -1881,13 +1931,16 @@ init). **Northstar** is a talent-technology company building agentic products �
 (**AI Interviewer** — voice/video sessions between an AI agent and a human; **Talent Pilot** — an
 integrated agent harness for recruiters; **Talent Forge** — an agent harness to build and deploy
 fully customizable applications; **Agent Builder** — the runtime engine behind every agent;
-**Dev Agents** — internal monitoring / on-call / productivity agents) over **10 projects**. There
-is no single architect: **each initiative is led by its own core team** (a technical lead, a
-product lead and a UX lead — each an `architect`-role login with a different `function`), and an
-**executive team** (CEO / CTO / Head of Talent — `viewer` logins with the `leadership` function)
-sits above all five. The lead teams get lateral visibility and coordination across initiatives
-(the shared decision queue, cross-initiative team view, portfolio), while the executives read
-the portfolio and initiative roll-ups. Same depth as Helix: WBS + cross-project hand-offs, ADR threads +
+**Dev Agents** — internal monitoring / on-call / productivity agents) plus two smaller,
+non-product initiatives every org runs alongside (**Customer Support Escalations**, a **Q4 Product
+Enhancements** bundle) over **12 projects**. There is no single architect: **each initiative is
+led by its own core team** seated as `InitiativeLead` rows (§R6 — a technical, a product and a
+UX lead for the product bets, two seats for the small ones; each an `architect`-role login with
+a different `function`), and an **executive team** (CEO / CTO / Head of Talent — `viewer` logins
+with the `leadership` function) sits above them with seeded **leadership notes** (§BR). The lead
+teams get lateral visibility across initiatives (read-only outside their own; the shared decision
+queue, team view, portfolio), while the executives read the business review and roll-ups. Same
+depth as Helix: WBS + cross-project hand-offs, ADR threads +
 fitness functions, drift, specs, risks, outcomes, docs, blockers, retros, draft plans, a what-if
 scenario per initiative, a flagship baseline (Interview Orchestrator) and demo connections.
 - **Pick it:** `DEMO_DATASET=agentic` (env; default `helix`) makes it the default — the login

@@ -22,6 +22,7 @@ from app.api.v1 import (
     gantt,
     initiatives,
     jira_links,
+    leadership,
     me,
     meta,
     milestones,
@@ -85,6 +86,12 @@ api_router.include_router(
 )
 api_router.include_router(
     outcomes.router, tags=["outcomes"], dependencies=[FeatureGate("portfolio.outcomes")]
+)
+api_router.include_router(
+    leadership.router,
+    prefix="/leadership",
+    tags=["leadership"],
+    dependencies=[FeatureGate("portfolio.leadership")],
 )
 api_router.include_router(
     proposals.router,

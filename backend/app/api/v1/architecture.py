@@ -45,6 +45,7 @@ from app.schemas.entities import (
     ImpactResponse,
     ReviewSummaryRead,
 )
+from app.services.access import ensure_project_editable
 from app.services.decisions import review_summary, valid_transition
 from app.services.impact import downstream_components
 from app.services.markdown_adr import parse_markdown_adr
@@ -287,7 +288,8 @@ async def _next_number(session: AsyncSession, project_id: int) -> int:
 
 
 @router.post("/adrs", response_model=ADRRead, status_code=status.HTTP_201_CREATED)
-async def create_adr(session: SessionDep, _: ContributorWriter, payload: ADRCreate) -> ADRRead:
+async def create_adr(session: SessionDep, user: ContributorWriter, payload: ADRCreate) -> ADRRead:
+    await ensure_project_editable(session, user, payload.project_id)
     if payload.status == ADRStatus.deferred and payload.decide_by is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -502,6 +504,7 @@ async def update_adr(
     adr = await session.get(ArchitectureDecision, adr_id)
     if adr is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ADR not found")
+    await ensure_project_editable(session, user, adr.project_id)
     data = payload.model_dump(exclude_unset=True, exclude={"component_ids", "stakeholder_ids"})
 
     new_status = data.get("status", adr.status)

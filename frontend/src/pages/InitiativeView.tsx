@@ -16,6 +16,8 @@ import DocsView from "../components/DocsView";
 import OutcomesPanel from "../components/OutcomesPanel";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
 import RiskRegister from "../components/RiskRegister";
+import LeadershipNotesPanel from "../components/LeadershipNotesPanel";
+import { leadTeamLabel } from "../lib/initiativeAccess";
 import JiraLinksPanel from "../components/JiraLinksPanel";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
@@ -39,8 +41,6 @@ export default function InitiativeView() {
   const id = Number(initiativeId);
   const qc = useQueryClient();
   const { data: me } = useCurrentUser();
-  const mayWriteInitiative = canWriteProjects(me?.role);
-  const mayPlan = isPlanner(me?.role);
 
   const rollup = useQuery({
     queryKey: ["initiative-rollup", id],
@@ -88,6 +88,11 @@ export default function InitiativeView() {
     return <p className="text-sm text-slate-500">Loading initiative…</p>;
   }
   const r = rollup.data;
+  // Ownership (§R6): planning controls only for this initiative's lead team (or admin).
+  const canEdit = r.can_edit;
+  const mayWriteInitiative = canWriteProjects(me?.role) && canEdit;
+  const mayPlan = isPlanner(me?.role) && canEdit;
+  const leadTeam = leadTeamLabel(r.leads);
   const cp = criticalPath.data;
   const fc = forecast.data;
   const risk = riskTone(r.risk_level);
@@ -129,6 +134,21 @@ export default function InitiativeView() {
           </>
         }
       />
+
+      {!canEdit && isPlanner(me?.role) && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
+          <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-700">
+            read-only
+          </span>
+          You have full visibility of this initiative; planning changes are made by its lead team
+          {leadTeam ? <> — {leadTeam}.</> : "."}
+        </div>
+      )}
+      {canEdit && leadTeam && (
+        <p className="text-xs text-slate-500">
+          Lead team: <span className="text-slate-700">{leadTeam}</span>
+        </p>
+      )}
 
       <DeliveryMetaBar
         scope="initiative"
@@ -248,6 +268,8 @@ export default function InitiativeView() {
           </ol>
         </div>
       )}
+
+      <LeadershipNotesPanel scope="initiative" scopeId={id} canRespond={canEdit} />
 
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <OutcomesPanel scope="initiative" scopeId={id} mayWrite={mayPlan} />

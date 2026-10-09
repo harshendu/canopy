@@ -8,8 +8,8 @@ from app.api.v1.drift import drift_score_from_events
 from app.api.v1.risk import report_for
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
-from app.models.base import RiskScope, RiskStatus, TaskType, utcnow
-from app.models.project import Holiday, Project, Task
+from app.models.base import RiskScope, RiskStatus, TaskType, UserRole, utcnow
+from app.models.project import Holiday, Initiative, Project, Task
 from app.models.risk_register import RiskItem
 from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.schemas.entities import (
@@ -20,6 +20,13 @@ from app.schemas.entities import (
     ProjectRead,
     ProjectSummary,
     ProjectUpdate,
+)
+from app.schemas.leadership import InitiativeLeadRead, ProjectAccess
+from app.services.access import (
+    OWNERSHIP_ROLES,
+    ensure_initiative_editable,
+    ensure_project_editable,
+    initiative_can_edit,
 )
 from app.services.capacity import AvailabilitySpan
 from app.services.cascade import delete_project_cascade
@@ -168,8 +175,9 @@ async def list_projects(session: SessionDep, _: CurrentUser) -> list[Project]:
 
 @router.post("", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
 async def create_project(
-    session: SessionDep, _: ArchitectWriter, payload: ProjectCreate
+    session: SessionDep, user: ArchitectWriter, payload: ProjectCreate
 ) -> Project:
+    await ensure_initiative_editable(session, user, payload.initiative_id)
     existing = await session.execute(select(Project).where(Project.key == payload.key))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project key exists")
@@ -253,14 +261,47 @@ async def project_summary(
     )
 
 
+async def _lead_reads(session: SessionDep, initiative_id: int) -> list[InitiativeLeadRead]:
+    from app.api.v1.initiatives import lead_reads  # local: initiatives imports this module
+
+    return await lead_reads(session, initiative_id)
+
+
+@router.get("/{project_id}/access", response_model=ProjectAccess)
+async def project_access(session: SessionDep, user: CurrentUser, project_id: int) -> ProjectAccess:
+    """Ownership context (§R6): may the current user plan here, and which lead team owns it."""
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    initiative = (
+        await session.get(Initiative, project.initiative_id)
+        if project.initiative_id is not None else None
+    )
+    can = (
+        await initiative_can_edit(session, user, project.initiative_id)
+        if project.initiative_id is not None
+        else user.role == UserRole.admin or user.role in OWNERSHIP_ROLES
+    )
+    return ProjectAccess(
+        project_id=project_id,
+        initiative_id=project.initiative_id,
+        initiative_name=initiative.name if initiative is not None else None,
+        can_edit=can,
+        leads=await _lead_reads(session, project.initiative_id) if project.initiative_id else [],
+    )
+
+
 @router.patch("/{project_id}", response_model=ProjectRead)
 async def update_project(
-    session: SessionDep, _: ArchitectWriter, project_id: int, payload: ProjectUpdate
+    session: SessionDep, user: ArchitectWriter, project_id: int, payload: ProjectUpdate
 ) -> Project:
     project = await session.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    await ensure_initiative_editable(session, user, project.initiative_id)
     data = payload.model_dump(exclude_unset=True)
+    if data.get("initiative_id") not in (None, project.initiative_id):
+        await ensure_initiative_editable(session, user, data["initiative_id"])
     if "tags" in data and data["tags"] is not None:
         data["tags"] = normalize_tags(data["tags"])
     for field, value in data.items():
@@ -273,7 +314,8 @@ async def update_project(
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(session: SessionDep, _: ArchitectWriter, project_id: int) -> None:
+async def delete_project(session: SessionDep, user: ArchitectWriter, project_id: int) -> None:
+    await ensure_project_editable(session, user, project_id)
     # Clear the project's whole object graph (tasks, schedule, decisions, architecture,
     # governance, drafts, referencing scenario rows) in FK-safe order first — a bare delete
     # 500s on Postgres/MySQL for any non-empty project.

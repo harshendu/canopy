@@ -4,6 +4,7 @@ from sqlmodel import select
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
 from app.models.project import Dependency, Project, Task
 from app.schemas.entities import DependencyCreate, DependencyRead
+from app.services.access import ensure_project_editable, ensure_task_editable
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ async def list_dependencies(
 
 @router.post("", response_model=DependencyRead, status_code=status.HTTP_201_CREATED)
 async def create_dependency(
-    session: SessionDep, _: PlannerWriter, payload: DependencyCreate
+    session: SessionDep, user: PlannerWriter, payload: DependencyCreate
 ) -> Dependency:
     if payload.predecessor_id == payload.successor_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Self-dependency")
@@ -38,6 +39,8 @@ async def create_dependency(
     succ = await session.get(Task, payload.successor_id)
     if pred is None or succ is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    await ensure_project_editable(session, user, pred.project_id)
+    await ensure_project_editable(session, user, succ.project_id)
     # A cross-project dependency (a hand-off between teams) is only allowed when both
     # projects belong to the same initiative; it then shows on the initiative critical path.
     if pred.project_id != succ.project_id:
@@ -58,8 +61,9 @@ async def create_dependency(
 
 
 @router.delete("/{dependency_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_dependency(session: SessionDep, _: PlannerWriter, dependency_id: int) -> None:
+async def delete_dependency(session: SessionDep, user: PlannerWriter, dependency_id: int) -> None:
     dependency = await session.get(Dependency, dependency_id)
     if dependency is not None:
+        await ensure_task_editable(session, user, dependency.predecessor_id)
         await session.delete(dependency)
         await session.commit()

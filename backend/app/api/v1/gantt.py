@@ -35,6 +35,7 @@ from app.schemas.entities import (
     ReplanResult,
     WhatIfRequest,
 )
+from app.services.access import ensure_project_editable
 from app.services.alerts import (
     AlertBlocker,
     AlertMilestone,
@@ -126,7 +127,8 @@ async def get_gantt(session: SessionDep, _: CurrentUser, project_id: int) -> Gan
 
 
 @router.post("/projects/{project_id}/replan", response_model=ReplanResult)
-async def replan(session: SessionDep, _: PlannerWriter, project_id: int) -> ReplanResult:
+async def replan(session: SessionDep, user: PlannerWriter, project_id: int) -> ReplanResult:
+    await ensure_project_editable(session, user, project_id)
     try:
         outcome = await reschedule_project(session, project_id, persist=True)
     except CycleError as exc:

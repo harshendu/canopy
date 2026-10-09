@@ -100,6 +100,9 @@ export interface InitiativeRollup {
   drift_level: string;
   open_decisions: number;
   on_track: boolean | null;
+  /** Ownership (§R6): may the current user plan here, and who leads it. */
+  can_edit: boolean;
+  leads: InitiativeLead[];
 }
 
 /** Manage-by-exception weekly roll-up (§R5) — leads with `attention`, the exception list. */
@@ -1189,4 +1192,93 @@ export interface ProposalApplyResult {
   applied: number;
   skipped: number;
   replanned_projects: number[];
+}
+
+// --- Initiative lead teams / ownership (USER_FLOWS §R6) ---
+export type LeadRole = "technical" | "product" | "design";
+
+export interface InitiativeLead {
+  initiative_id: number;
+  engineer_id: number;
+  engineer_name: string;
+  lead_role: LeadRole;
+  user_id: number | null;
+}
+
+export interface InitiativeAccess {
+  led_initiative_ids: number[];
+  leads: InitiativeLead[];
+}
+
+export interface ProjectAccess {
+  project_id: number;
+  initiative_id: number | null;
+  initiative_name: string | null;
+  can_edit: boolean;
+  leads: InitiativeLead[];
+}
+
+// --- Leadership notes + business review (USER_FLOWS §BR) ---
+export type LeadershipScope = "initiative" | "project";
+export type LeadershipNoteKind = "watch" | "priority" | "feedback";
+export type LeadershipTargetKind = "decision" | "risk" | "outcome" | "milestone";
+export type LeadershipNoteStatus = "open" | "acknowledged" | "resolved";
+
+export interface LeadershipNote {
+  id: number;
+  scope_level: LeadershipScope;
+  scope_id: number;
+  target_kind: LeadershipTargetKind | null;
+  target_id: number | null;
+  target_label: string | null;
+  kind: LeadershipNoteKind;
+  priority: number | null;
+  body: string;
+  author_user_id: number;
+  author_name: string | null;
+  status: LeadershipNoteStatus;
+  response: string | null;
+  responded_by_user_id: number | null;
+  responded_by_name: string | null;
+  responded_at: string | null;
+  created_at: string;
+}
+
+export interface ReviewOutcome {
+  id: number;
+  statement: string;
+  status: string;
+  current_value: number | null;
+  target_value: number | null;
+  unit: string | null;
+}
+
+export interface ReviewInitiative {
+  id: number;
+  key: string;
+  name: string;
+  outcome_statement: string | null;
+  target_date: string | null;
+  health: ProjectHealth | null;
+  status_note: string | null;
+  leads: InitiativeLead[];
+  project_count: number;
+  avg_percent_complete: number;
+  project_end: string | null;
+  on_track: boolean | null;
+  risk_score: number;
+  risk_level: string;
+  drift_score: number;
+  drift_level: string;
+  open_decisions: number;
+  open_blockers: number;
+  outcomes: ReviewOutcome[];
+  open_notes: LeadershipNote[];
+}
+
+export interface BusinessReview {
+  generated_on: string;
+  initiatives: ReviewInitiative[];
+  open_note_count: number;
+  attention: string[];
 }

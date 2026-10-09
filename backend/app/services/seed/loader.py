@@ -44,6 +44,11 @@ from app.models.base import (
     DocKind,
     DocScope,
     DocSource,
+    LeadershipNoteKind,
+    LeadershipNoteStatus,
+    LeadershipScope,
+    LeadershipTargetKind,
+    LeadRole,
     OutcomeScope,
     OutcomeStatus,
     ProjectHealth,
@@ -61,6 +66,7 @@ from app.models.base import (
 from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import Connection, ExternalRef, JiraLink, PullRequest
+from app.models.leadership import InitiativeLead, LeadershipNote
 from app.models.outcome import Outcome
 from app.models.project import (
     Baseline,
@@ -257,6 +263,12 @@ async def _build_initiatives(session: AsyncSession, refs: _Refs) -> None:
             status_note=spec.status_note, status_updated_at=utcnow(),
         ))
         refs.initiatives[spec.key] = init
+        for eng_name, lead_role in spec.leads:
+            eng_id = refs.eng(eng_name)
+            if eng_id is not None:
+                await _add(session, InitiativeLead(
+                    initiative_id=_req(init.id), engineer_id=eng_id,
+                    lead_role=LeadRole(lead_role)))
     await _build_initiative_extras(session, refs)
 
 
@@ -762,6 +774,57 @@ async def _build_scenarios(session: AsyncSession, refs: _Refs) -> None:
         scenario.status = sc.status
 
 
+async def _build_leadership_notes(session: AsyncSession, refs: _Refs) -> None:
+    """Executive notes on initiative/project views (open ones feed the business review)."""
+    base = utcnow()
+    for spec in refs.ds.leadership_notes:
+        author = refs.users.get(spec.author_email)
+        if author is None or author.id is None:
+            continue
+        if spec.scope_level == "initiative":
+            init = refs.initiatives.get(spec.scope_key)
+            scope_id = init.id if init is not None else None
+        else:
+            project = refs.projects.get(spec.scope_key)
+            scope_id = project.id if project is not None else None
+        if scope_id is None:
+            continue
+        target_id: int | None = None
+        label = spec.target_title
+        if spec.target_kind == "decision" and spec.target_title:
+            adr = (await session.execute(select(ArchitectureDecision).where(
+                ArchitectureDecision.title == spec.target_title))).scalars().first()
+            if adr is not None:
+                target_id = adr.id
+                label = f"ADR-{adr.number:04d} {adr.title}"
+        elif spec.target_kind == "risk" and spec.target_title:
+            risk = (await session.execute(select(RiskItem).where(
+                RiskItem.title == spec.target_title))).scalars().first()
+            target_id = risk.id if risk is not None else None
+        elif spec.target_kind == "outcome" and spec.target_title:
+            outcome = (await session.execute(select(Outcome).where(
+                Outcome.statement == spec.target_title))).scalars().first()
+            target_id = outcome.id if outcome is not None else None
+        elif spec.target_kind == "milestone" and spec.target_title:
+            ms = (await session.execute(select(Milestone).where(
+                Milestone.name == spec.target_title))).scalars().first()
+            target_id = ms.id if ms is not None else None
+        responder = refs.users.get(spec.responder_email) if spec.responder_email else None
+        note = LeadershipNote(
+            scope_level=LeadershipScope(spec.scope_level), scope_id=scope_id,
+            target_kind=LeadershipTargetKind(spec.target_kind) if spec.target_kind else None,
+            target_id=target_id, target_label=label if spec.target_kind else None,
+            kind=LeadershipNoteKind(spec.kind), priority=spec.priority, body=spec.body,
+            author_user_id=author.id, status=LeadershipNoteStatus(spec.status),
+            response=spec.response,
+            responded_by_user_id=responder.id if responder is not None else None,
+            responded_at=base - timedelta(days=max(spec.created_days_ago - 1, 0))
+            if spec.response else None,
+        )
+        note.created_at = base - timedelta(days=spec.created_days_ago)
+        await _add(session, note)
+
+
 # --------------------------------------------------------------------------- #
 # Orchestration + summary
 # --------------------------------------------------------------------------- #
@@ -779,6 +842,7 @@ async def load_seed_data(
     await _build_allocations(session, refs)
     await _build_connections(session, refs)
     await _build_scenarios(session, refs)
+    await _build_leadership_notes(session, refs)
     await session.commit()
     return await seed_summary(session)
 

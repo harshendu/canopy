@@ -39,6 +39,13 @@ const NAV: NavDef[] = [
     badge: "reviews",
     visible: (c) => c.isFeatureOn("ai.proposals"),
   },
+  {
+    to: "/review",
+    label: "Business review",
+    icon: "business-review",
+    group: "primary",
+    visible: (c) => c.isFeatureOn("portfolio.leadership"),
+  },
   { to: "/portfolio", label: "Portfolio", icon: "portfolio", group: "primary", visible: ALWAYS },
   {
     to: "/initiatives",

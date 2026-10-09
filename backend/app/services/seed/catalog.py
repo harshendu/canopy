@@ -324,6 +324,27 @@ class InitiativeSpec:
     outcomes: tuple[OutcomeSpec, ...] = ()
     risks: tuple[RiskSpec, ...] = ()
     docs: tuple[DocSpec, ...] = ()
+    # The initiative's core team: (engineer name, lead role: technical | product | design).
+    # Empty = no lead team → plain role-based editing (USER_FLOWS §R6).
+    leads: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class LeadershipNoteSpec:
+    """A note from the executive layer on an initiative/project view (USER_FLOWS §BR)."""
+
+    scope_key: str  # initiative key or project key (per `scope_level`)
+    scope_level: str  # initiative | project
+    author_email: str
+    kind: str  # watch | priority | feedback
+    body: str
+    priority: int | None = None
+    target_kind: str | None = None  # decision | risk | outcome | milestone
+    target_title: str | None = None  # the target's title/name inside that scope
+    status: str = "open"  # open | acknowledged | resolved
+    response: str | None = None
+    responder_email: str | None = None
+    created_days_ago: int = 3
 
 
 @dataclass(frozen=True)
@@ -436,6 +457,7 @@ class Dataset:
     jira_task_keys: tuple[tuple[str, str, str], ...]  # (issue id, key, flagship task name)
     pull_requests: tuple[PullRequestSpec, ...]
     connections: Callable[[int], list[DemoConnection]]  # flagship project id → connections
+    leadership_notes: tuple[LeadershipNoteSpec, ...] = ()
 
     def accounts(self) -> list[DemoAccount]:
         return [DemoAccount(u.email, u.full_name, u.role.value, u.function.value)

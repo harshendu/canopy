@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { AlertsResponse, ForecastResponse, ProjectSummary } from "../api/types";
 import { riskTone } from "../lib/risk";
 import { tabEnabled, type IsFeatureOn, type ProjectTab } from "../lib/projectNav";
+import LeadershipNotesPanel from "./LeadershipNotesPanel";
 import OutcomesPanel from "./OutcomesPanel";
 import { QueryError } from "./QueryError";
 import { Icon } from "./icons";
@@ -69,11 +70,14 @@ function Tile({
 export default function ProjectOverview({
   projectId,
   mayPlan,
+  canRespond,
   isOn,
   onOpenTab,
 }: {
   projectId: number;
   mayPlan: boolean;
+  /** The current user leads this project's initiative (may answer leadership notes, §BR). */
+  canRespond: boolean;
   isOn: IsFeatureOn;
   onOpenTab: (tab: ProjectTab) => void;
 }) {
@@ -214,6 +218,10 @@ export default function ProjectOverview({
           />
         )}
       </div>
+
+      {isOn("portfolio.leadership") && (
+        <LeadershipNotesPanel scope="project" scopeId={id} canRespond={canRespond} compact />
+      )}
 
       {/* The bet — relocated here from above the tabs so it leads the entry, not every workspace. */}
       {outcomesOn && (

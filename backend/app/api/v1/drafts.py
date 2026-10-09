@@ -29,6 +29,7 @@ from app.schemas.entities import (
     DraftTaskUpdate,
 )
 from app.services import draft_sync, integration_policy
+from app.services.access import ensure_project_editable
 
 router = APIRouter()
 
@@ -58,10 +59,11 @@ async def list_draft_plans(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_draft_plan(
-    session: SessionDep, _: PlannerWriter, project_id: int, payload: DraftPlanCreate
+    session: SessionDep, user: PlannerWriter, project_id: int, payload: DraftPlanCreate
 ) -> DraftPlan:
     if await session.get(Project, project_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    await ensure_project_editable(session, user, project_id)
     plan = DraftPlan(project_id=project_id, **payload.model_dump())
     session.add(plan)
     await session.commit()
@@ -84,9 +86,10 @@ async def get_draft_plan(session: SessionDep, _: CurrentUser, plan_id: int) -> D
 
 @router.patch("/draft-plans/{plan_id}", response_model=DraftPlanRead)
 async def update_draft_plan(
-    session: SessionDep, _: PlannerWriter, plan_id: int, payload: DraftPlanUpdate
+    session: SessionDep, user: PlannerWriter, plan_id: int, payload: DraftPlanUpdate
 ) -> DraftPlan:
     plan = await _get_plan(session, plan_id)
+    await ensure_project_editable(session, user, plan.project_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(plan, field, value)
     await session.commit()
@@ -95,10 +98,11 @@ async def update_draft_plan(
 
 
 @router.delete("/draft-plans/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_draft_plan(session: SessionDep, _: PlannerWriter, plan_id: int) -> None:
+async def delete_draft_plan(session: SessionDep, user: PlannerWriter, plan_id: int) -> None:
     plan = await session.get(DraftPlan, plan_id)
     if plan is None:
         return
+    await ensure_project_editable(session, user, plan.project_id)
     # Clear the self-referential parent links first, then bulk-delete: Postgres/MySQL enforce
     # the parent_id FK (SQLite does not), so per-row deletes could drop a parent before its
     # child. Nulling parents removes that ordering hazard.
@@ -116,9 +120,10 @@ async def delete_draft_plan(session: SessionDep, _: PlannerWriter, plan_id: int)
     status_code=status.HTTP_201_CREATED,
 )
 async def add_draft_task(
-    session: SessionDep, _: PlannerWriter, plan_id: int, payload: DraftTaskCreate
+    session: SessionDep, user: PlannerWriter, plan_id: int, payload: DraftTaskCreate
 ) -> DraftTask:
-    await _get_plan(session, plan_id)
+    plan = await _get_plan(session, plan_id)
+    await ensure_project_editable(session, user, plan.project_id)
     task = DraftTask(plan_id=plan_id, **payload.model_dump())
     session.add(task)
     await session.commit()
@@ -128,11 +133,13 @@ async def add_draft_task(
 
 @router.patch("/draft-tasks/{task_id}", response_model=DraftTaskRead)
 async def update_draft_task(
-    session: SessionDep, _: PlannerWriter, task_id: int, payload: DraftTaskUpdate
+    session: SessionDep, user: PlannerWriter, task_id: int, payload: DraftTaskUpdate
 ) -> DraftTask:
     task = await session.get(DraftTask, task_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft task not found")
+    plan = await _get_plan(session, task.plan_id)
+    await ensure_project_editable(session, user, plan.project_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(task, field, value)
     await session.commit()
@@ -141,8 +148,11 @@ async def update_draft_task(
 
 
 @router.delete("/draft-tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_draft_task(session: SessionDep, _: PlannerWriter, task_id: int) -> None:
+async def delete_draft_task(session: SessionDep, user: PlannerWriter, task_id: int) -> None:
     task = await session.get(DraftTask, task_id)
+    if task is not None:
+        plan = await _get_plan(session, task.plan_id)
+        await ensure_project_editable(session, user, plan.project_id)
     if task is not None:
         # Detach any child tasks first (parent_id FK is enforced on Postgres/MySQL).
         await session.execute(
@@ -163,6 +173,9 @@ async def push_draft_to_jira(
     write = await integration_policy.resolve_write(session, Provider.jira)
     if not write.allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=write.reason)
+    existing = await session.get(DraftPlan, plan_id)  # a missing plan is draft_sync's 400
+    if existing is not None:
+        await ensure_project_editable(session, user, existing.project_id)
     try:
         return await draft_sync.push_plan_to_jira(
             session, plan_id, payload.connection_id, user.id
@@ -173,11 +186,14 @@ async def push_draft_to_jira(
 
 @router.post("/draft-plans/{plan_id}/record-push", response_model=DraftRecordPushResult)
 async def record_draft_push(
-    session: SessionDep, _: PlannerWriter, plan_id: int, payload: DraftRecordPushRequest
+    session: SessionDep, user: PlannerWriter, plan_id: int, payload: DraftRecordPushRequest
 ) -> DraftRecordPushResult:
     """Write-back for `write_strategy=mcp`: Claude created the Jira tickets itself; record their
     ids here so re-pushing is idempotent and the plan flips to synced. Internal write — allowed
     for agent-scope tokens (no `HumanOnly` gate), unlike the direct push above."""
+    existing = await session.get(DraftPlan, plan_id)
+    if existing is not None:
+        await ensure_project_editable(session, user, existing.project_id)
     try:
         return await draft_sync.record_external_push(session, plan_id, payload.results)
     except draft_sync.DraftPushError as exc:

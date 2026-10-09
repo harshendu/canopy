@@ -217,8 +217,8 @@ async def test_agentic_dataset_loads_with_the_same_depth(db_session):
 
     assert set(DATASETS) >= {"helix", "agentic"}
     ds = get_dataset("agentic")
-    assert {i.key for i in ds.initiatives} == {
-        "INTERVIEWER", "PILOT", "FORGE", "BUILDER", "DEVAGENTS",
+    assert {i.key for i in ds.initiatives} >= {
+        "INTERVIEWER", "PILOT", "FORGE", "BUILDER", "DEVAGENTS", "SUPPORT", "ENHANCE",
     }
     # Every referenced task name resolves (hand-offs, scenarios, baseline, PRs, Jira keys).
     names = {p.key: {t.name for ph in p.phases for t in ph.tasks} for p in ds.projects}
@@ -236,8 +236,6 @@ async def test_agentic_dataset_loads_with_the_same_depth(db_session):
         assert name in names[ds.flagship_key]
 
     counts = await seed.load_seed_data(db_session, set(), ds)
-    assert counts["initiatives"] == 5
-    assert counts["projects"] == 10
     assert counts["tasks"] > 60
     assert counts["decisions"] >= 30
     assert counts["specs"] >= 10
@@ -250,8 +248,10 @@ async def test_agentic_dataset_loads_with_the_same_depth(db_session):
     leads = (
         await db_session.execute(select(User).where(User.role == UserRole.architect))
     ).scalars().all()
-    assert len(leads) == 3 * counts["initiatives"]
+    assert len(leads) == sum(len(i.leads) for i in ds.initiatives)  # one login per seat
+    assert all(len(i.leads) >= 2 for i in ds.initiatives)
     assert {u.function.value for u in leads} == {"engineering", "product", "design"}
+    assert counts["initiatives"] == 7 and counts["projects"] == 12
     execs = (
         await db_session.execute(select(User).where(User.role == UserRole.viewer))
     ).scalars().all()
