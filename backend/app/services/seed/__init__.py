@@ -15,7 +15,9 @@ Public API:
 
 from __future__ import annotations
 
-from app.services.seed.catalog import DEMO_PASSWORD, demo_accounts
+from app.core.config import settings
+from app.services.seed.agentic import AGENTIC
+from app.services.seed.catalog import DEMO_PASSWORD, HELIX, Dataset, DemoAccount
 from app.services.seed.loader import (
     clear_all_data,
     load_seed_data,
@@ -23,10 +25,28 @@ from app.services.seed.loader import (
     seed_summary,
 )
 
+# Every selectable narrative, by key. ``DEMO_DATASET`` picks the default (login-screen accounts,
+# reseed without an explicit choice); the admin reseed endpoint can pick any of them.
+DATASETS: dict[str, Dataset] = {HELIX.key: HELIX, AGENTIC.key: AGENTIC}
+
+
+def get_dataset(key: str | None = None) -> Dataset:
+    """Resolve a dataset by key (default: ``settings.DEMO_DATASET``; unknown keys → KeyError)."""
+    return DATASETS[key or settings.DEMO_DATASET]
+
+
+def demo_accounts(key: str | None = None) -> list[DemoAccount]:
+    """The demo logins of a dataset (for the login screen + admin panel + e2e)."""
+    return get_dataset(key).accounts()
+
+
 __all__ = [
+    "DATASETS",
     "DEMO_PASSWORD",
+    "Dataset",
     "clear_all_data",
     "demo_accounts",
+    "get_dataset",
     "load_seed_data",
     "reseed",
     "seed_summary",

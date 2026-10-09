@@ -632,12 +632,21 @@ export interface DemoAccount {
   function: string;
 }
 
+export interface DemoDataset {
+  key: string;
+  name: string;
+  description: string;
+}
+
 export interface DemoStatus {
   demo_mode: boolean;
   seeded: boolean;
   counts: Record<string, number>;
   password: string | null;
   accounts: DemoAccount[];
+  /** The default dataset key (`DEMO_DATASET`) — what the login screen's accounts come from. */
+  dataset: string | null;
+  datasets: DemoDataset[];
 }
 
 export interface DemoPublic {

@@ -1874,14 +1874,37 @@ Compare/Capacity/Gantt/Milestones tabs all show a real delta), three demo **conn
 and project state that makes the **alerts** digest fire (deadline miss, overdue milestone,
 over-allocation, overdue risk, open blocker).
 
+### Z1a. Alternate dataset — Northstar (agentic products) **[new]**
+A second, selectable narrative lives in `backend/app/services/seed/agentic.py` and loads through
+the same generic loader (`Dataset` holder in `catalog.py`; registry `DATASETS` in the package
+init). **Northstar** is a talent-technology company building agentic products — five initiatives
+(**AI Interviewer** — voice/video sessions between an AI agent and a human; **Talent Pilot** — an
+integrated agent harness for recruiters; **Talent Forge** — an agent harness to build and deploy
+fully customizable applications; **Agent Builder** — the runtime engine behind every agent;
+**Dev Agents** — internal monitoring / on-call / productivity agents) over **10 projects**. Instead
+of a single architect, a cross-functional **core team of project leads** (a technical lead, a
+product lead and a UX lead — each an `architect`-role login with a different `function`) jointly
+plays the architect role. Same depth as Helix: WBS + cross-project hand-offs, ADR threads +
+fitness functions, drift, specs, risks, outcomes, docs, blockers, retros, draft plans, a what-if
+scenario per initiative, a flagship baseline (Interview Orchestrator) and demo connections.
+- **Pick it:** `DEMO_DATASET=agentic` (env; default `helix`) makes it the default — the login
+  screen's click-to-fill accounts and a plain reseed use it — or choose it per reseed from the
+  **Dataset** dropdown on `/admin/demo` (`POST /admin/demo/reseed?dataset=agentic`).
+- **Known limit:** the offline connector mock (`app/connectors/demo.py`) still serves the fixed
+  Helix-flavoured Jira/GitHub/Drive fixtures, so *Sync from Jira* on the Northstar data pulls
+  `HELIX-…` issues; the seeded Jira links / PR cache on the flagship are Northstar's own.
+
 ### Z2. Reset / reload from the UI *(admin, demo mode)*
 - **UI:** sidebar **"Demo data"** (admin only) → **`/admin/demo`**. Shows current row counts + the
-  demo logins, with **"Reset & load demo data"** (wipe everything, then rebuild) and
-  **"Clear all data"** (wipe to empty). Both keep the acting admin **and** the configured superuser
-  signed in; everything else (including other users) is wiped and re-seeded.
-- **API:** `GET /api/v1/admin/demo/status` · `POST /api/v1/admin/demo/reseed` ·
-  `POST /api/v1/admin/demo/clear` — all admin-gated **and** double-gated on `DEMO_MODE` (they 403
-  when it is off, so they can never run against prod). `GET /api/v1/health` reports `demo_mode`.
+  demo logins, with **"Reset & load demo data"** (wipe everything, then rebuild — a **Dataset**
+  dropdown picks the narrative when more than one is registered, §Z1a) and **"Clear all data"**
+  (wipe to empty). Both keep the acting admin **and** the configured superuser signed in;
+  everything else (including other users) is wiped and re-seeded.
+- **API:** `GET /api/v1/admin/demo/status` (counts + logins + the default `dataset` and the
+  registered `datasets`) · `POST /api/v1/admin/demo/reseed?dataset=` (optional; default
+  `DEMO_DATASET`, unknown key → 400) · `POST /api/v1/admin/demo/clear` — all admin-gated **and**
+  double-gated on `DEMO_MODE` (they 403 when it is off, so they can never run against prod).
+  `GET /api/v1/health` reports `demo_mode`.
 - **Login helper:** `GET /api/v1/admin/demo/public` (unauthenticated) lists the demo accounts +
   shared password when demo mode is on; the **login screen** shows them as click-to-fill (empty
   otherwise). Every demo login uses the password `canopy-demo`.

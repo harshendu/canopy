@@ -93,16 +93,8 @@ from app.services.planner import reschedule_project
 from app.services.scenario_engine import snapshot_live_into_scenario
 from app.services.seed import catalog
 from app.services.seed.catalog import (
-    ALLOCATIONS,
-    AVAILABILITY,
-    CROSS_PROJECT_HANDOFFS,
-    ENGINEERS,
-    FLAGSHIP_KEY,
-    INITIATIVES,
-    PROJECTS,
-    SCENARIOS,
-    TEAM_ROLES,
-    USERS,
+    HELIX,
+    Dataset,
     ProjectSpec,
 )
 
@@ -200,6 +192,7 @@ async def clear_all_data(session: AsyncSession, keep_user_ids: set[int]) -> None
 # --------------------------------------------------------------------------- #
 @dataclass
 class _Refs:
+    ds: Dataset = HELIX
     users: dict[str, User] = field(default_factory=dict)
     engineers: dict[str, Engineer] = field(default_factory=dict)
     roles: dict[str, Role] = field(default_factory=dict)
@@ -220,7 +213,7 @@ class _Refs:
 # --------------------------------------------------------------------------- #
 async def _build_users(session: AsyncSession, refs: _Refs) -> None:
     existing = {u.email: u for u in (await session.execute(select(User))).scalars().all()}
-    for spec in USERS:
+    for spec in refs.ds.users:
         if spec.email in existing:
             refs.users[spec.email] = existing[spec.email]
             continue
@@ -231,9 +224,9 @@ async def _build_users(session: AsyncSession, refs: _Refs) -> None:
 
 
 async def _build_team(session: AsyncSession, refs: _Refs) -> None:
-    for name in TEAM_ROLES:
+    for name in refs.ds.team_roles:
         refs.roles[name] = await _add(session, Role(name=name))
-    for spec in ENGINEERS:
+    for spec in refs.ds.engineers:
         user = refs.users.get(spec.user_email) if spec.user_email else None
         refs.engineers[spec.name] = await _add(session, Engineer(
             name=spec.name, email=spec.user_email, title=spec.title,
@@ -242,7 +235,7 @@ async def _build_team(session: AsyncSession, refs: _Refs) -> None:
             timezone=spec.timezone, committed_hours_per_week=spec.committed_hours_per_week,
         ))
     today = _today()
-    for av in AVAILABILITY:
+    for av in refs.ds.availability:
         eng_id = refs.eng(av.engineer)
         if eng_id is None:
             continue
@@ -255,7 +248,7 @@ async def _build_team(session: AsyncSession, refs: _Refs) -> None:
 
 async def _build_initiatives(session: AsyncSession, refs: _Refs) -> None:
     today = _today()
-    for spec in INITIATIVES:
+    for spec in refs.ds.initiatives:
         init = await _add(session, Initiative(
             key=spec.key, name=spec.name, outcome_statement=spec.outcome_statement,
             start_date=_weeks(today, -10), target_date=_weeks(today, spec.target_weeks_ahead),
@@ -269,7 +262,7 @@ async def _build_initiatives(session: AsyncSession, refs: _Refs) -> None:
 
 async def _build_initiative_extras(session: AsyncSession, refs: _Refs) -> None:
     today = _today()
-    for spec in INITIATIVES:
+    for spec in refs.ds.initiatives:
         init = refs.initiatives[spec.key]
         iid = _req(init.id)
         for o in spec.outcomes:
@@ -299,11 +292,11 @@ async def _build_initiative_extras(session: AsyncSession, refs: _Refs) -> None:
 # Projects — schedule + per-project rich content
 # --------------------------------------------------------------------------- #
 async def _build_projects(session: AsyncSession, refs: _Refs) -> None:
-    for spec in PROJECTS:
+    for spec in refs.ds.projects:
         await _build_one_project(session, refs, spec)
 
     # Cross-project hand-offs within an initiative (drive the cross-project critical path).
-    for (pk_pred, t_pred), (pk_succ, t_succ) in CROSS_PROJECT_HANDOFFS:
+    for (pk_pred, t_pred), (pk_succ, t_succ) in refs.ds.cross_project_handoffs:
         pred = refs.tasks[pk_pred].get(t_pred)
         succ = refs.tasks[pk_succ].get(t_succ)
         if pred is not None and succ is not None:
@@ -626,9 +619,9 @@ async def _build_project_activity(
 
 
 async def _baseline_flagship(session: AsyncSession, refs: _Refs) -> None:
-    project = refs.projects[FLAGSHIP_KEY]
+    project = refs.projects[refs.ds.flagship_key]
     pid = _req(project.id)
-    tasks = refs.leaf_order[FLAGSHIP_KEY]
+    tasks = refs.leaf_order[refs.ds.flagship_key]
     for t in tasks:
         t.baseline_start = t.start
         t.baseline_end = t.end
@@ -636,7 +629,7 @@ async def _baseline_flagship(session: AsyncSession, refs: _Refs) -> None:
     await _add(session, Baseline(
         project_id=pid, note="Plan-of-record committed at architecture sign-off.",
         task_count=len(tasks), project_end=max((t.end for t in tasks if t.end), default=None)))
-    in_flight = refs.tasks[FLAGSHIP_KEY].get("In-VPC model execution")
+    in_flight = refs.tasks[refs.ds.flagship_key].get(refs.ds.baseline_inflight_task)
     if in_flight is not None:
         in_flight.duration += 4
         await session.flush()
@@ -644,7 +637,7 @@ async def _baseline_flagship(session: AsyncSession, refs: _Refs) -> None:
 
 
 async def _build_allocations(session: AsyncSession, refs: _Refs) -> None:
-    for eng_name, project_key, pct in ALLOCATIONS:
+    for eng_name, project_key, pct in refs.ds.allocations:
         eng_id = refs.eng(eng_name)
         project = refs.projects.get(project_key)
         if eng_id is None or project is None:
@@ -658,38 +651,30 @@ async def _build_allocations(session: AsyncSession, refs: _Refs) -> None:
 # Connectors (demo HTTP mock) + caches + scenarios
 # --------------------------------------------------------------------------- #
 async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
-    flagship = refs.projects[FLAGSHIP_KEY]
+    flagship = refs.projects[refs.ds.flagship_key]
     fid = _req(flagship.id)
     conns: dict[str, Connection] = {}
-    for dc in catalog.demo_connections(fid):
+    for dc in refs.ds.connections(fid):
         conns[dc.provider] = await _add(session, Connection(
             provider=Provider(dc.provider), name=dc.name, config=dict(dc.config),
             encrypted_token=encrypt_token("demo-token")))
 
     # GitHub PRs, each tied to the task it implements (a webhook would match by branch/Jira key).
-    prs = [
-        (318, "Wire secure gateway into engine", "open", "tombecker", "Wire secure gateway in"),
-        (316, "Egress allow-list enforcement", "open", "yukitanaka", "Wire secure gateway in"),
-        (309, "Streaming pipeline core", "closed", "tombecker", "Streaming pipeline core"),
-    ]
-    for number, title, state, author, task_name in prs:
-        pr_task = refs.tasks[FLAGSHIP_KEY].get(task_name)
+    repo = refs.ds.github_repo
+    for pr in refs.ds.pull_requests:
+        pr_task = refs.tasks[refs.ds.flagship_key].get(pr.task_name)
         await _add(session, PullRequest(
-            repo="helix-io/data-plane", number=number, title=title, state=state,
-            url=f"https://github.com/helix-io/data-plane/pull/{number}", author=author,
+            repo=repo, number=pr.number, title=pr.title, state=pr.state,
+            url=f"https://github.com/{repo}/pull/{pr.number}", author=pr.author,
             task_id=pr_task.id if pr_task is not None else None))
 
+    epic_id, epic_key = refs.ds.jira_epic
     await _add(session, JiraLink(
-        connection_id=_req(conns["jira"].id), jira_issue_id="910000", jira_key="HELIX-100",
+        connection_id=_req(conns["jira"].id), jira_issue_id=epic_id, jira_key=epic_key,
         jira_issue_type="Epic", target_type="project", target_id=fid))
-    # Mirror Jira issue keys onto tasks so each shows a clickable HELIX-… link in the UI.
-    for ext_id, key, name in (("910101", "HELIX-101", "Processing contract spec"),
-                              ("910102", "HELIX-102", "Streaming pipeline core"),
-                              ("910103", "HELIX-103", "Engine architecture"),
-                              ("910104", "HELIX-104", "In-VPC model execution"),
-                              ("910105", "HELIX-105", "Wire secure gateway in"),
-                              ("910106", "HELIX-106", "Enclave & key-handling ADR")):
-        task = refs.tasks[FLAGSHIP_KEY].get(name)
+    # Mirror Jira issue keys onto tasks so each shows a clickable <KEY>-… link in the UI.
+    for ext_id, key, name in refs.ds.jira_task_keys:
+        task = refs.tasks[refs.ds.flagship_key].get(name)
         if task is not None and task.id is not None:
             await _add(session, ExternalRef(
                 provider=Provider.jira, external_id=ext_id, external_key=key,
@@ -701,7 +686,7 @@ async def _build_scenarios(session: AsyncSession, refs: _Refs) -> None:
     create-scenario endpoint uses) with a coherent set of edits layered on, so Compare / Capacity /
     Gantt / Milestones all show a real delta. Status is set last (snapshot assumes a draft)."""
     today = _today()
-    for sc in SCENARIOS:
+    for sc in refs.ds.scenarios:
         init = refs.initiatives.get(sc.initiative_key)
         project = refs.projects.get(sc.project_key)
         if init is None or project is None:
@@ -780,9 +765,13 @@ async def _build_scenarios(session: AsyncSession, refs: _Refs) -> None:
 # --------------------------------------------------------------------------- #
 # Orchestration + summary
 # --------------------------------------------------------------------------- #
-async def load_seed_data(session: AsyncSession, keep_user_ids: set[int]) -> dict[str, int]:
-    """Build the full demo dataset on an (assumed) empty domain. Returns the summary counts."""
-    refs = _Refs()
+async def load_seed_data(
+    session: AsyncSession, keep_user_ids: set[int], dataset: Dataset | None = None
+) -> dict[str, int]:
+    """Build a full demo dataset on an (assumed) empty domain. Returns the summary counts.
+
+    ``dataset`` picks the narrative (default: Helix); see ``DATASETS`` in the package init."""
+    refs = _Refs(ds=dataset or HELIX)
     await _build_users(session, refs)
     await _build_team(session, refs)
     await _build_initiatives(session, refs)
@@ -794,10 +783,12 @@ async def load_seed_data(session: AsyncSession, keep_user_ids: set[int]) -> dict
     return await seed_summary(session)
 
 
-async def reseed(session: AsyncSession, keep_user_ids: set[int]) -> dict[str, int]:
-    """Wipe everything (keeping the operator) and rebuild the demo dataset from scratch."""
+async def reseed(
+    session: AsyncSession, keep_user_ids: set[int], dataset: Dataset | None = None
+) -> dict[str, int]:
+    """Wipe everything (keeping the operator) and rebuild a demo dataset from scratch."""
     await clear_all_data(session, keep_user_ids)
-    return await load_seed_data(session, keep_user_ids)
+    return await load_seed_data(session, keep_user_ids, dataset)
 
 
 async def _count(session: AsyncSession, model: type[SQLModel]) -> int:

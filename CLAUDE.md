@@ -295,7 +295,11 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   iterating `SQLModel.metadata.sorted_tables` in reverse (nulling self-FKs first — portability rule),
   keeping the acting admin + superuser. Demo connectors (`config.demo=true`) are served by an offline
   HTTP mock (`app/connectors/demo.py`) injected at `Connector.open_client`, so Jira/GitHub/Drive
-  sync + reads work without credentials. Extend the seed as features grow (it backs e2e). USER_FLOWS §Z.
+  sync + reads work without credentials. Extend the seed as features grow (it backs e2e). A
+  second narrative (`seed/agentic.py`, **Northstar** — AI Interviewer / Talent Pilot / Talent
+  Forge / Agent Builder / Dev Agents, run by a core team of project leads) loads through the same
+  generic loader: datasets are `Dataset` holders registered in `seed/__init__.py:DATASETS`,
+  picked by `DEMO_DATASET` (default `helix`) or per reseed (`?dataset=`). USER_FLOWS §Z/§Z1a.
 - **Frontend tests:** Vitest (`npm run test`) covers pure helpers (e.g. `src/lib/horizon.ts`); CI
   runs it between lint and build. Extract pure logic out of components to keep it testable.
 

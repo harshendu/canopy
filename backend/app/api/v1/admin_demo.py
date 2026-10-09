@@ -8,13 +8,13 @@ logged in (everything else, including other users, is wiped and re-seeded).
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import select
 
 from app.api.deps import AdminUser, DemoModeGuard, SessionDep
 from app.core.config import settings
 from app.models.user import User
-from app.schemas.admin import DemoAccountRead, DemoPublic, DemoStatus
+from app.schemas.admin import DemoAccountRead, DemoDatasetRead, DemoPublic, DemoStatus
 from app.services import seed
 
 router = APIRouter()
@@ -25,6 +25,22 @@ def _accounts() -> list[DemoAccountRead]:
         DemoAccountRead(email=a.email, full_name=a.full_name, role=a.role, function=a.function)
         for a in seed.demo_accounts()
     ]
+
+
+def _datasets() -> list[DemoDatasetRead]:
+    return [
+        DemoDatasetRead(key=d.key, name=d.name, description=d.description)
+        for d in seed.DATASETS.values()
+    ]
+
+
+def _pick_dataset(key: str | None) -> seed.Dataset:
+    try:
+        return seed.get_dataset(key)
+    except KeyError:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown demo dataset {key!r}"
+        ) from None
 
 
 async def _keep_user_ids(session: SessionDep, admin: User) -> set[int]:
@@ -52,6 +68,8 @@ async def _status(session: SessionDep) -> DemoStatus:
         counts=counts,
         password=seed.DEMO_PASSWORD if on else None,
         accounts=_accounts() if on else [],
+        dataset=settings.DEMO_DATASET if on else None,
+        datasets=_datasets() if on else [],
     )
 
 
@@ -69,9 +87,16 @@ async def demo_status(session: SessionDep, _: AdminUser) -> DemoStatus:
 
 
 @router.post("/demo/reseed", response_model=DemoStatus)
-async def demo_reseed(session: SessionDep, admin: AdminUser, __: DemoModeGuard) -> DemoStatus:
+async def demo_reseed(
+    session: SessionDep,
+    admin: AdminUser,
+    __: DemoModeGuard,
+    dataset: str | None = Query(default=None, description="Seed narrative key (see status)"),
+) -> DemoStatus:
+    """Wipe + rebuild. ``dataset`` picks the narrative; default is ``DEMO_DATASET``."""
+    chosen = _pick_dataset(dataset)
     keep = await _keep_user_ids(session, admin)
-    await seed.reseed(session, keep)
+    await seed.reseed(session, keep, chosen)
     return await _status(session)
 
 

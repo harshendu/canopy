@@ -17,6 +17,7 @@ fully-populated projects so every UI surface has real content. Pure data + froze
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from app.models.base import UserFunction, UserRole
@@ -396,6 +397,51 @@ class DemoConnection:
     config: dict[str, object] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class PullRequestSpec:
+    """A cached GitHub PR on the flagship project, tied to the task it implements."""
+
+    number: int
+    title: str
+    state: str  # open | closed
+    author: str  # github login
+    task_name: str
+
+
+@dataclass(frozen=True)
+class Dataset:
+    """One complete, self-contained demo narrative (people → initiatives → projects → extras).
+
+    The loader is generic over this holder, so alternate datasets are pure data modules that
+    build one of these (see ``agentic.py``); ``DATASETS`` in ``__init__`` registers them.
+    """
+
+    key: str
+    name: str
+    description: str
+    users: tuple[DemoUser, ...]
+    team_roles: tuple[str, ...]
+    engineers: tuple[DemoEngineer, ...]
+    availability: tuple[DemoAvailability, ...]
+    allocations: tuple[tuple[str, str, float], ...]
+    initiatives: tuple[InitiativeSpec, ...]
+    projects: tuple[ProjectSpec, ...]
+    cross_project_handoffs: tuple[tuple[tuple[str, str], tuple[str, str]], ...]
+    scenarios: tuple[ScenarioSpec, ...]
+    flagship_key: str
+    baseline_inflight_task: str  # flagship task that slips after the baseline (variance)
+    github_repo: str  # "owner/repo" of the flagship's PR cache
+    jira_project_key: str
+    jira_epic: tuple[str, str]  # (issue id, key) linked to the flagship project
+    jira_task_keys: tuple[tuple[str, str, str], ...]  # (issue id, key, flagship task name)
+    pull_requests: tuple[PullRequestSpec, ...]
+    connections: Callable[[int], list[DemoConnection]]  # flagship project id → connections
+
+    def accounts(self) -> list[DemoAccount]:
+        return [DemoAccount(u.email, u.full_name, u.role.value, u.function.value)
+                for u in self.users]
+
+
 # --------------------------------------------------------------------------- #
 # DATA — people
 # --------------------------------------------------------------------------- #
@@ -549,7 +595,7 @@ INITIATIVES: tuple[InitiativeSpec, ...] = (
 # --------------------------------------------------------------------------- #
 # DATA — projects (defined in app/services/seed/projects.py to keep files readable)
 # --------------------------------------------------------------------------- #
-from app.services.seed.projects import PROJECTS  # noqa: E402, F401  (re-exported)
+from app.services.seed.projects import PROJECTS  # noqa: E402  (re-exported)
 
 FLAGSHIP_KEY = "ENGINE"
 
@@ -634,3 +680,35 @@ def demo_connections(flagship_project_id: int) -> list[DemoConnection]:
             "demo": True, "folder_id": "demo-folder",
         }),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# The default dataset (Helix)
+# --------------------------------------------------------------------------- #
+HELIX = Dataset(
+    key="helix",
+    name="Helix — hybrid data platform",
+    description="A control plane, a customer-deployed data plane and a field org (3 initiatives, "
+                "8 projects).",
+    users=USERS, team_roles=TEAM_ROLES, engineers=ENGINEERS, availability=AVAILABILITY,
+    allocations=ALLOCATIONS, initiatives=INITIATIVES, projects=PROJECTS,
+    cross_project_handoffs=CROSS_PROJECT_HANDOFFS, scenarios=SCENARIOS,
+    flagship_key=FLAGSHIP_KEY, baseline_inflight_task="In-VPC model execution",
+    github_repo="helix-io/data-plane", jira_project_key="HELIX",
+    jira_epic=("910000", "HELIX-100"),
+    jira_task_keys=(("910101", "HELIX-101", "Processing contract spec"),
+                    ("910102", "HELIX-102", "Streaming pipeline core"),
+                    ("910103", "HELIX-103", "Engine architecture"),
+                    ("910104", "HELIX-104", "In-VPC model execution"),
+                    ("910105", "HELIX-105", "Wire secure gateway in"),
+                    ("910106", "HELIX-106", "Enclave & key-handling ADR")),
+    pull_requests=(
+        PullRequestSpec(318, "Wire secure gateway into engine", "open", "tombecker",
+                        "Wire secure gateway in"),
+        PullRequestSpec(316, "Egress allow-list enforcement", "open", "yukitanaka",
+                        "Wire secure gateway in"),
+        PullRequestSpec(309, "Streaming pipeline core", "closed", "tombecker",
+                        "Streaming pipeline core"),
+    ),
+    connections=demo_connections,
+)
