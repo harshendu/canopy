@@ -2,6 +2,8 @@
 name = "canopy-backend"
 version = "0.1.0"
 description = "Canopy — software architecture & project management backend"
+license = "Apache-2.0"
+authors = [{ name = "Harshendu Patel" }]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
@@ -23,6 +25,11 @@ dependencies = [
     "redis>=5.0",
     "reportlab>=4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/harshendu/canopy"
+Source = "https://github.com/harshendu/canopy"
+Issues = "https://github.com/harshendu/canopy/issues"
 
 [project.optional-dependencies]
 dev = [
