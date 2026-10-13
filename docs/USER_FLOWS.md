@@ -94,7 +94,10 @@ that navigates must follow them.
   message is shown.
 - **API:** `POST /api/v1/auth/login` (form-encoded `username`/`password`) → `{access_token}`.
 - **Notes:** the first admin is seeded at backend startup from `FIRST_SUPERUSER_EMAIL` /
-  `FIRST_SUPERUSER_PASSWORD`. The token is sent as `Authorization: Bearer <jwt>` on every request.
+  `FIRST_SUPERUSER_PASSWORD` when that account doesn't exist yet; startup refuses to create it with
+  a password under 8 characters or a published placeholder (`changeme`, …), and the backend won't
+  start at all without a strong `SECRET_KEY` (`app/core/startup_checks.py`). The token is sent as
+  `Authorization: Bearer <jwt>` on every request.
 
 ### A2. Sign out
 - **UI:** sidebar "Sign out" clears the stored token and returns to `/login`.
@@ -1263,7 +1266,9 @@ GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the
 - **Flow:** Jira/GitHub POST to `/webhooks/jira` / `/webhooks/github`. The receiver verifies the HMAC
   signature, matches the event to active connection(s), and enqueues an arq job (never processes
   inline). Jira issue events upsert the task; GitHub `pull_request` events upsert the PR cache.
-- **Setup:** `JIRA_WEBHOOK_SECRET` / `GITHUB_WEBHOOK_SECRET`.
+- **Setup:** `JIRA_WEBHOOK_SECRET` / `GITHUB_WEBHOOK_SECRET` — **required**: intake fails closed, so
+  an endpoint answers `403` to every request until its secret is set, and `401` to a missing or
+  forged signature.
 
 ### J5. Jira sprints & status history
 - **API:** `GET /api/v1/connectors/jira/{id}/boards`, `.../sprints?board_id=`, and
@@ -1287,8 +1292,8 @@ GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the
 - A generic event substrate: `kind` ∈ `deploy | build_failure | incident_open | incident_close`,
   optionally tagged to a component. Events appear in the **Activity** feed (§B3) and feed the
   **quality-risk** family (§Q1); an `incident_open` **auto-opens a postmortem** (§P2).
-- **Webhook:** `POST /webhooks/events` (HMAC via `EVENTS_WEBHOOK_SECRET`; recorded inline — it's a
-  light write). **API/UI:** `GET /api/v1/projects/{id}/activity` (feed) and
+- **Webhook:** `POST /webhooks/events` (HMAC via `EVENTS_WEBHOOK_SECRET`, required — `403` until
+  set; recorded inline — it's a light write). **API/UI:** `GET /api/v1/projects/{id}/activity` (feed) and
   `POST /api/v1/projects/{id}/activity` (planner-gated manual ingest, used by the Activity tab and
   the plugin) · **MCP:** `get_activity`, `record_activity`. Datadog / Sentry / GitHub Actions can be
   layered on this substrate.
@@ -1738,8 +1743,8 @@ exist: **draft plans** stage *outbound* plan→Jira tickets (§C10); **proposals
   For production / cloud Claude sessions, run the server as a long-lived service over
   **streamable HTTP** (`CANOPY_MCP_TRANSPORT=http` + `CANOPY_MCP_HOST`/`PORT`/`PATH`, default path
   `/mcp`; **SSE remains as a legacy option**) and point the session at
-  `https://<host>/mcp` with `"type": "http"`. Set `CANOPY_MCP_AUTH_TOKEN` whenever the endpoint is
-  reachable beyond localhost — clients must then send `Authorization: Bearer <token>`. Backend
+  `https://<host>/mcp` with `"type": "http"`. `CANOPY_MCP_AUTH_TOKEN` is required to bind beyond
+  loopback (the server refuses to start without it) — clients send `Authorization: Bearer <token>`. Backend
   connection and transport are all read from **environment variables**, so a headless cloud
   session needs no interactive plugin config. See README → *Production deployment* and
   `docs/PRODUCTION.md` (Caddy routes `/mcp` and ngrok exposes it publicly).

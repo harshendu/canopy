@@ -103,11 +103,19 @@ def ask_choice(question: str, options: list[tuple[str, str]]) -> str:
         warn("Invalid choice.")
 
 
+# Mirrors PLACEHOLDER_PASSWORDS in backend/app/core/startup_checks.py, which refuses to create
+# the first admin with one of these (this script stays dependency-free, so it can't import it).
+PLACEHOLDER_PASSWORDS = frozenset({"changeme", "change-me", "password", "canopy-demo"})
+
+
 def ask_password(question: str, *, min_len: int = 8) -> str:
     while True:
         first = getpass.getpass(f"  {question}: ").strip()
         if len(first) < min_len:
             warn(f"Must be at least {min_len} characters.")
+            continue
+        if first.lower() in PLACEHOLDER_PASSWORDS:
+            warn("That's a placeholder published in canopy's source — choose another.")
             continue
         if first != getpass.getpass("  Confirm password: ").strip():
             warn("Passwords do not match — try again.")
@@ -138,6 +146,7 @@ def defaults() -> dict[str, str]:
         "CANOPY_API_TOKEN": "",
         "GITHUB_WEBHOOK_SECRET": "",
         "JIRA_WEBHOOK_SECRET": "",
+        "EVENTS_WEBHOOK_SECRET": "",
         "OAUTH_REDIRECT_BASE_URL": "http://localhost:8000",
         "FRONTEND_BASE_URL": "http://localhost:5173",
         "JIRA_OAUTH_CLIENT_ID": "",
@@ -217,10 +226,11 @@ def collect() -> dict[str, str]:
 
     header("Integrations (optional)")
     if ask_yes_no("Configure webhook secrets / OAuth client credentials now?", default=False):
-        if ask_yes_no("Auto-generate random GitHub & Jira webhook secrets?", default=True):
+        if ask_yes_no("Auto-generate webhook secrets (GitHub, Jira, CI events)?", default=True):
             env["GITHUB_WEBHOOK_SECRET"] = secrets.token_hex(32)
             env["JIRA_WEBHOOK_SECRET"] = secrets.token_hex(32)
-            info("Set the same secrets in your GitHub / Jira webhook configuration.")
+            env["EVENTS_WEBHOOK_SECRET"] = secrets.token_hex(32)
+            info("Set the same secrets in your GitHub / Jira / CI webhook configuration.")
         for label, key in (
             ("Jira", "JIRA_OAUTH"),
             ("GitHub", "GITHUB_OAUTH"),
@@ -270,9 +280,10 @@ def render_env(e: dict[str, str]) -> str:
         f"CANOPY_API_BASE_URL={e['CANOPY_API_BASE_URL']}",
         f"CANOPY_API_TOKEN={e['CANOPY_API_TOKEN']}",
         "",
-        "# --- Connector webhook secrets (optional until configured) ---",
+        "# --- Webhook secrets (each endpoint rejects every request until its secret is set) ---",
         f"GITHUB_WEBHOOK_SECRET={e['GITHUB_WEBHOOK_SECRET']}",
         f"JIRA_WEBHOOK_SECRET={e['JIRA_WEBHOOK_SECRET']}",
+        f"EVENTS_WEBHOOK_SECRET={e['EVENTS_WEBHOOK_SECRET']}",
         "",
         "# --- OAuth 2.0 (3LO) ---",
         f"OAUTH_REDIRECT_BASE_URL={e['OAUTH_REDIRECT_BASE_URL']}",

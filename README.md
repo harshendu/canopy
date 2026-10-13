@@ -123,15 +123,15 @@ All settings are environment variables, read from `.env` at the repo root (or `b
 | --- | --- | --- |
 | `DATABASE_URL` | `postgresql+asyncpg://canopy:canopy@localhost:5432/canopy` | Async SQLAlchemy URL: `postgresql+asyncpg://…`, `mysql+aiomysql://…` (install the `[mysql]` extra), or `sqlite+aiosqlite:///…` (local dev only) |
 | `REDIS_URL` | `redis://localhost:6379/0` | Queue for the arq background worker |
-| `SECRET_KEY` | placeholder | **Required.** Signs access tokens and OAuth state — generate a long random value |
+| `SECRET_KEY` | — | **Required.** Signs access tokens and OAuth state. The API and worker refuse to start while it's empty, a published placeholder, or shorter than 32 characters |
 | `TOKEN_ENCRYPTION_KEY` | derived from `SECRET_KEY` | Fernet key that encrypts connector credentials at rest; set it explicitly in production |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | Access-token lifetime |
-| `FIRST_SUPERUSER_EMAIL` / `FIRST_SUPERUSER_PASSWORD` | unset | Admin account created on startup if it doesn't exist |
+| `FIRST_SUPERUSER_EMAIL` / `FIRST_SUPERUSER_PASSWORD` | unset | Admin account created on startup if it doesn't exist. Startup refuses to create it with a password under 8 characters or a placeholder such as `changeme` |
 | `BACKEND_CORS_ORIGINS` | `http://localhost:5173,http://localhost:4173` | Comma-separated origins allowed to call the API |
 | `DEMO_MODE` / `DEMO_DATASET` | `false` / `helix` | Unlocks the demo seed/reset endpoints and offline connector mocks. Datasets: `helix`, `agentic`. **Never enable in production.** |
 | `OAUTH_REDIRECT_BASE_URL` / `FRONTEND_BASE_URL` | `http://localhost:8000` / `http://localhost:5173` | Public URLs for OAuth callbacks and the post-consent redirect |
 | `JIRA_OAUTH_CLIENT_ID` / `…_SECRET`, `GITHUB_…`, `GOOGLE_…` | unset | OAuth 2.0 app credentials (only needed for the OAuth flow) |
-| `GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`, `EVENTS_WEBHOOK_SECRET` | unset | HMAC secrets for `/webhooks/*`. Verification is **skipped while a secret is empty**, so set them on any reachable deployment |
+| `GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`, `EVENTS_WEBHOOK_SECRET` | unset | HMAC secrets for `/webhooks/*`. Each endpoint **rejects every request** (403) until its secret is set |
 | `JIRA_POLL_MINUTES` | `10` | Cadence of the worker's Jira reconciliation poll |
 | `FILE_DROP_BACKEND` (+ `FILE_DROP_*`) | disabled | Poll a local directory or S3 bucket for JSON/CSV exports to ingest (S3 needs the `[s3]` extra) |
 | `PLUGIN_MARKETPLACE_REF`, `PLUGIN_REPO_URL`, `PLUGIN_MCP_SERVER_PATH` | this repo | What the in-app *Agent Setup* page tells users to install — point them at your fork |
@@ -212,7 +212,7 @@ instead; see [`docs/PRODUCTION.md`](docs/PRODUCTION.md#4-connect-claude-over-mcp
 | `CANOPY_DASHBOARD_URL` | Dashboard origin used in review links | API base URL |
 | `CANOPY_MCP_TRANSPORT` | `stdio`, `http` (streamable HTTP) or `sse` (legacy) | `stdio` |
 | `CANOPY_MCP_HOST` / `CANOPY_MCP_PORT` / `CANOPY_MCP_PATH` | Bind address and path for the network transports | `127.0.0.1` / `8765` / `/mcp` |
-| `CANOPY_MCP_AUTH_TOKEN` | Require `Authorization: Bearer …` on the HTTP endpoint | off |
+| `CANOPY_MCP_AUTH_TOKEN` | Require `Authorization: Bearer …` on the HTTP endpoint. Mandatory unless bound to loopback: the server refuses to start without it | — |
 
 ## Production deployment
 
