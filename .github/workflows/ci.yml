@@ -1,0 +1,193 @@
+# Mirrors scripts/ci.sh (the same gate the pre-push hook runs) and adds the checks a laptop
+# usually can't: the migration chain on real PostgreSQL / MySQL / MariaDB, a model↔migration
+# drift check, and a smoke test of the Claude plugin's MCP server.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: no job needs to write to the repo. Fork PRs get a read-only token anyway.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend-lint:
+    name: Backend lint + types
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - name: ruff
+        run: ruff check .
+      - name: mypy
+        run: mypy app
+
+  backend-test:
+    name: Backend tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - name: pytest
+        run: pytest -q
+
+  migrations:
+    name: Migrations (SQLite, PostgreSQL, MySQL, MariaDB)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: canopy
+          POSTGRES_PASSWORD: canopy
+          POSTGRES_DB: canopy
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U canopy"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: canopy
+          MYSQL_USER: canopy
+          MYSQL_PASSWORD: canopy
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: canopy
+          MARIADB_USER: canopy
+          MARIADB_PASSWORD: canopy
+        ports: ["3307:3306"]
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: pip install -e ".[dev,mysql]"
+      # `alembic check` fails when the models have drifted from the migrations (a forgotten
+      # `alembic revision --autogenerate`). It is skipped on SQLite, where the VARCHAR→TEXT
+      # widenings are deliberate no-ops (see the d4e5f6a7b8c9 migration).
+      - name: SQLite
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./ci-migrations.db
+        run: alembic upgrade head
+      - name: PostgreSQL 16
+        env:
+          DATABASE_URL: postgresql+asyncpg://canopy:canopy@127.0.0.1:5432/canopy
+        run: |
+          alembic upgrade head
+          alembic check
+      - name: MySQL 8.4
+        env:
+          DATABASE_URL: mysql+aiomysql://canopy:canopy@127.0.0.1:3306/canopy
+        run: |
+          alembic upgrade head
+          alembic check
+      - name: MariaDB 11.4
+        env:
+          DATABASE_URL: mysql+aiomysql://canopy:canopy@127.0.0.1:3307/canopy
+        run: |
+          alembic upgrade head
+          alembic check
+
+  frontend:
+    name: Frontend lint, test, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: eslint
+        run: npm run lint
+      - name: vitest
+        run: npm run test
+      - name: build (tsc + vite)
+        run: npm run build
+
+  plugin:
+    name: Claude plugin MCP server smoke test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin/mcp_server
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: plugin/mcp_server/requirements.txt
+      - run: pip install -r requirements.txt
+      # Run from stdin so the working directory (mcp_server/) is on sys.path for `import server`.
+      - name: Import the server and list its tools
+        run: |
+          python - <<'PY'
+          import asyncio, inspect
+          import server
+
+          # fastmcp 2.x exposes get_tools() (a dict); 3.x+ exposes list_tools() (a list).
+          lister = getattr(server.mcp, "list_tools", None) or server.mcp.get_tools
+          tools = lister()
+          if inspect.isawaitable(tools):
+              tools = asyncio.run(tools)
+          print(f"canopy MCP server registered {len(tools)} tools")
+          assert len(tools) >= 100, "expected the curated canopy tool set to register"
+          PY
