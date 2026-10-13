@@ -1,0 +1,10 @@
+# `COPY . .` must not bake local state into the image — config.py reads backend/.env.
+.env
+.env.*
+.venv
+**/__pycache__
+*.pyc
+*.db
+.pytest_cache
+.mypy_cache
+.ruff_cache

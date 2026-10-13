@@ -108,7 +108,10 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      CANOPY_DOMAIN: ${CANOPY_DOMAIN:-}
+      # Default to ":443" here, not only in the Caddyfile: compose always defines the variable, and
+      # Caddy applies a `{$VAR:default}` only when VAR is unset — an empty CANOPY_DOMAIN (as in
+      # .env.example) would otherwise leave the site address blank and Caddy refuses to start.
+      CANOPY_DOMAIN: ${CANOPY_DOMAIN:-:443}
       CANOPY_TLS: ${CANOPY_TLS:-internal}
     volumes:
       - caddy_data:/data
