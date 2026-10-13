@@ -1,4 +1,4 @@
 # fastmcp is capped below its next major: the server is verified on 2.x–4.x, and an unbounded
 # major can break a fresh install with no code change. Bump the cap deliberately (Dependabot).
 fastmcp>=2.3,<5
-httpx>=0.27
+httpx>=0.28.1
