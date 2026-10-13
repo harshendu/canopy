@@ -10,21 +10,21 @@ from app.services.links import jira_browse_url
 
 def test_jira_browse_url_builds_site_link() -> None:
     assert (
-        jira_browse_url("https://helix.atlassian.net", "HELIX-101")
-        == "https://helix.atlassian.net/browse/HELIX-101"
+        jira_browse_url("https://jira.example.com", "SHOP-101")
+        == "https://jira.example.com/browse/SHOP-101"
     )
     # trailing slash is normalized
     assert (
-        jira_browse_url("https://helix.atlassian.net/", "HELIX-101")
-        == "https://helix.atlassian.net/browse/HELIX-101"
+        jira_browse_url("https://jira.example.com/", "SHOP-101")
+        == "https://jira.example.com/browse/SHOP-101"
     )
 
 
 def test_jira_browse_url_none_when_unbuildable() -> None:
-    assert jira_browse_url(None, "HELIX-1") is None
-    assert jira_browse_url("", "HELIX-1") is None
+    assert jira_browse_url(None, "SHOP-1") is None
+    assert jira_browse_url("", "SHOP-1") is None
     # OAuth connections store the non-browsable API base — no site host to link to.
-    assert jira_browse_url("https://api.atlassian.com/ex/jira/abc-123", "HELIX-1") is None
+    assert jira_browse_url("https://api.atlassian.com/ex/jira/abc-123", "SHOP-1") is None
 
 
 async def _seed_admin(session) -> None:
@@ -58,7 +58,7 @@ async def test_task_links_endpoint(client, db_session) -> None:
     task_id = (
         await client.post(
             "/api/v1/tasks",
-            json={"project_id": project_id, "name": "Wire gateway", "duration": 3},
+            json={"project_id": project_id, "name": "Integrate payments", "duration": 3},
             headers=headers,
         )
     ).json()["id"]
@@ -67,25 +67,25 @@ async def test_task_links_endpoint(client, db_session) -> None:
         Connection(
             provider=Provider.jira,
             name="Jira",
-            config={"base_url": "https://helix.atlassian.net"},
+            config={"base_url": "https://jira.example.com"},
         )
     )
     db_session.add(
         ExternalRef(
             provider=Provider.jira,
-            external_id="910105",
-            external_key="HELIX-105",
+            external_id="930105",
+            external_key="SHOP-105",
             entity_type="task",
             entity_id=task_id,
         )
     )
     db_session.add(
         PullRequest(
-            repo="helix-io/data-plane",
-            number=318,
-            title="Wire secure gateway",
+            repo="example-shop/checkout",
+            number=412,
+            title="Integrate tokenized card payments",
             state="open",
-            url="https://github.com/helix-io/data-plane/pull/318",
+            url="https://github.com/example-shop/checkout/pull/412",
             task_id=task_id,
         )
     )
@@ -94,8 +94,8 @@ async def test_task_links_endpoint(client, db_session) -> None:
             scope_level=DocScope.task,
             scope_id=task_id,
             kind=DocKind.runbook,
-            title="Gateway notes",
-            url="https://github.com/helix-io/data-plane/blob/main/docs/gateway.md",
+            title="Payments integration notes",
+            url="https://github.com/example-shop/checkout/blob/main/docs/payments.md",
             source=DocSource.repo,
         )
     )
@@ -105,10 +105,10 @@ async def test_task_links_endpoint(client, db_session) -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["jira"] == {
-        "key": "HELIX-105",
-        "url": "https://helix.atlassian.net/browse/HELIX-105",
+        "key": "SHOP-105",
+        "url": "https://jira.example.com/browse/SHOP-105",
     }
-    assert [pr["number"] for pr in body["pull_requests"]] == [318]
+    assert [pr["number"] for pr in body["pull_requests"]] == [412]
     assert body["pull_requests"][0]["task_id"] == task_id
     assert [d["source"] for d in body["docs"]] == ["repo"]
 

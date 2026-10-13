@@ -44,9 +44,10 @@ class Settings(BaseSettings):
     # whose config carries `demo: true` are served by an in-process HTTP mock so the whole
     # UI — including "Sync from Jira" / GitHub / Drive reads — works fully offline.
     DEMO_MODE: bool = False
-    # Which seed narrative the demo loads by default: "helix" (hybrid data platform) or
-    # "agentic" (Northstar's agent products). Any registered key in app/services/seed.
-    DEMO_DATASET: str = "helix"
+    # Which seed narrative the demo loads by default — any key registered in
+    # app/services/seed (today: "ecommerce", a fictional online retailer). An unknown value
+    # falls back to the default with a warning.
+    DEMO_DATASET: str = "ecommerce"
 
     # NoDecode: pydantic-settings JSON-decodes list/dict fields from env *before* validators
     # run; this keeps the raw string so _split_origins can parse the comma-separated form

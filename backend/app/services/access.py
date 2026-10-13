@@ -12,7 +12,7 @@ The role matrix (`app/api/deps.py`) says *what kind* of write a role may make; t
 * everyone else reads — complete lateral visibility, no cross-team edits.
 
 Admins are exempt. An initiative is *governed* once it has owners or belongs to a team; an
-ungoverned initiative (and the Helix demo, which sets neither) keeps the plain role rules.
+ungoverned initiative (no owners, no team) keeps the plain role rules.
 Contributor writes by engineers (own-task progress, blockers, criterion verdicts, decision
 comments) are not scoped here — they stay governed by role alone.
 

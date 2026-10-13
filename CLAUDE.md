@@ -306,20 +306,22 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
 - **Observability:** `GET /api/v1/health` (liveness, also reports `demo_mode`) and
   `/api/v1/health/ready` (DB check) for orchestration; structured logging via `app/core/logging.py`.
 - **Demo / seeded-data mode (`DEMO_MODE`, local/dev only):** a repo-resident dataset in
-  `app/services/seed/` (`catalog.py` = declarative data, `loader.py` = build/reset engine) that fills
+  `app/services/seed/` (`catalog.py` = declarative schema, `ecommerce.py` +
+  `ecommerce_projects.py` = data, `loader.py` = build/reset engine) that fills
   every UI surface; an admin loads/resets it from the UI (`/admin/demo`, `app/api/v1/admin_demo.py`,
   double-gated on admin **and** `DEMO_MODE` via `require_demo_mode`). `clear_all_data` wipes by
   iterating `SQLModel.metadata.sorted_tables` in reverse (nulling self-FKs first — portability rule),
   keeping the acting admin + superuser. Demo connectors (`config.demo=true`) are served by an offline
   HTTP mock (`app/connectors/demo.py`) injected at `Connector.open_client`, so Jira/GitHub/Drive
-  sync + reads work without credentials. Extend the seed as features grow (it backs e2e). A
-  second narrative (`seed/agentic.py`, **Northstar** — AI Interviewer / Talent Pilot / Talent
-  Forge / Agent Builder / Dev Agents + Support Escalations + a Q4 enhancements bundle, organised
-  into two teams with pods, directors and managers, owned via `InitiativeLead` seats, every
-  project with one owner, and Head of Engineering / Head of Product with seeded leadership notes)
-  loads through the same
-  generic loader: datasets are `Dataset` holders registered in `seed/__init__.py:DATASETS`,
-  picked by `DEMO_DATASET` (default `helix`) or per reseed (`?dataset=`). USER_FLOWS §Z/§Z1a.
+  sync + reads work without credentials. Extend the seed as features grow (it backs e2e). The
+  narrative is a fictional **online retailer** (generic e-commerce, `example.com` placeholders):
+  Checkout Modernization / Search & Discovery / Delivery Promise / Marketplace Launch / Holiday
+  Peak Readiness over 10 projects, organised into two teams with pods, directors and managers,
+  owned via `InitiativeLead` seats, every project with one owner, and a CTO / CPO with seeded
+  leadership notes. The loader is generic: datasets are `Dataset` holders registered in
+  `seed/__init__.py:DATASETS`, picked by `DEMO_DATASET` (default `ecommerce`; an unknown value
+  falls back to the default) or per reseed (`?dataset=`). The loader silently skips unresolvable
+  names, so `tests/test_demo_seed.py` pins every cross-reference. USER_FLOWS §Z/§Z1a.
 - **Frontend tests:** Vitest (`npm run test`) covers pure helpers (e.g. `src/lib/horizon.ts`); CI
   runs it between lint and build. Extract pure logic out of components to keep it testable.
 

@@ -68,7 +68,7 @@ async def _status(session: SessionDep) -> DemoStatus:
         counts=counts,
         password=seed.DEMO_PASSWORD if on else None,
         accounts=_accounts() if on else [],
-        dataset=settings.DEMO_DATASET if on else None,
+        dataset=seed.get_dataset().key if on else None,
         datasets=_datasets() if on else [],
     )
 

@@ -4,7 +4,7 @@
 
 ## How it was tested
 
-<!-- Tests added or updated, and any manual checks (e.g. "loaded the helix demo, ran CPM on CPORCH"). -->
+<!-- Tests added or updated, and any manual checks (e.g. "loaded the demo data, ran CPM on ONEPAGE"). -->
 
 ## Checklist
 

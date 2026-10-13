@@ -20,8 +20,8 @@ body:
       label: Steps to reproduce
       description: Minimal steps. If you can reproduce it on the demo dataset (DEMO_MODE), say which one.
       placeholder: |
-        1. Load the helix demo dataset
-        2. Open Projects → Control Plane Orchestrator → Schedule → Gantt
+        1. Load the demo dataset
+        2. Open Projects → One-Page Checkout → Schedule → Gantt
         3. Click "Schedule (CPM)"
         4. …
     validations:
