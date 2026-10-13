@@ -28,7 +28,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://canopy:canopy@localhost:5432/canopy"
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    SECRET_KEY: str = "change-me"
+    # Signs access tokens and OAuth state. No usable default: the API and worker refuse to start
+    # while it's empty, a published placeholder, or under 32 bytes (app/core/startup_checks.py).
+    SECRET_KEY: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     JWT_ALGORITHM: str = "HS256"
 

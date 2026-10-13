@@ -24,7 +24,7 @@ export FIRST_SUPERUSER_EMAIL="${CANOPY_EMAIL:-architect@example.com}"
 export FIRST_SUPERUSER_PASSWORD="${CANOPY_PASSWORD:-canopy-dev-password}"
 export CANOPY_EMAIL="$FIRST_SUPERUSER_EMAIL"
 export CANOPY_PASSWORD="$FIRST_SUPERUSER_PASSWORD"
-export SECRET_KEY="${SECRET_KEY:-e2e-secret-key}"
+export SECRET_KEY="${SECRET_KEY:-e2e-only-secret-key-for-a-throwaway-local-stack}"
 # Unlock the demo seed/reset endpoints so e2e can load a rich dataset and exercise the
 # offline-mocked connectors. Harmless to the other specs (nothing auto-seeds).
 export DEMO_MODE="${DEMO_MODE:-true}"
