@@ -191,3 +191,11 @@ jobs:
           print(f"canopy MCP server registered {len(tools)} tools")
           assert len(tools) >= 100, "expected the curated canopy tool set to register"
           PY
+      - name: Refuse to serve beyond loopback without an auth token
+        run: |
+          set +e
+          CANOPY_MCP_TRANSPORT=http CANOPY_MCP_HOST=0.0.0.0 timeout 30 python server.py 2> refusal.txt
+          code=$?
+          set -e
+          cat refusal.txt
+          test "$code" -eq 1 && grep -q CANOPY_MCP_AUTH_TOKEN refusal.txt
