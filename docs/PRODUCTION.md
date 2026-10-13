@@ -33,10 +33,10 @@ Set in `.env` (everything else can keep its default):
 
 | Variable | What it is |
 | --- | --- |
-| `SECRET_KEY` | long random string (`openssl rand -hex 32`) — signs JWTs |
+| `SECRET_KEY` | long random string (`openssl rand -hex 32`) — signs JWTs; the backend and worker refuse to start without a strong one |
 | `TOKEN_ENCRYPTION_KEY` | Fernet key for connector tokens: `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `POSTGRES_PASSWORD` | database password (compose refuses to start without it) |
-| `FIRST_SUPERUSER_EMAIL` / `FIRST_SUPERUSER_PASSWORD` | the initial admin account, seeded on first boot |
+| `FIRST_SUPERUSER_EMAIL` / `FIRST_SUPERUSER_PASSWORD` | the initial admin account, seeded on first boot (8+ characters; placeholders like `changeme` are refused) |
 | `CANOPY_MCP_AUTH_TOKEN` | shared secret for the public MCP endpoint (`openssl rand -hex 24`) |
 | `CANOPY_API_EMAIL` / `CANOPY_API_PASSWORD` | the canopy account the MCP server acts as (create a dedicated one after first login, or reuse the superuser to start); it logs in and refreshes its own JWT |
 | `DEMO_MODE` | leave `false` — demo/seed endpoints are hard-gated off in production |
@@ -152,7 +152,7 @@ curl -s https://<public>/mcp -X POST \
 - [ ] `CANOPY_MCP_AUTH_TOKEN` set (the `/mcp` path is public through the tunnel)
 - [ ] MCP service account has the least role that fits (or a bounded agent token)
 - [ ] Webhook secrets set (`GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`, `EVENTS_WEBHOOK_SECRET`)
-      — `/webhooks/*` is publicly routed, and unsigned payloads are accepted while a secret is empty
+      for each integration you use — an endpoint rejects every request (403) until its secret is set
 - [ ] The superuser password was rotated after first login (sidebar → Change password)
 
 ## Bare-metal variant (no Docker)

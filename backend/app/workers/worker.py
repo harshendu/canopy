@@ -9,6 +9,7 @@ from arq import cron
 from app.connectors import get_connector
 from app.core.config import settings
 from app.core.db import async_session_factory
+from app.core.startup_checks import ensure_secure_secret_key
 from app.models.base import Provider
 from app.models.integration import Connection
 from app.services import integration_policy
@@ -60,6 +61,12 @@ async def poll_file_drops(ctx: dict[str, Any]) -> dict[str, dict]:
         return await process_drops(session, storage)
 
 
+async def startup(ctx: dict[str, Any]) -> None:
+    """Refuse to run on a guessable SECRET_KEY: the worker encrypts refreshed connector tokens
+    with a key derived from it unless TOKEN_ENCRYPTION_KEY is set."""
+    ensure_secure_secret_key()
+
+
 _poll_minutes = set(range(0, 60, max(1, min(settings.JIRA_POLL_MINUTES, 30))))
 _drop_minutes = set(range(0, 60, max(1, min(settings.FILE_DROP_POLL_MINUTES, 30))))
 
@@ -77,4 +84,5 @@ class WorkerSettings:
         cron(capture_risk_snapshots, hour={3}, minute={0}, run_at_startup=False),
         cron(poll_file_drops, minute=_drop_minutes, run_at_startup=False),
     ]
+    on_startup = startup
     redis_settings = redis_settings()

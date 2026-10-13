@@ -1,7 +1,7 @@
 import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite://")
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-for-the-pytest-suite-only")
 os.environ.setdefault("TOKEN_ENCRYPTION_KEY", "")
 os.environ.setdefault("FIRST_SUPERUSER_EMAIL", "")
 os.environ.setdefault("FIRST_SUPERUSER_PASSWORD", "")

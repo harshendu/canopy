@@ -14,6 +14,11 @@ from app.core.config import settings
 from app.core.db import async_session_factory, get_session
 from app.core.logging import configure_logging
 from app.core.security import hash_password
+from app.core.startup_checks import (
+    InsecureConfigError,
+    ensure_safe_first_superuser_password,
+    ensure_secure_secret_key,
+)
 from app.models.base import UserRole
 from app.models.user import User
 from app.webhooks import webhook_router
@@ -31,6 +36,7 @@ async def _seed_superuser() -> None:
                 select(User).where(User.email == settings.FIRST_SUPERUSER_EMAIL)
             )
             if existing.scalar_one_or_none() is None:
+                ensure_safe_first_superuser_password()
                 session.add(
                     User(
                         email=settings.FIRST_SUPERUSER_EMAIL,
@@ -41,6 +47,8 @@ async def _seed_superuser() -> None:
                 )
                 await session.commit()
                 logger.info("Seeded first superuser email=%s", settings.FIRST_SUPERUSER_EMAIL)
+    except InsecureConfigError:
+        raise
     except Exception:  # pragma: no cover - DB may be unreachable/unmigrated at startup
         logger.warning(
             "Skipped first-superuser seeding: the database could not be accessed. "
@@ -51,6 +59,7 @@ async def _seed_superuser() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    ensure_secure_secret_key()
     await _seed_superuser()
     yield
 

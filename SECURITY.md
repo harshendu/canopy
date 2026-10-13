@@ -30,20 +30,28 @@ next release once releases are tagged), so run a recent `main` and upgrade promp
 ## Deploying canopy safely
 
 Most real-world risk sits in deployment configuration. Before exposing an instance beyond your
-laptop, work through the security checklist in [`docs/PRODUCTION.md`](docs/PRODUCTION.md). In
-particular:
+laptop, work through the security checklist in [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
 
-- **Set real secrets.** `SECRET_KEY` signs every access token and defaults to a public placeholder;
-  `TOKEN_ENCRYPTION_KEY` encrypts connector credentials at rest (and falls back to a key derived
-  from `SECRET_KEY` when empty). Generate both — `scripts/init.py` does it for you.
-- **Set the webhook secrets** (`GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`,
-  `EVENTS_WEBHOOK_SECRET`) on any internet-reachable deployment. Signature verification is skipped
-  when a secret is empty, so an unset secret means unauthenticated webhook payloads are accepted.
+canopy fails closed on its most dangerous settings instead of running with values anyone can read
+in this repository:
+
+- **`SECRET_KEY`** signs every access token. The API and worker refuse to start while it is empty,
+  a placeholder from canopy's templates, or shorter than 32 characters. Also set
+  `TOKEN_ENCRYPTION_KEY`, which encrypts connector credentials at rest (it otherwise derives from
+  `SECRET_KEY`, so rotating that key would make stored credentials unreadable). `scripts/init.py`
+  generates both.
+- **Webhook endpoints** (`/webhooks/github`, `/webhooks/jira`, `/webhooks/events`) reject every
+  request until their `*_WEBHOOK_SECRET` is set, and reject any payload whose HMAC signature
+  doesn't match.
+- **The first admin** is not created with a password under 8 characters or a placeholder such as
+  `changeme`. Rotate it after the first login anyway.
+- **The MCP server** refuses to serve over HTTP beyond loopback without `CANOPY_MCP_AUTH_TOKEN`.
+
+Beyond that:
+
 - **Never enable `DEMO_MODE` in production.** It unlocks endpoints that wipe and reseed all data.
-- **Protect the MCP endpoint** with `CANOPY_MCP_AUTH_TOKEN`, and give the MCP service account the
-  least-privileged role that works (or a bounded *agent token*, which cannot take one-way-door
-  actions such as pushing to Jira).
-- **Rotate the first admin's password** after the first login.
+- **Give the MCP service account the least-privileged role that works** (or a bounded *agent
+  token*, which cannot take one-way-door actions such as pushing to Jira).
 
 ## Known limitations
 

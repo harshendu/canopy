@@ -12,9 +12,10 @@ Transport (how Claude reaches this server):
   CANOPY_MCP_HOST        bind host for the network transports (default 127.0.0.1)
   CANOPY_MCP_PORT        bind port for the network transports (default 8765)
   CANOPY_MCP_PATH        URL path (default /mcp for http, /sse for sse)
-  CANOPY_MCP_AUTH_TOKEN  optional shared secret; when set, network clients must send
-                         "Authorization: Bearer <token>" (set it whenever the port is
-                         reachable beyond localhost — e.g. behind Caddy/ngrok)
+  CANOPY_MCP_AUTH_TOKEN  shared secret network clients must send as
+                         "Authorization: Bearer <token>". Required to bind anywhere but
+                         loopback: every tool acts with this server's canopy credentials,
+                         so the server refuses to start rather than serve them unauthenticated
 
 Locally the plugin launches this over stdio. In production, run it as a long-lived
 service with CANOPY_MCP_TRANSPORT=http (streamable HTTP, the modern MCP transport —
@@ -25,6 +26,7 @@ SSE remains available for older clients but is deprecated upstream.
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import os
 import pathlib
 import sys
@@ -103,6 +105,15 @@ class BearerGuard:
         await self.app(scope, receive, send)
 
 
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:  # a hostname: it may resolve to any interface
+        return False
+
+
 def main() -> None:
     transport = os.environ.get("CANOPY_MCP_TRANSPORT", "stdio").lower()
     if transport == "stdio":
@@ -114,6 +125,13 @@ def main() -> None:
     default_path = "/sse" if transport == "sse" else "/mcp"
     path = os.environ.get("CANOPY_MCP_PATH", default_path)
     auth_token = os.environ.get("CANOPY_MCP_AUTH_TOKEN", "")
+    if not auth_token and not _is_loopback(host):
+        sys.exit(
+            f"Refusing to serve the canopy MCP server on {host}:{port} without "
+            "CANOPY_MCP_AUTH_TOKEN: anyone who can reach the port could act with this server's "
+            "canopy credentials. Set CANOPY_MCP_AUTH_TOKEN (e.g. `openssl rand -hex 24`), or "
+            "bind CANOPY_MCP_HOST to 127.0.0.1."
+        )
 
     # "http" / "streamable-http" -> streamable HTTP (the modern transport); "sse" -> legacy.
     app_transport = "sse" if transport == "sse" else "streamable-http"

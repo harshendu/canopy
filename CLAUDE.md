@@ -50,6 +50,8 @@ Backend (run from `backend/`, venv at `backend/.venv`):
 pip install -e ".[dev]"           # add ".[dev,mysql]" to include the MySQL/MariaDB driver
 # Prod runs on Postgres or MySQL/MariaDB; SQLite is dev/local only. All three must work.
 export DATABASE_URL="sqlite+aiosqlite:///./canopy.db"   # postgresql+asyncpg://… | mysql+aiomysql://…
+python3 ../scripts/init.py --defaults --no-start  # once: writes ../.env with a strong SECRET_KEY
+                                                  # (startup refuses a missing/placeholder key)
 alembic upgrade head
 uvicorn app.main:app --reload
 ruff check .         # lint (strict ruleset incl. ANN — every def must be typed)
@@ -254,7 +256,9 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   returns directly-affected components plus everything that transitively depends on them
   (`app/services/impact.py` reverse-walks `ComponentLink` edges, pure).
 - Webhooks (`app/webhooks/`) verify HMAC **before** parsing, match the repo/project to active
-  connections, then enqueue `process_webhook` (arq) — never process inline. `GitHubConnector.handle_webhook`
+  connections, then enqueue `process_webhook` (arq) — never process inline. Intake **fails
+  closed**: `require_valid_signature` answers 403 while the endpoint's `*_WEBHOOK_SECRET` is unset
+  and 401 on a missing/forged signature — never accept an unsigned payload. `GitHubConnector.handle_webhook`
   upserts the `PullRequest` cache; `JiraConnector.handle_webhook` upserts the task.
 - **OAuth 2.0 (3LO)** lives in `app/connectors/oauth.py` (provider configs, authorize-URL, code
   exchange, refresh). Flow: create a `Connection` (no token) → `GET /connectors/oauth/{id}/authorize`
@@ -303,6 +307,11 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   so the risk timeline is a real trend. Drift carries a **scan log** (`DriftScan`): `GET .../drift`
   returns `last_scanned_at` + `scan_due` (true when code bindings exist but the scan is missing or
   >7 days old), surfacing staleness so the Drift Sentinel re-scans (the server can't crawl code).
+- **Startup refuses guessable secrets** (`app/core/startup_checks.py`): the API lifespan and the
+  worker's `on_startup` stop on an empty, published-placeholder or <32-byte `SECRET_KEY`; seeding
+  refuses to create the first admin with a placeholder or <8-char password; the MCP server refuses
+  HTTP beyond loopback without `CANOPY_MCP_AUTH_TOKEN`. The checks run at startup, not import, so
+  tests/Alembic/scripts are unaffected — keep it that way, and don't add an "allow insecure" switch.
 - **Observability:** `GET /api/v1/health` (liveness, also reports `demo_mode`) and
   `/api/v1/health/ready` (DB check) for orchestration; structured logging via `app/core/logging.py`.
 - **Demo / seeded-data mode (`DEMO_MODE`, local/dev only):** a repo-resident dataset in
