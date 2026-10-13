@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Request, status
 from sqlmodel import select
 
 from app.core.config import settings
@@ -7,7 +7,7 @@ from app.models.base import Provider
 from app.models.integration import Connection
 from app.services import integration_policy
 from app.services.features import feature_enabled
-from app.webhooks.security import verify_hmac_sha256
+from app.webhooks.security import require_valid_signature
 from app.workers.queue import enqueue
 
 router = APIRouter()
@@ -17,8 +17,9 @@ router = APIRouter()
 async def jira_webhook(request: Request) -> dict:
     body = await request.body()
     signature = request.headers.get("X-Hub-Signature")
-    if not verify_hmac_sha256(settings.JIRA_WEBHOOK_SECRET, body, signature):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bad signature")
+    require_valid_signature(
+        "JIRA_WEBHOOK_SECRET", settings.JIRA_WEBHOOK_SECRET, body, signature
+    )
 
     payload = await request.json()
     issue = payload.get("issue") or {}

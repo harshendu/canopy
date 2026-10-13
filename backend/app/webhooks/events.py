@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.models.base import ActivityKind
 from app.services.activity import record_activity
-from app.webhooks.security import verify_hmac_sha256
+from app.webhooks.security import require_valid_signature
 
 router = APIRouter()
 
@@ -20,8 +20,9 @@ async def events_webhook(request: Request) -> dict[str, Any]:
     Lightweight enough to record inline (an `incident_open` auto-opens a postmortem)."""
     body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256")
-    if not verify_hmac_sha256(settings.EVENTS_WEBHOOK_SECRET, body, signature):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bad signature")
+    require_valid_signature(
+        "EVENTS_WEBHOOK_SECRET", settings.EVENTS_WEBHOOK_SECRET, body, signature
+    )
 
     payload = await request.json()
     project_id = payload.get("project_id")
