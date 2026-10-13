@@ -100,11 +100,8 @@ from app.models.user import User
 from app.services.planner import reschedule_project
 from app.services.scenario_engine import snapshot_live_into_scenario
 from app.services.seed import catalog
-from app.services.seed.catalog import (
-    HELIX,
-    Dataset,
-    ProjectSpec,
-)
+from app.services.seed.catalog import Dataset, ProjectSpec
+from app.services.seed.ecommerce import ECOMMERCE
 
 M = TypeVar("M", bound=SQLModel)
 
@@ -200,7 +197,7 @@ async def clear_all_data(session: AsyncSession, keep_user_ids: set[int]) -> None
 # --------------------------------------------------------------------------- #
 @dataclass
 class _Refs:
-    ds: Dataset = HELIX
+    ds: Dataset = ECOMMERCE
     users: dict[str, User] = field(default_factory=dict)
     engineers: dict[str, Engineer] = field(default_factory=dict)
     roles: dict[str, Role] = field(default_factory=dict)
@@ -858,8 +855,9 @@ async def load_seed_data(
 ) -> dict[str, int]:
     """Build a full demo dataset on an (assumed) empty domain. Returns the summary counts.
 
-    ``dataset`` picks the narrative (default: Helix); see ``DATASETS`` in the package init."""
-    refs = _Refs(ds=dataset or HELIX)
+    ``dataset`` picks the narrative (default: the e-commerce one); see ``DATASETS`` in the
+    package init."""
+    refs = _Refs(ds=dataset or ECOMMERCE)
     await _build_users(session, refs)
     await _build_team(session, refs)
     await _build_teams(session, refs)

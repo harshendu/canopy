@@ -32,24 +32,24 @@ const project = (id: number, initiative_id: number, pod_id: number | null): Proj
 const teams: Team[] = [
   {
     id: 1,
-    key: "TA",
-    name: "Talent Acquisition",
+    key: "SHOP",
+    name: "Shopping Experience",
     description: null,
     pods: [
-      { id: 10, team_id: 1, name: "Interviewer" },
-      { id: 11, team_id: 1, name: "Recruiter Experience" },
+      { id: 10, team_id: 1, name: "Checkout & Payments" },
+      { id: 11, team_id: 1, name: "Search & Discovery" },
     ],
     members: [
-      { team_id: 1, engineer_id: 1, engineer_name: "Samir", role: "director", user_id: 1 },
-      { team_id: 1, engineer_id: 2, engineer_name: "Jonah", role: "manager", user_id: 2 },
+      { team_id: 1, engineer_id: 1, engineer_name: "Arjun", role: "director", user_id: 1 },
+      { team_id: 1, engineer_id: 2, engineer_name: "Ben", role: "manager", user_id: 2 },
     ],
   },
 ];
 
 const leads: InitiativeLead[] = [
-  { initiative_id: 1, engineer_id: 10, engineer_name: "Priya", lead_role: "technical", user_id: 5 },
-  { initiative_id: 1, engineer_id: 11, engineer_name: "Jonah", lead_role: "manager", user_id: 6 },
-  { initiative_id: 2, engineer_id: 12, engineer_name: "Nora", lead_role: "technical", user_id: 7 },
+  { initiative_id: 1, engineer_id: 10, engineer_name: "Rahul", lead_role: "technical", user_id: 5 },
+  { initiative_id: 1, engineer_id: 11, engineer_name: "Ben", lead_role: "manager", user_id: 6 },
+  { initiative_id: 2, engineer_id: 12, engineer_name: "Tobias", lead_role: "technical", user_id: 7 },
 ];
 
 describe("groupByOwnership", () => {
@@ -68,7 +68,7 @@ describe("groupByOwnership", () => {
 describe("groupByTeam", () => {
   it("groups under teams and puts teamless initiatives last", () => {
     const g = groupByTeam([init(1, 1), init(2), init(3, 1)], teams);
-    expect(g.map((x) => x.team?.name ?? null)).toEqual(["Talent Acquisition", null]);
+    expect(g.map((x) => x.team?.name ?? null)).toEqual(["Shopping Experience", null]);
     expect(g[0].initiatives.map((i) => i.id)).toEqual([1, 3]);
   });
 });
@@ -76,11 +76,11 @@ describe("groupByTeam", () => {
 describe("pods and labels", () => {
   it("derives the pods an initiative spans from its projects", () => {
     const projects = [project(1, 1, 10), project(2, 1, 11), project(3, 2, 10), project(4, 1, null)];
-    expect(podsForInitiative(1, projects, teams)).toEqual(["Interviewer", "Recruiter Experience"]);
+    expect(podsForInitiative(1, projects, teams)).toEqual(["Checkout & Payments", "Search & Discovery"]);
   });
   it("formats owners and team seats", () => {
-    expect(leadTeamLabel(leadsFor(leads, 1))).toBe("Priya (Tech) · Jonah (Manager)");
+    expect(leadTeamLabel(leadsFor(leads, 1))).toBe("Rahul (Tech) · Ben (Manager)");
     expect(leadTeamLabel(leadsFor(leads, 3))).toBe("");
-    expect(teamSeatsLabel(teams[0].members)).toBe("Director: Samir · Manager: Jonah");
+    expect(teamSeatsLabel(teams[0].members)).toBe("Director: Arjun · Manager: Ben");
   });
 });

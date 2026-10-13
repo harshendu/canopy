@@ -298,7 +298,7 @@ async def test_team_directors_and_project_owners(client, world):
     tid = team.json()["id"]
     assert (await client.post("/api/v1/teams", json={"key": "TA", "name": "x"}, headers=ada)
             ).status_code == 403  # admin-only
-    pod = (await client.post(f"/api/v1/teams/{tid}/pods", json={"name": "Interviewer"},
+    pod = (await client.post(f"/api/v1/teams/{tid}/pods", json={"name": "Checkout & Payments"},
                              headers=admin)).json()
     seats = await client.put(
         f"/api/v1/teams/{tid}/members",
@@ -360,10 +360,10 @@ async def test_team_directors_and_project_owners(client, world):
     assert roll["team_name"] == "Talent Acquisition"
     folio = (await client.get("/api/v1/projects/portfolio", headers=ada)).json()["projects"]
     pb = next(p for p in folio if p["id"] == projects["B"])
-    assert pb["owner_name"] == "Ada" and pb["pod_name"] == "Interviewer"
+    assert pb["owner_name"] == "Ada" and pb["pod_name"] == "Checkout & Payments"
 
     teams = (await client.get("/api/v1/teams", headers=bob)).json()
-    assert teams[0]["pods"][0]["name"] == "Interviewer"
+    assert teams[0]["pods"][0]["name"] == "Checkout & Payments"
     assert teams[0]["members"][0]["engineer_name"] == "Bob"
 
     # Directors may leave leadership notes; the review groups by team.

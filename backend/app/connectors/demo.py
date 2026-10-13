@@ -38,7 +38,9 @@ def is_demo_connection(connector: Connector) -> bool:
 # --------------------------------------------------------------------------- #
 # Jira fixtures + handler
 # --------------------------------------------------------------------------- #
-_JIRA_PROJECT_KEY = "HELIX"
+_JIRA_PROJECT_KEY = "SHOP"
+_JIRA_EPIC_ID = "930200"
+_JIRA_EPIC_KEY = f"{_JIRA_PROJECT_KEY}-200"
 
 
 def _jira_issue(
@@ -50,21 +52,23 @@ def _jira_issue(
         "issuetype": {"name": issuetype},
         "updated": _UPDATED,
         "customfield_10016": 5,
-        "customfield_10042": "https://helix.atlassian.net/wiki/spaces/DP/design",
+        "customfield_10042": "https://wiki.example.com/checkout/observability",
     }
     if parent_id is not None:
-        fields["parent"] = {"id": parent_id, "key": f"{_JIRA_PROJECT_KEY}-100"}
+        fields["parent"] = {"id": parent_id, "key": _JIRA_EPIC_KEY}
     return {"id": issue_id, "key": key, "fields": fields}
 
 
 _JIRA_EPIC = _jira_issue(
-    "910000", "HELIX-100", "Data-plane telemetry & SLOs", "Epic", "In Progress", None
+    _JIRA_EPIC_ID, _JIRA_EPIC_KEY, "Checkout observability", "Epic", "In Progress", None
 )
 _JIRA_STORIES = [
-    _jira_issue("910001", "HELIX-101", "Emit enclave audit logs", "Story", "Done", "910000"),
-    _jira_issue("910002", "HELIX-102", "Egress metering dashboards", "Story",
-                "In Progress", "910000"),
-    _jira_issue("910003", "HELIX-103", "Define and wire SLO alerts", "Story", "To Do", "910000"),
+    _jira_issue("930201", "SHOP-201", "Emit checkout funnel events", "Story", "Done",
+                _JIRA_EPIC_ID),
+    _jira_issue("930202", "SHOP-202", "Payment error dashboards", "Story", "In Progress",
+                _JIRA_EPIC_ID),
+    _jira_issue("930203", "SHOP-203", "Alert on the checkout error-rate SLO", "Story", "To Do",
+                _JIRA_EPIC_ID),
 ]
 _JIRA_ISSUES = [_JIRA_EPIC, *_JIRA_STORIES]
 _JIRA_BY_KEY = {i["key"]: i for i in _JIRA_ISSUES}
@@ -80,12 +84,12 @@ _JIRA_CHANGELOG = {
     "values": [
         {
             "created": "2026-04-10T09:00:00.000+0000",
-            "author": {"displayName": "Sofia Garcia"},
+            "author": {"displayName": "Priya Shah"},
             "items": [{"field": "status", "fromString": "To Do", "toString": "In Progress"}],
         },
         {
             "created": "2026-04-22T16:30:00.000+0000",
-            "author": {"displayName": "Sofia Garcia"},
+            "author": {"displayName": "Priya Shah"},
             "items": [{"field": "status", "fromString": "In Progress", "toString": "Done"}],
         },
     ],
@@ -95,7 +99,7 @@ _JIRA_CHANGELOG = {
     "total": 2,
 }
 
-_jira_created_seq = [910100]
+_jira_created_seq = [930300]
 
 
 def _handle_jira(request: httpx.Request) -> httpx.Response:
@@ -113,7 +117,7 @@ def _handle_jira(request: httpx.Request) -> httpx.Response:
         _jira_created_seq[0] += 1
         n = _jira_created_seq[0]
         return httpx.Response(
-            201, json={"id": str(n), "key": f"{_JIRA_PROJECT_KEY}-{n - 910000}"}, request=request
+            201, json={"id": str(n), "key": f"{_JIRA_PROJECT_KEY}-{n - 930000}"}, request=request
         )
     if method == "PUT" and path.startswith("/rest/api/3/issue/"):
         return httpx.Response(204, request=request)
@@ -123,7 +127,8 @@ def _handle_jira(request: httpx.Request) -> httpx.Response:
         if rest.endswith("/changelog"):
             return httpx.Response(200, json=_JIRA_CHANGELOG, request=request)
         if rest.endswith("/remotelink"):
-            link = {"object": {"url": "https://helix.atlassian.net/runbook", "title": "Runbook"}}
+            link = {"object": {"url": "https://wiki.example.com/checkout/runbook",
+                               "title": "Checkout runbook"}}
             return httpx.Response(200, json=[link], request=request)
         issue = _JIRA_BY_KEY.get(key)
         if issue is None:
@@ -132,7 +137,7 @@ def _handle_jira(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=issue, request=request)
     if method == "GET" and path == "/rest/agile/1.0/board":
         return httpx.Response(
-            200, json={"values": [{"id": 1, "name": "PLAT board"}]}, request=request
+            200, json={"values": [{"id": 1, "name": "SHOP board"}]}, request=request
         )
     if method == "GET" and path.endswith("/sprint"):
         return httpx.Response(
@@ -150,31 +155,37 @@ def _handle_jira(request: httpx.Request) -> httpx.Response:
 # --------------------------------------------------------------------------- #
 # GitHub fixtures + handler
 # --------------------------------------------------------------------------- #
-_GH_ADR_MARKDOWN = """# ADR-0007: Process data only inside the customer VPC
+_GH_ADR_MARKDOWN = """# ADR-0007: Tokenize cards through the provider vault
 
 ## Status
 accepted
 
 ## Context
-Customers require that raw data never leaves their environment (BYOC data residency).
+Storing card numbers would put every service that touches checkout in PCI scope.
 
 ## Decision
-Processing runs in-VPC in the data plane; only enclave-approved aggregates leave the tenant.
+Cards are tokenized in the payment provider's vault straight from the browser; our services
+only ever see tokens.
 
 ## Consequences
-Strong data-residency guarantees; harder deploys and debugging.
+PCI scope shrinks to a few services; we depend on the provider's vault for retries and any
+future migration.
 """
 
+_GH_REPO = "example-shop/checkout"
+
+
+def _gh_pull(number: int, title: str, state: str, login: str, updated: str) -> dict[str, Any]:
+    return {"number": number, "title": title, "state": state, "user": {"login": login},
+            "html_url": f"https://github.com/{_GH_REPO}/pull/{number}", "updated_at": updated}
+
+
 _GH_PULLS = [
-    {"number": 318, "title": "Wire secure gateway into engine", "html_url":
-     "https://github.com/helix-io/data-plane/pull/318", "state": "open", "user": {"login":
-     "tombecker"}, "updated_at": "2026-05-02T10:00:00Z"},
-    {"number": 316, "title": "Egress allow-list enforcement", "html_url":
-     "https://github.com/helix-io/data-plane/pull/316", "state": "open", "user": {"login":
-     "yukitanaka"}, "updated_at": "2026-05-01T09:00:00Z"},
-    {"number": 309, "title": "Streaming pipeline core", "html_url":
-     "https://github.com/helix-io/data-plane/pull/309", "state": "closed", "user": {"login":
-     "tombecker"}, "updated_at": "2026-04-22T16:00:00Z"},
+    _gh_pull(412, "Integrate tokenized card payments", "open", "priyashah",
+             "2026-05-02T10:00:00Z"),
+    _gh_pull(415, "Handle 3-D Secure challenges in checkout", "open", "gabrielsilva",
+             "2026-05-01T09:00:00Z"),
+    _gh_pull(398, "Checkout session service", "closed", "rahulverma", "2026-04-22T16:00:00Z"),
 ]
 
 
@@ -193,13 +204,13 @@ def _handle_github(request: httpx.Request) -> httpx.Response:
     if method == "GET" and path.endswith("/milestones"):
         return httpx.Response(
             200,
-            json=[{"number": 1, "title": "v2 GA", "due_on": "2026-08-01T00:00:00Z"}],
+            json=[{"number": 1, "title": "Checkout GA", "due_on": "2026-08-01T00:00:00Z"}],
             request=request,
         )
     # GET /repos/{owner}/{repo} — connectivity check for full_sync.
     return httpx.Response(
         200,
-        json={"full_name": "helix-io/data-plane", "default_branch": "main", "private": False},
+        json={"full_name": _GH_REPO, "default_branch": "main", "private": False},
         request=request,
     )
 
@@ -208,12 +219,15 @@ def _handle_github(request: httpx.Request) -> httpx.Response:
 # Google Drive fixtures + handler
 # --------------------------------------------------------------------------- #
 _DRIVE_FILES = [
-    {"id": "doc-prd-001", "name": "Helix BYOC — PRD", "modifiedTime":
+    {"id": "doc-prd-checkout", "name": "Checkout Modernization — PRD", "modifiedTime":
      "2026-03-01T12:00:00Z"},
-    {"id": "doc-arch-002", "name": "Data Plane — Reference Architecture", "modifiedTime":
+    {"id": "doc-payments-arch", "name": "Payments — Reference Architecture", "modifiedTime":
      "2026-03-15T12:00:00Z"},
 ]
-_DRIVE_DOC = "# Data Plane — Design\n\nBYOC architecture, the enclave, and the zero-egress plan.\n"
+_DRIVE_DOC = (
+    "# Checkout Modernization — Design\n\n"
+    "The one-page checkout, the server-side checkout session, and tokenized card payments.\n"
+)
 
 
 def _handle_gdrive(request: httpx.Request) -> httpx.Response:

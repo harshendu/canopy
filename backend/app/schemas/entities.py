@@ -1432,7 +1432,7 @@ class DocCoverageRead(BaseModel):
 
 # --- A task's external resource links (Jira issue + GitHub PRs + design docs) ---
 class JiraIssueLink(BaseModel):
-    key: str  # human key, e.g. "HELIX-101"
+    key: str  # human key, e.g. "SHOP-101"
     url: str | None  # browse URL, when the connection exposes a site (None for OAuth API bases)
 
 

@@ -416,7 +416,7 @@ For a planner-role user (architect / engineering manager / legacy member):
 - everyone else has **read-only visibility** — complete lateral visibility, no cross-team edits.
 
 Admins are exempt. An initiative with **no owners and no team** keeps the plain role rules
-(back-compat; the Helix demo sets neither). Contributor writes by engineers (own-task progress,
+(back-compat for data created before teams and owners existed). Contributor writes by engineers (own-task progress,
 blockers, criterion verdicts, decision comments) are **not** scoped — they stay role-governed.
 Enforced centrally in `app/services/access.py` (`ensure_initiative_editable` for initiative-level
 writes, `ensure_project_editable` for project-level ones) and called from: initiative
@@ -1924,62 +1924,57 @@ team member via `Engineer.user_id` (§A5).
 A switch (`DEMO_MODE=true`, **never** in production) that makes the whole app explorable from a
 single, repository-resident seed dataset — and lets an admin reset/reload it from the UI. It is also
 the substrate for browser e2e tests (the seed is extended as features grow). Seed data lives in
-`backend/app/services/seed/` (`catalog.py` = declarative data, `loader.py` = the build/reset engine).
+`backend/app/services/seed/` (`catalog.py` = the declarative schema, `ecommerce.py` +
+`ecommerce_projects.py` = the data, `loader.py` = the build/reset engine).
 
 ### Z1. What the seed contains
-A single, recognizable narrative — **Helix**, an enterprise hybrid-platform vendor whose product
-splits into a vendor-owned **control plane** (multi-tenant SaaS) and a customer-deployed **data
-plane** (the intelligence suite that keeps customer data in the customer's own VPC), plus a
-**field/solutions** org that does the complex customer deployments. Three initiatives mirror that
-org (**Control Plane Scale-Out**, **Data Plane v2 — BYOC**, **Field Delivery & Onboarding**) over
-**8 fully-populated projects**.
+A single, relatable narrative — a fictional **online retailer** (generic e-commerce, no real
+brand; every login, link and repository is a placeholder on `example.com`-style domains). Five
+initiatives anyone who has shopped online will recognise — **Checkout Modernization** (a one-page
+checkout on top of a payments-provider migration), **Search & Discovery** (search relevance and
+personalized recommendations), **Delivery Promise** (real-time inventory and a delivery date
+shoppers can trust), **Marketplace Launch** (third-party seller onboarding and payouts) and
+**Holiday Peak Readiness** (load tests, a checkout waiting room, storefront performance) — over
+**10 fully-populated projects**, two per initiative. The flagship is **One-Page Checkout**.
+
+The org is modelled end to end (§R6): **two teams** (Shopping Experience, Commerce Operations),
+each with **pods**, a **director** and a **manager**. Every initiative has its **owners** seated as
+`InitiativeLead` rows (technical / product / design, plus a manager seat on the peak programme);
+some people own several initiatives, two initiatives span pods, and every project has one owner
+and a pod. **Leadership** (a CTO and a CPO — `viewer` logins with the `leadership` function) sits
+above with seeded **leadership notes** (§BR) on risks, milestones, decisions and outcomes.
 
 It includes users across **every role** (admin / architect / engineering_manager / engineer /
 viewer / member) and **every persona/function** (engineering / product / design / architecture /
-management / leadership); a cross-functional **team** (~13 members) with skill tags, timezones,
-committed hours and **availability** (PTO / ramp-up / on-call / on-site). Each project is a scheduled
+management / leadership), so each persona's landing page has content; a cross-functional **team**
+(~28 people) with skill tags, timezones, committed hours and **availability** (PTO / on-call /
+conferences / split roles). Each project is a scheduled
 **WBS** (phases → tasks, dependencies, milestones, holidays) run through the real CPM planner, with
 **cross-project hand-offs** inside initiatives (so the cross-project critical path is real), a
 **baseline + variance** on the flagship, and **back-dated status history / activity / risk
 snapshots** so every time-series view (burndown, Monte-Carlo forecast, DORA + flow, risk timeline)
 shows real trends. **Rich content is on every project**: an architecture map, **ADRs** (accepted /
-in-discussion with a review thread / proposed / deferred — populating all four **decision-queue**
-buckets, including an overdue one), **fitness functions** + **drift** events, **specs** + criteria,
-**risks** (RAID, project + initiative scope), **blockers**, **outcomes**, **doc references**, **retros**
-(including an **incident postmortem**), **draft plans**, three **scenarios** (one rich what-if per
-initiative — each a full snapshot of the live plan plus a coherent set of edits across tasks,
-dependencies, milestones, allocations and availability, in `draft`/`ready` status — so the §T
-Compare/Capacity/Gantt/Milestones tabs all show a real delta), three demo **connections**,
-and project state that makes the **alerts** digest fire (deadline miss, overdue milestone,
-over-allocation, overdue risk, open blocker).
+in-discussion with a review thread / proposed / deferred / rejected — populating all four
+**decision-queue** buckets, including overdue ones), **fitness functions** + **drift** events (open
+and triaged, plus a code-bound project whose scan is due), **specs** + criteria, **risks** (RAID,
+project + initiative scope), **blockers**, **outcomes**, **doc references**, **retros** (including
+**incident postmortems**), **draft plans**, five **scenarios** (one rich what-if per initiative —
+each a full snapshot of the live plan plus a coherent set of edits across tasks, dependencies,
+milestones, allocations and availability, in `draft`/`ready` status — so the §T
+Compare/Capacity/Gantt/Milestones tabs all show a real delta), three demo **connections**, and
+project state that makes the **alerts** digest fire (deadline miss, overdue milestone,
+over-allocation, overdue risk, open blocker) and the flow board flag **aging** work.
 
-### Z1a. Alternate dataset — Northstar (agentic products) **[new]**
-A second, selectable narrative lives in `backend/app/services/seed/agentic.py` and loads through
-the same generic loader (`Dataset` holder in `catalog.py`; registry `DATASETS` in the package
-init). **Northstar** is a talent-technology company building agentic products — five initiatives
-(**AI Interviewer** — voice/video sessions between an AI agent and a human; **Talent Pilot** — an
-integrated agent harness for recruiters; **Talent Forge** — an agent harness to build and deploy
-fully customizable applications; **Agent Builder** — the runtime engine behind every agent;
-**Dev Agents** — internal monitoring / on-call / productivity agents) plus two smaller,
-non-product initiatives every org runs alongside (**Customer Support Escalations**, a **Q4 Product
-Enhancements** bundle) over **13 projects**. There is no single architect: **each initiative is
-owned by its own owners** seated as `InitiativeLead` rows, organised into **two teams**
-(Talent Acquisition, Agent Platform) with **pods**, a **director** and a **manager** each (§R6).
-Some initiatives span pods (Talent Pilot, Talent Forge, the Q4 bundle); some people own several
-(a pod lead and a manager each own two); every project has one owner and a pod. **Leadership**
-(Head of Engineering, Head of Product — `viewer` logins with the `leadership` function) sits
-above them with seeded **leadership notes** (§BR). The lead
-teams get lateral visibility across initiatives (read-only outside their own; the shared decision
-queue, team view, portfolio), while the executives read the business review and roll-ups. Same
-depth as Helix: WBS + cross-project hand-offs, ADR threads +
-fitness functions, drift, specs, risks, outcomes, docs, blockers, retros, draft plans, a what-if
-scenario per initiative, a flagship baseline (Interview Orchestrator) and demo connections.
-- **Pick it:** `DEMO_DATASET=agentic` (env; default `helix`) makes it the default — the login
-  screen's click-to-fill accounts and a plain reseed use it — or choose it per reseed from the
-  **Dataset** dropdown on `/admin/demo` (`POST /admin/demo/reseed?dataset=agentic`).
-- **Known limit:** the offline connector mock (`app/connectors/demo.py`) still serves the fixed
-  Helix-flavoured Jira/GitHub/Drive fixtures, so *Sync from Jira* on the Northstar data pulls
-  `HELIX-…` issues; the seeded Jira links / PR cache on the flagship are Northstar's own.
+### Z1a. Datasets are pluggable
+The loader is generic over a `Dataset` holder (`catalog.py`): a narrative is a pure data module
+that builds one, registered by key in `DATASETS` (`seed/__init__.py`). One dataset ships today
+(`ecommerce`). `DEMO_DATASET` (env; default `ecommerce`) picks the default — the login screen's
+click-to-fill accounts and a plain reseed use it — and an unknown value (e.g. a stale `.env` naming
+a dataset from an older release) falls back to the default with a warning instead of breaking demo
+mode. When more than one dataset is registered, `/admin/demo` shows a **Dataset** dropdown
+(`POST /admin/demo/reseed?dataset=<key>`; an unknown explicit key → 400). The loader silently skips
+names it cannot resolve, so `tests/test_demo_seed.py` checks that every cross-reference of every
+registered dataset resolves (engineers, tasks, components, milestones, note targets).
 
 ### Z2. Reset / reload from the UI *(admin, demo mode)*
 - **UI:** sidebar **"Demo data"** (admin only) → **`/admin/demo`**. Shows current row counts + the
@@ -2001,7 +1996,9 @@ When demo mode is on, any connection whose config carries `demo: true` is served
 HTTP mock** (`backend/app/connectors/demo.py`), so **Sync from Jira** (§J3), GitHub PR reads, Drive
 doc reads, ADR import, doc harvest, and draft → Jira push (§C10.2) all work with **no real
 credentials and no network**. Policy is unchanged (default direct reads/writes); the mock is injected
-at the connector's `open_client()` chokepoint.
+at the connector's `open_client()` chokepoint. The fixtures match the flagship: a `SHOP` Jira project
+(one epic + three stories on an active sprint), the `example-shop/checkout` repository (PRs + a
+markdown ADR) and a Drive folder of checkout and payments docs.
 
 ### Z4. Not built (deliberate limits)
 - Demo mode is **not** a multi-tenant or production feature; it is gated off by default and the

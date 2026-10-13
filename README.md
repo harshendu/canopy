@@ -62,13 +62,13 @@ under the same permissions.
 | **Programs & leadership** | **Initiatives** that roll up project health, a cross-project critical path with hand-offs, and a weekly digest; a 0–100 **risk score** across schedule/capacity/architecture/quality with a nightly timeline, a RAID register and alerts; **outcomes** tracked as measurable bets; teams, pods and owners with ownership-scoped editing; leadership notes and a business-review roll-up; **PDF/CSV export** snapshots (download or save to Drive). |
 | **Integrations** | **Jira** idempotent sync (epics → phases, stories → tasks, sprints, status history, assignee → owner), plus pushing an architect-reviewed draft plan as tickets; **GitHub** and **Google Drive** reads (repos, PRs, design docs, ADR import from markdown); HMAC-verified webhooks with a polling backstop; OAuth 2.0 (3LO) or API tokens, encrypted at rest. |
 | **AI-native** | A **Claude Code plugin** with 120+ curated MCP tools, 14 skills and 7 subagents; **review-first change proposals** — agents stage updates inferred from Slack, email, meetings or docs for a human to review and apply; **bounded agent tokens** that can't take one-way-door actions (accepting an irreversible ADR, pushing to Jira, applying a scenario). |
-| **Admin & operations** | Roles (admin, architect, engineering manager, engineer, viewer) plus cross-functional personas that pick each user's landing page; per-feature on/off gates; per-integration read/write policy; admin impersonation; **demo mode** with seeded datasets and offline-mocked connectors; live updates over SSE; PostgreSQL or MySQL/MariaDB in production, SQLite for local dev. |
+| **Admin & operations** | Roles (admin, architect, engineering manager, engineer, viewer) plus cross-functional personas that pick each user's landing page; per-feature on/off gates; per-integration read/write policy; admin impersonation; **demo mode** with a seeded dataset and offline-mocked connectors; live updates over SSE; PostgreSQL or MySQL/MariaDB in production, SQLite for local dev. |
 
 | Initiative cockpit | Gantt with critical path | Risk score |
 | --- | --- | --- |
-| [![Initiative cockpit: attention list, progress, worst risk and drift, CPM end date vs P85 forecast, and the cross-project critical path](docs/images/screenshots/initiative.png)](docs/images/screenshots/initiative.png) | [![Gantt chart with the critical path highlighted in red, phases, owners and a what-if panel](docs/images/screenshots/gantt.png)](docs/images/screenshots/gantt.png) | [![Risk score of 31 broken into schedule, capacity, architecture and quality families](docs/images/screenshots/risk.png)](docs/images/screenshots/risk.png) |
+| [![Initiative cockpit: attention list, progress, worst risk and drift, CPM end date vs P85 forecast, and the cross-project critical path](docs/images/screenshots/initiative.png)](docs/images/screenshots/initiative.png) | [![Gantt chart with the critical path in red, phases, owners, today's line and schedule variance against the baseline](docs/images/screenshots/gantt.png)](docs/images/screenshots/gantt.png) | [![Risk score of 44 broken into schedule, capacity, architecture and quality families](docs/images/screenshots/risk.png)](docs/images/screenshots/risk.png) |
 
-*Screenshots show the fictional "Helix" demo dataset.*
+*Screenshots show the demo dataset: a fictional online retailer (checkout, search, delivery, a marketplace and holiday-peak readiness).*
 
 ## Quickstart
 
@@ -79,14 +79,15 @@ Requires Docker with Compose v2, plus Python 3 for the setup script.
 ```bash
 git clone https://github.com/harshendu/canopy.git && cd canopy
 python3 scripts/init.py --defaults --no-start   # writes .env: generated secrets + admin password
-echo "DEMO_MODE=true" >> .env                    # optional: unlock the demo datasets (local only!)
+echo "DEMO_MODE=true" >> .env                    # optional: unlock the demo dataset (local only!)
 docker compose up --build
 ```
 
 Then open **http://localhost:5173** and sign in as `architect@example.com` with the password
 `init.py` printed (it's also `FIRST_SUPERUSER_PASSWORD` in `.env`). With demo mode on, open
-**Demo data** in the sidebar and load a dataset to explore every screen with realistic data; the
-login page then lists demo accounts for each role (password `canopy-demo`).
+**Demo data** in the sidebar and load the demo dataset — a fictional online retailer — to explore
+every screen with realistic data; the login page then lists demo accounts for each role (password
+`canopy-demo`).
 
 The stack runs PostgreSQL, Redis, the API (http://localhost:8000, OpenAPI docs at `/docs`), the
 background worker and the Vite dev server. Migrations and the first admin are applied automatically
@@ -128,7 +129,7 @@ All settings are environment variables, read from `.env` at the repo root (or `b
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | Access-token lifetime |
 | `FIRST_SUPERUSER_EMAIL` / `FIRST_SUPERUSER_PASSWORD` | unset | Admin account created on startup if it doesn't exist. Startup refuses to create it with a password under 8 characters or a placeholder such as `changeme` |
 | `BACKEND_CORS_ORIGINS` | `http://localhost:5173,http://localhost:4173` | Comma-separated origins allowed to call the API |
-| `DEMO_MODE` / `DEMO_DATASET` | `false` / `helix` | Unlocks the demo seed/reset endpoints and offline connector mocks. Datasets: `helix`, `agentic`. **Never enable in production.** |
+| `DEMO_MODE` / `DEMO_DATASET` | `false` / `ecommerce` | Unlocks the demo seed/reset endpoints and offline connector mocks. Dataset: `ecommerce` (a fictional online retailer). **Never enable in production.** |
 | `OAUTH_REDIRECT_BASE_URL` / `FRONTEND_BASE_URL` | `http://localhost:8000` / `http://localhost:5173` | Public URLs for OAuth callbacks and the post-consent redirect |
 | `JIRA_OAUTH_CLIENT_ID` / `…_SECRET`, `GITHUB_…`, `GOOGLE_…` | unset | OAuth 2.0 app credentials (only needed for the OAuth flow) |
 | `GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`, `EVENTS_WEBHOOK_SECRET` | unset | HMAC secrets for `/webhooks/*`. Each endpoint **rejects every request** (403) until its secret is set |

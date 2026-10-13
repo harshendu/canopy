@@ -68,7 +68,7 @@ const ROLE_LABEL: Record<LeadRole, string> = {
   manager: "Manager",
 };
 
-/** "Priya Raman (Tech) · Daniel Reyes (Product) · Jonah Fields (Manager)" — or "". */
+/** "Rahul Verma (Tech) · Sarah Chen (Product) · Lucia Ferreira (UX)" — or "". */
 export function leadTeamLabel(leads: InitiativeLead[]): string {
   return leads.map((l) => `${l.engineer_name} (${ROLE_LABEL[l.lead_role]})`).join(" · ");
 }
@@ -77,7 +77,7 @@ export function roleLabel(role: LeadRole): string {
   return ROLE_LABEL[role];
 }
 
-/** "Director: Samir Kapoor · Manager: Jonah Fields" for a team's seats. */
+/** "Director: Arjun Mehta · Manager: Ben Ortiz" for a team's seats. */
 export function teamSeatsLabel(members: TeamMember[]): string {
   const by = (role: TeamMember["role"]) =>
     members.filter((m) => m.role === role).map((m) => m.engineer_name);
