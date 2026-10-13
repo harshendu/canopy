@@ -133,7 +133,7 @@ function architecture() {
   });
   b += card(590, 96, 360, 96, {
     fill: C.violetBg, stroke: C.violet, accent: C.violet, title: "Claude Code Plugin",
-    titleColor: C.violet, sub: ["MCP server · ~61 curated tools", "6 skills · 4 subagents"],
+    titleColor: C.violet, sub: ["MCP server · 120+ curated tools", "14 skills · 7 subagents"],
   });
 
   // API bar
@@ -344,27 +344,30 @@ function sourceOfTruth() {
 /* 6. Project cockpit map                                                   */
 /* ----------------------------------------------------------------------- */
 function cockpit() {
-  const W = 1060, H = 560;
-  let b = frame(W, H, "The project cockpit", "/projects/:id  ·  deep-link any tab with ?tab=");
+  const W = 1060, H = 592;
+  let b = frame(W, H, "The project cockpit", "/projects/:id  ·  deep-link any view with ?tab=");
 
+  // Mirrors PROJECT_GROUPS in frontend/src/lib/projectNav.ts (Overview + five workspaces).
   const groups = [
-    ["Plan & schedule", C.blue, C.blueBg, ["Gantt", "Board", "Dependencies", "Roadmap", "Burndown"]],
-    ["Architecture & decisions", C.violet, C.violetBg, ["Architecture", "Decisions", "Drift"]],
-    ["Team", C.teal, C.tealBg, ["Capacity"]],
-    ["Health & history", C.amber, C.amberBg, ["Risk", "Retros", "Activity"]],
+    ["Overview", C.greenDk, C.greenBg, ["Overview"]],
+    ["Schedule", C.blue, C.blueBg, ["Gantt", "Dependencies", "Roadmap"]],
+    ["Execution", C.teal, C.tealBg, ["Board", "Capacity", "Delivery", "Burndown", "Activity"]],
+    ["Architecture", C.violet, C.violetBg, ["Decisions", "Architecture", "Drift"]],
+    ["Governance", C.amber, C.amberBg, ["Risk score", "Risk register", "Specs", "Docs", "Retros"]],
+    ["Integrations", C.slate, C.slateBg, ["Plan → Jira", "Jira Links"]],
   ];
-  // layout: 2 x 2 group panels
-  const gw = 498, gh = 196, gx = 28, gy = 22, x0 = 28, y0 = 92;
+  // layout: 3 x 2 group panels
+  const gw = 320, gh = 224, gx = 22, gy = 20, x0 = 28, y0 = 92;
   groups.forEach((g, i) => {
-    const col = i % 2, row = Math.floor(i / 2);
+    const col = i % 3, row = Math.floor(i / 3);
     const x = x0 + col * (gw + gx), y = y0 + row * (gh + gy);
     const [name, colr, bg, tabs] = g;
     b += box(x, y, gw, gh, { fill: bg, stroke: colr, sw: 1.8, rx: 14 });
     b += text(x + 22, y + 32, name, { size: 16, weight: "bold", fill: colr, anchor: "start" });
     // tab chips
-    const chipW = 150, chipH = 46, cgx = 14, cgy = 14, cx0 = x + 22, cy0 = y + 52;
+    const chipW = 131, chipH = 42, cgx = 14, cgy = 12, cx0 = x + 22, cy0 = y + 52;
     tabs.forEach((t, j) => {
-      const cc = j % 3, cr = Math.floor(j / 3);
+      const cc = j % 2, cr = Math.floor(j / 2);
       const tx = cx0 + cc * (chipW + cgx), ty = cy0 + cr * (chipH + cgy);
       b += box(tx, ty, chipW, chipH, { fill: C.white, stroke: colr, sw: 1.4, rx: 9 });
       b += text(tx + chipW / 2, ty + chipH / 2 + 5, t, { size: 13.5, weight: "bold", fill: C.ink });

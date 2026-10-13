@@ -2009,8 +2009,6 @@ at the connector's `open_client()` chokepoint.
 ## Known UI gaps (currently API/MCP-only)
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
-- **What-if** scheduling (C5) — per-project quick duration-override probing; **Scenarios** (§T)
-  cover the durable, multi-dimensional initiative-level what-if.
 - The **epic doc-field mapping / harvest** setup (§V2/§V3) stays conversational (AI-driven via the
   plugin) — no React wizard (deliberate); the Docs **tab** itself is built (read + add links).
 - Project rename/archive/date edits (B4) — the header has the weekend toggle + health/status/tags
@@ -2027,7 +2025,8 @@ backlog:
   delete** and **dependency delete** from the UI (C1/C1a/C2); the **initiative digest** now
   renders in the UI, not just MCP/API (R5); the **portfolio "needs attention" band** (B1) and a
   matching band on **`/team`** (F1); and non-engineering personas landing on read-first surfaces
-  instead of a create-list / admin page (A7).)*
+  instead of a create-list / admin page (A7). Since closed: **what-if** scheduling (C5) — a What-if
+  panel under the Gantt chart.)*
 
 ## Not built (deliberately deferred — with rationale)
 - **OIDC/SSO + `HttpOnly`-cookie tokens** (§A1): a substantial auth overhaul; the `Bearer` JWT path

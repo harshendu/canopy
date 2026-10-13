@@ -57,7 +57,7 @@ ruff check --fix .   # autofix
 mypy app             # static type check (must pass clean)
 pytest -q
 ```
-Frontend (run from `frontend/`):
+Frontend (run from `frontend/`; Node 22+ — Vite 7 needs >=20.19):
 ```bash
 npm install
 npm run dev          # proxies /api -> :8000
@@ -343,6 +343,11 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
 - The Gantt is a **custom SVG component**, not a third-party Gantt lib (so it builds/typechecks in CI
   without a browser). SVAR/frappe are a possible upgrade.
 - The `User` table is named `app_user` (`user` is reserved in Postgres).
+- **`sqlmodel` is capped `<0.0.45`**: 0.0.45 maps `datetime` to a tz-aware `UTCDateTime` that rejects
+  the naive UTC datetimes canopy stores (see the portability rules) — lifting the cap means migrating
+  every datetime field, not bumping a version. **`fastmcp` is capped below its next major**, and
+  **`ruff`/`mypy` are pinned exactly**, so a fresh clone's CI can't go red on an upstream release;
+  bump them deliberately (Dependabot opens the PRs).
 
 ## Setup, CI, and git hooks
 - `scripts/setup.sh` — idempotent environment bootstrap: creates `backend/.venv`, installs Python +
@@ -356,3 +361,11 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   every push; a failure aborts the push.
 - Install both hooks once per clone: `scripts/install-hooks.sh` (sets `core.hooksPath=.githooks`).
 - Don't bypass with `--no-verify` — fix the failure.
+- **GitHub Actions** (`.github/workflows/ci.yml`) runs the same gate on every PR and push to `main`,
+  plus what the hooks can't: backend tests on Python 3.11/3.12/3.13, `alembic upgrade head` on SQLite +
+  real PostgreSQL/MySQL/MariaDB with an `alembic check` drift test (skipped on SQLite, where the
+  VARCHAR→TEXT widenings are deliberate no-ops), and an MCP-server import smoke test.
+  `.github/dependabot.yml` proposes weekly dependency PRs.
+- Open-source hygiene: Apache-2.0 (`LICENSE` + `NOTICE`); `CONTRIBUTING.md`, `SECURITY.md`
+  (private vulnerability reporting) and `CODE_OF_CONDUCT.md` at the root; issue/PR templates in
+  `.github/`. Demo/seed data must stay fictional.
