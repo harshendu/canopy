@@ -1,0 +1,4 @@
+# Normalize line endings: shell scripts and hooks break with CRLF checkouts on Windows.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

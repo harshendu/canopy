@@ -61,7 +61,7 @@ curl -s http://localhost/api/v1/health        # {"status":"ok",...,"demo_mode":f
 curl -s http://localhost/api/v1/health/ready  # {"status":"ready"} (DB reachable)
 ```
 
-Open `http://localhost` (or `https://<machine-ip>` — self-signed), sign in as the
+Open `http://localhost` (or `http://<machine-ip>` from another machine), sign in as the
 superuser, then:
 
 - **Users** (`/admin/users`): provision accounts — email + temp password + role +
@@ -151,7 +151,8 @@ curl -s https://<public>/mcp -X POST \
 - [ ] `DEMO_MODE=false` (verify via `/api/v1/health`)
 - [ ] `CANOPY_MCP_AUTH_TOKEN` set (the `/mcp` path is public through the tunnel)
 - [ ] MCP service account has the least role that fits (or a bounded agent token)
-- [ ] Webhook secrets set before pointing GitHub/Jira at the public URL
+- [ ] Webhook secrets set (`GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`, `EVENTS_WEBHOOK_SECRET`)
+      — `/webhooks/*` is publicly routed, and unsigned payloads are accepted while a secret is empty
 - [ ] The superuser password was rotated after first login (sidebar → Change password)
 
 ## Bare-metal variant (no Docker)
