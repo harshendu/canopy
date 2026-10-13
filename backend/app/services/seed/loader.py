@@ -417,7 +417,7 @@ async def _apply_lifecycle(session: AsyncSession, refs: _Refs, spec: ProjectSpec
             author = ts.assignee or "Jira Sync"
             for from_status, to_status, days_ago in transitions:
                 await _add(session, TaskStatusHistory(
-                    task_id=task.id, from_status=from_status, to_status=to_status,
+                    task_id=_req(task.id), from_status=from_status, to_status=to_status,
                     changed_at=base - timedelta(days=days_ago), author=author,
                 ))
 
@@ -511,7 +511,7 @@ async def _build_project_specs(
             source_url=s.source_url))
         for i, c in enumerate(s.criteria):
             await _add(session, SpecCriterion(
-                spec_id=spec_row.id, text=c.text, status=CriterionStatus(c.status),
+                spec_id=_req(spec_row.id), text=c.text, status=CriterionStatus(c.status),
                 verification=c.verification, sort_order=i))
         for tname in s.task_names:
             task = refs.tasks[spec.key].get(tname)
@@ -609,7 +609,7 @@ async def _build_project_retro(
         status="open", affected_component_ids=ids))
     for c in r.comments:
         await _add(session, RetrospectiveComment(
-            retrospective_id=retro.id, engineer_id=refs.eng(c.author), author_name=c.author,
+            retrospective_id=_req(retro.id), engineer_id=refs.eng(c.author), author_name=c.author,
             body=c.body))
 
 
@@ -621,10 +621,10 @@ async def _build_project_draft(session: AsyncSession, spec: ProjectSpec, pid: in
         project_id=pid, title=d.title, description=d.description, status="draft",
         source="Planning doc / PRD"))
     epic = await _add(session, DraftTask(
-        plan_id=plan.id, name=d.epic, type=TaskType.summary, estimate_days=0, sort_order=0))
+        plan_id=_req(plan.id), name=d.epic, type=TaskType.summary, estimate_days=0, sort_order=0))
     for i, t in enumerate(d.tasks, start=1):
         await _add(session, DraftTask(
-            plan_id=plan.id, parent_id=epic.id, name=t.name, type=TaskType(t.type),
+            plan_id=_req(plan.id), parent_id=epic.id, name=t.name, type=TaskType(t.type),
             estimate_days=t.estimate_days, story_points=t.story_points, sort_order=i))
 
 
@@ -749,14 +749,14 @@ async def _build_scenarios(session: AsyncSession, refs: _Refs) -> None:
 
         for added in sc.added_tasks:
             new_task = await _add(session, ScenarioTask(
-                scenario_id=scenario.id, project_id=_req(project.id), name=added.name,
+                scenario_id=_req(scenario.id), project_id=_req(project.id), name=added.name,
                 type=TaskType.task, duration=added.duration,
                 assignee_engineer_id=refs.eng(added.assignee)))
             pred = (_clone_of(refs, sc.project_key, by_live_task, added.after_task)
                     if added.after_task is not None else None)
             if pred is not None:
                 await _add(session, ScenarioDependency(
-                    scenario_id=scenario.id, predecessor_id=_req(pred.id),
+                    scenario_id=_req(scenario.id), predecessor_id=_req(pred.id),
                     successor_id=_req(new_task.id)))
 
         if sc.milestone_pulls:
@@ -782,7 +782,7 @@ async def _build_scenarios(session: AsyncSession, refs: _Refs) -> None:
             alloc_project = refs.projects.get(alloc.project_key)
             if eng_id is not None and alloc_project is not None:
                 await _add(session, ScenarioAllocation(
-                    scenario_id=scenario.id, engineer_id=eng_id, project_id=alloc_project.id,
+                    scenario_id=_req(scenario.id), engineer_id=eng_id, project_id=alloc_project.id,
                     percent_allocation=alloc.percent_allocation,
                     start_date=_weeks(today, alloc.start_weeks),
                     end_date=_weeks(today, alloc.end_weeks)))
@@ -791,7 +791,7 @@ async def _build_scenarios(session: AsyncSession, refs: _Refs) -> None:
             eng_id = refs.eng(av.engineer)
             if eng_id is not None:
                 await _add(session, ScenarioAvailability(
-                    scenario_id=scenario.id, engineer_id=eng_id,
+                    scenario_id=_req(scenario.id), engineer_id=eng_id,
                     start_date=_weeks(today, av.start_weeks),
                     end_date=_weeks(today, av.end_weeks),
                     capacity_factor=av.capacity_factor, note=av.note))

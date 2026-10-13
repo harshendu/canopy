@@ -116,6 +116,8 @@ async def snapshot_live_into_scenario(session: AsyncSession, scenario: Scenario)
     )
     project_ids = {p.id for p in live_projects if p.id is not None}
     for p in live_projects:
+        if p.id is None:
+            continue
         session.add(
             ScenarioProject(
                 scenario_id=sid,
@@ -154,7 +156,7 @@ async def snapshot_live_into_scenario(session: AsyncSession, scenario: Scenario)
         session.add(st)
         task_rows[lt.id] = st
     await session.flush()  # assign scenario task ids
-    live_to_sid = {lid: st.id for lid, st in task_rows.items()}
+    live_to_sid = {lid: st.id for lid, st in task_rows.items() if st.id is not None}
     for lt in live_tasks:
         if lt.id is not None and lt.parent_id is not None and lt.parent_id in live_to_sid:
             task_rows[lt.id].parent_id = live_to_sid[lt.parent_id]

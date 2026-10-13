@@ -6,7 +6,9 @@
   "author": {
     "name": "Canopy"
   },
-  "license": "MIT",
+  "homepage": "https://github.com/harshendu/canopy#readme",
+  "repository": "https://github.com/harshendu/canopy",
+  "license": "Apache-2.0",
   "keywords": [
     "architecture",
     "project-management",

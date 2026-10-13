@@ -1,0 +1,66 @@
+name: Bug report
+description: Something in canopy doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this! **Security issues:** please don't file them here —
+        use [private vulnerability reporting](https://github.com/harshendu/canopy/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps. If you can reproduce it on the demo dataset (DEMO_MODE), say which one.
+      placeholder: |
+        1. Load the helix demo dataset
+        2. Open Projects → Control Plane Orchestrator → Schedule → Gantt
+        3. Click "Schedule (CPM)"
+        4. …
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it happen?
+      multiple: true
+      options:
+        - Web dashboard
+        - REST API
+        - Claude plugin / MCP server
+        - Jira / GitHub / Google Drive sync
+        - Background worker
+        - Setup / deployment (Docker, migrations, init.py)
+        - Docs
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `git rev-parse --short HEAD`, or the release you're running.
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database
+      options:
+        - PostgreSQL
+        - MySQL / MariaDB
+        - SQLite
+        - Not sure / not relevant
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: How canopy runs (docker compose, compose.prod.yml, bare metal), OS, browser, Python/Node versions.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Backend logs, browser console errors, or screenshots. Remove tokens, passwords and other secrets first.
+      render: text

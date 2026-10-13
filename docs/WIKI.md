@@ -105,20 +105,24 @@ The visual cockpit. Sign in at `/login` and you land on the **Portfolio**. Top-l
 | **My work** (`/me`, `/me/today`) | The engineer workspace. |
 | **Admin → Users** (`/admin/users`) | User & role management (admins only). |
 
-The **project cockpit** has these tabs: **Gantt · Board · Dependencies · Capacity · Decisions ·
-Architecture · Drift · Roadmap · Burndown · Risk · Retros · Activity**. Any tab is deep-linkable with
-`?tab=` (e.g. `/projects/12?tab=drift`).
+The **project cockpit** opens on an **Overview** and groups its views into five workspaces:
+**Schedule** (Gantt · Dependencies · Roadmap), **Execution** (Board · Capacity · Delivery · Burndown ·
+Activity), **Architecture** (Decisions · Architecture · Drift), **Governance** (Risk score · Risk
+register · Specs · Docs · Retros) and **Integrations** (Plan → Jira · Jira Links). Any view is
+deep-linkable with `?tab=` (e.g. `/projects/12?tab=drift`).
 
-![The project cockpit tabs grouped into four families: Plan & schedule (Gantt, Board, Dependencies, Roadmap, Burndown), Architecture & decisions (Architecture, Decisions, Drift), Team (Capacity), and Health & history (Risk, Retros, Activity)](images/cockpit.png)
+![The project cockpit: an Overview entry plus five workspaces — Schedule (Gantt, Dependencies, Roadmap), Execution (Board, Capacity, Delivery, Burndown, Activity), Architecture (Decisions, Architecture, Drift), Governance (Risk score, Risk register, Specs, Docs, Retros) and Integrations (Plan → Jira, Jira Links)](images/cockpit.png)
 
 ### 2) The Claude Code plugin
-Install the `canopy` plugin, point it at your Canopy URL, and paste a token. You then get **~61
+Install the `canopy` plugin, point it at your Canopy URL, and paste a token. You then get **120+
 curated MCP tools** (one per architect *intent*, not a 1:1 mirror of REST routes), plus:
 
-- **6 skills** (runbooks): `planning-roadmaps`, `writing-adrs`, `syncing-jira`, `capacity-planning`,
-  `decision-deadline-nudger`, `pr-to-adr-linker`.
-- **4 subagents** (isolated multi-step work): `gantt-planner`, `jira-sync`, `risk-analyst`,
-  `drift-sentinel`.
+- **14 skills** (runbooks): `updating-canopy` (the session operating guide), `harvesting-signals`,
+  `persona-playbooks`, `planning-roadmaps`, `writing-adrs`, `syncing-jira`, `mcp-ingest`,
+  `capacity-planning`, `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-jira-tickets`,
+  `mapping-epic-docs`, `spec-driven-development`, `daily-standup`.
+- **7 subagents** (isolated multi-step work): `gantt-planner`, `jira-sync`, `risk-analyst`,
+  `drift-sentinel`, `scenario-architect`, `delivery-enricher`, `signal-harvester`.
 
 Both front doors call the **same REST API** (`/api/v1/...`), so anything you can click you can also
 ask Claude to do — and vice-versa.
@@ -265,9 +269,11 @@ docker compose up --build
 - Migrations and superuser seeding run automatically on start.
 
 ### Install the Claude plugin
-Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`), then configure:
+Install the `canopy` plugin (cataloged by `.claude-plugin/marketplace.json`) — in Claude Code:
+`/plugin install canopy --marketplace harshendu/canopy` — then configure:
 - `api_base_url` — e.g. `http://localhost:8000`
-- `api_token` — a JWT from `POST /api/v1/auth/login`
+- `api_token` — an agent token minted on the **Agent Setup** page (`/agent-setup`), or a JWT from
+  `POST /api/v1/auth/login`
 
 Now ask Claude things like *"sync Jira and tell me what slipped"*, *"plan a roadmap for PLATFORM"*,
 or *"what's my riskiest project and why?"*
@@ -321,10 +327,10 @@ Canopy is opinionated about *not* half-building things. A few notable deferrals 
 - **Hours-based capacity** (interrupt budget, PTO→CPM, skill-fit) — allocation is percent-based today.
 - **Server-side code crawl for drift** — the Drift Sentinel subagent does the reading; the server
   compares observations. Only Python import analysis is implemented so far.
-- **GitHub PR-latency metrics** and a **DORA/flow metrics** view — the event inputs exist; the views
-  don't yet.
-- A few flows are **API/Claude-only** (no UI form yet): what-if scheduling, project rename/archive,
-  holiday management.
+- **GitHub PR-latency metrics** — they need deep repo crawling; the quality-risk family is fed by
+  CI/observability events instead. (DORA + flow **delivery metrics** are built.)
+- A few flows are **API/Claude-only** (no UI form yet): project rename/archive/date edits, and the
+  epic doc-field mapping setup (conversational by design).
 
 ---
 

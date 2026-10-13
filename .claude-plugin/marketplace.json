@@ -3,6 +3,9 @@
   "owner": {
     "name": "Canopy"
   },
+  "metadata": {
+    "description": "Marketplace for canopy: an open-source architecture + delivery cockpit for software architects, driven from a web dashboard or from Claude."
+  },
   "plugins": [
     {
       "name": "canopy",

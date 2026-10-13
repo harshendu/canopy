@@ -2,11 +2,15 @@
 name = "canopy-backend"
 version = "0.1.0"
 description = "Canopy — software architecture & project management backend"
+license = "Apache-2.0"
+authors = [{ name = "Harshendu Patel" }]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
-    "sqlmodel>=0.0.16",
+    # <0.0.45: SQLModel 0.0.45 maps `datetime` to a tz-aware UTCDateTime that rejects the naive UTC
+    # datetimes canopy stores on purpose (see "Naive UTC datetimes only" in CLAUDE.md).
+    "sqlmodel>=0.0.16,<0.0.45",
     "asyncpg>=0.29",
     "aiosqlite>=0.19",
     "alembic>=1.13",
@@ -24,12 +28,19 @@ dependencies = [
     "reportlab>=4.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/harshendu/canopy"
+Source = "https://github.com/harshendu/canopy"
+Issues = "https://github.com/harshendu/canopy/issues"
+
 [project.optional-dependencies]
+# ruff + mypy are pinned exactly: a new release can add lint rules or tighten inference and turn a
+# fresh clone's CI red with no code change. Bump them deliberately (Dependabot opens the PRs).
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "ruff>=0.6",
-    "mypy>=1.10",
+    "ruff==0.17.0",
+    "mypy==2.4.0",
 ]
 # Async MySQL / MariaDB driver. Postgres (asyncpg) and SQLite (aiosqlite) ship in the
 # core deps; install this extra to run the backend against MySQL/MariaDB:

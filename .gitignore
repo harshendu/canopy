@@ -230,3 +230,13 @@ dist/
 
 # --- canopy local artifacts ---
 *.db
+
+# --- secrets & local machine state (never commit) ---
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+service-account*.json
+.claude/settings.local.json
+.DS_Store
