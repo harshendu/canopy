@@ -39,7 +39,7 @@ Issues = "https://github.com/harshendu/canopy/issues"
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "ruff==0.17.0",
+    "ruff==0.17.1",
     "mypy==2.4.0",
 ]
 # Async MySQL / MariaDB driver. Postgres (asyncpg) and SQLite (aiosqlite) ship in the
