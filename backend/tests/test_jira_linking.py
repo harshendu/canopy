@@ -1,29 +1,32 @@
+"""Linking a Jira item and its subtree into canopy (USER_FLOWS §J9): epics → summary tasks
+(stories under them) in a project, or epics → projects of an initiative. The Jira connector
+normalizes the raw issues; the sync engine maps them; a link is a subtree `TrackerBinding`."""
+
+from typing import Any
+
 import pytest
 from sqlmodel import func, select
 
 from app.connectors.jira import JiraConnector
-from app.core.crypto import encrypt_token
 from app.models.base import Provider, TaskType
-from app.models.integration import Connection, ExternalRef, JiraLink
+from app.models.integration import ExternalRef, TrackerBinding
 from app.models.project import Initiative, Project, Task
-from app.services import jira_linking
+from app.services import tracker_links, tracker_sync
+from tests.helpers import jira_connection
 
 
-async def _connection(session, project_id: int = 1) -> Connection:
-    connection = Connection(
+async def _map(
+    session, connector: JiraConnector, issues: list[dict[str, Any]], target_type: str,
+    target_id: int,
+) -> tracker_sync.LinkMapResult:
+    return await tracker_sync.map_subtree(
+        session,
         provider=Provider.jira,
-        name="jira",
-        encrypted_token=encrypt_token("api-token"),
-        config={
-            "base_url": "https://example.atlassian.net",
-            "email": "a@b.com",
-            "project_id": project_id,
-            "jira_project_key": "PLAT",
-        },
+        connection_id=connector.connection_id,
+        items=[connector.normalize(i) for i in issues],
+        target_type=target_type,
+        target_id=target_id,
     )
-    session.add(connection)
-    await session.flush()
-    return connection
 
 
 def _issue(
@@ -61,14 +64,14 @@ async def test_map_subtree_into_project_wires_parents(db_session):
     project = Project(key="PLAT", name="Platform")
     db_session.add(project)
     await db_session.flush()
-    connector = JiraConnector(await _connection(db_session, project.id), db_session)
+    connector = JiraConnector(await jira_connection(db_session), db_session)
 
     issues = [
         _issue("100", "PLAT-1", "Epic"),
         _issue("101", "PLAT-2", "Story", parent_id="100"),
         _issue("102", "PLAT-3", "Story", parent_id="100"),
     ]
-    result = await connector.map_subtree_into_project(issues, project.id)
+    result = await _map(db_session, connector, issues, "project", project.id)
 
     assert result.tasks_created == 3
     epic = await db_session.get(Task, await _ref_entity(db_session, "100", "task"))
@@ -84,11 +87,11 @@ async def test_map_subtree_into_project_is_idempotent(db_session):
     project = Project(key="PLAT", name="Platform")
     db_session.add(project)
     await db_session.flush()
-    connector = JiraConnector(await _connection(db_session, project.id), db_session)
+    connector = JiraConnector(await jira_connection(db_session), db_session)
     issues = [_issue("100", "PLAT-1", "Epic"), _issue("101", "PLAT-2", "Story", parent_id="100")]
 
-    await connector.map_subtree_into_project(issues, project.id)
-    again = await connector.map_subtree_into_project(issues, project.id)
+    await _map(db_session, connector, issues, "project", project.id)
+    again = await _map(db_session, connector, issues, "project", project.id)
 
     assert again.skipped == 2  # same `updated` → not stale
     assert again.tasks_created == 0
@@ -102,7 +105,7 @@ async def test_map_subtree_into_initiative_creates_projects(db_session):
     initiative = Initiative(key="Q3", name="Q3 Program")
     db_session.add(initiative)
     await db_session.flush()
-    connector = JiraConnector(await _connection(db_session), db_session)
+    connector = JiraConnector(await jira_connection(db_session), db_session)
 
     issues = [
         _issue("1", "INIT-1", "Initiative"),  # anchor — above epic level
@@ -113,7 +116,7 @@ async def test_map_subtree_into_initiative_creates_projects(db_session):
         _issue("102", "STORY-3", "Story", parent_id="11"),
         _issue("1000", "SUB-1", "Sub-task", parent_id="100"),
     ]
-    result = await connector.map_subtree_into_initiative(issues, initiative.id)
+    result = await _map(db_session, connector, issues, "initiative", initiative.id)
 
     assert result.projects_created == 2
     assert result.tasks_created == 4  # 3 stories + 1 sub-task
@@ -145,11 +148,11 @@ async def test_map_subtree_into_initiative_is_idempotent(db_session):
     initiative = Initiative(key="Q3", name="Q3 Program")
     db_session.add(initiative)
     await db_session.flush()
-    connector = JiraConnector(await _connection(db_session), db_session)
+    connector = JiraConnector(await jira_connection(db_session), db_session)
     issues = [_issue("10", "EPIC-1", "Epic"), _issue("100", "STORY-1", "Story", parent_id="10")]
 
-    await connector.map_subtree_into_initiative(issues, initiative.id)
-    again = await connector.map_subtree_into_initiative(issues, initiative.id)
+    await _map(db_session, connector, issues, "initiative", initiative.id)
+    again = await _map(db_session, connector, issues, "initiative", initiative.id)
 
     assert again.projects_created == 0
     assert again.projects_linked == 1
@@ -159,7 +162,7 @@ async def test_map_subtree_into_initiative_is_idempotent(db_session):
     assert project_count == 1
 
 
-# --- service: create a link (orchestration + persistence) ---
+# --- service: create a link (orchestration + persistence as a subtree binding) ---
 def _patch_jira(monkeypatch, tree: list[dict]) -> None:
     async def fake_get_issue(self, key_or_id):
         return tree[0]
@@ -176,40 +179,41 @@ async def test_create_link_into_project_persists_link(db_session, monkeypatch):
     project = Project(key="PLAT", name="Platform")
     db_session.add(project)
     await db_session.flush()
-    connection = await _connection(db_session, project.id)
+    connection = await jira_connection(db_session)
     assert connection.id is not None
     _patch_jira(
         monkeypatch,
         [_issue("100", "PLAT-1", "Epic"), _issue("101", "PLAT-2", "Story", parent_id="100")],
     )
 
-    result = await jira_linking.create_or_sync_link(
+    binding, result = await tracker_links.create_or_sync(
         db_session,
         connection_id=connection.id,
-        jira_key="PLAT-1",
+        root_key="PLAT-1",
         target_type="project",
         target_id=project.id,
     )
 
     assert result.tasks_created == 2
-    assert result.link.target_type == "project"
-    link = (await db_session.execute(select(JiraLink))).scalar_one()
-    assert link.jira_issue_id == "100"
-    assert link.jira_issue_type == "Epic"
+    assert binding.target_type == "project"
+    link = (await db_session.execute(select(TrackerBinding))).scalar_one()
+    assert (link.provider, link.scope_kind) == (Provider.jira, "subtree")
+    assert link.scope["root_id"] == "100"
+    assert link.scope["root_type"] == "Epic"
     assert link.last_synced_at is not None
 
 
 @pytest.mark.asyncio
 async def test_create_link_rejects_missing_target(db_session, monkeypatch):
-    connection = await _connection(db_session)
+    connection = await jira_connection(db_session)
     assert connection.id is not None
     _patch_jira(monkeypatch, [_issue("100", "PLAT-1", "Epic")])
 
-    with pytest.raises(jira_linking.JiraLinkError):
-        await jira_linking.create_or_sync_link(
+    with pytest.raises(tracker_links.TrackerLinkError):
+        await tracker_links.create_or_sync(
             db_session,
             connection_id=connection.id,
-            jira_key="PLAT-1",
+            root_key="PLAT-1",
             target_type="project",
             target_id=999,
         )
@@ -220,20 +224,23 @@ async def test_resync_link_is_idempotent(db_session, monkeypatch):
     project = Project(key="PLAT", name="Platform")
     db_session.add(project)
     await db_session.flush()
-    connection = await _connection(db_session, project.id)
+    connection = await jira_connection(db_session)
     assert connection.id is not None
     _patch_jira(monkeypatch, [_issue("100", "PLAT-1", "Story")])
 
-    created = await jira_linking.create_or_sync_link(
+    link, created = await tracker_links.create_or_sync(
         db_session,
         connection_id=connection.id,
-        jira_key="PLAT-1",
+        root_key="PLAT-1",
         target_type="project",
         target_id=project.id,
     )
-    resynced = await jira_linking.resync_link(db_session, created.link.id)
+    assert link.id is not None
+    _, resynced = await tracker_links.resync(db_session, link.id)
 
     assert created.tasks_created == 1
     assert resynced.skipped == 1
-    link_count = (await db_session.execute(select(func.count()).select_from(JiraLink))).scalar()
+    link_count = (
+        await db_session.execute(select(func.count()).select_from(TrackerBinding))
+    ).scalar()
     assert link_count == 1

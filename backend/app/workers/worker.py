@@ -62,11 +62,6 @@ async def tracker_incremental_sync(ctx: dict[str, Any]) -> dict[int, dict[str, i
     return summary
 
 
-async def jira_incremental_sync(ctx: dict[str, Any]) -> dict[int, dict[str, int]]:
-    """Pre-tracker name of the poll, kept one release for jobs queued by name."""
-    return await tracker_incremental_sync(ctx)
-
-
 async def tracker_history_backfill(ctx: dict[str, Any]) -> dict[int, int]:
     """Nightly: top up exact status history from each tracker's changelog, bounded per binding."""
     summary: dict[int, int] = {}
@@ -122,14 +117,13 @@ async def startup(ctx: dict[str, Any]) -> None:
     ensure_secure_secret_key()
 
 
-_poll_minutes = set(range(0, 60, max(1, min(settings.tracker_poll_minutes, 30))))
+_poll_minutes = set(range(0, 60, max(1, min(settings.TRACKER_POLL_MINUTES, 30))))
 _drop_minutes = set(range(0, 60, max(1, min(settings.FILE_DROP_POLL_MINUTES, 30))))
 
 
 class WorkerSettings:
     functions: ClassVar = [
         tracker_incremental_sync,
-        jira_incremental_sync,
         tracker_history_backfill,
         process_webhook,
         capture_risk_snapshots,

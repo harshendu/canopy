@@ -58,5 +58,3 @@ an existing binding in place (scope, type mapping, sprint mirroring) with
 - Webhooks push live changes; the periodic poll is the backstop; a nightly job tops up exact
   status history from the tracker's changelog. A manual sync is still useful before planning.
 - A child whose parent hasn't synced yet is wired on the next sync.
-- The `*_jira_*` tools (`trigger_jira_sync`, `link_jira_ticket`, …) are deprecated aliases kept
-  for one release.

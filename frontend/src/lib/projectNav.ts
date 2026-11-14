@@ -8,7 +8,7 @@ import type { IconName } from "../components/icons";
  * planning / tracking / architecture / governance / integrations), plus an at-a-glance **Overview**
  * entry. Leaf keys are unchanged from the old flat tab bar, so every existing `?tab=<leaf>` deep
  * link (the preview drawer, the Drift Sentinel, shared URLs) keeps working and just auto-selects the
- * parent group — a renamed leaf keeps its old key as an alias (`TAB_ALIASES`).
+ * parent group.
  */
 
 export type ProjectTab =
@@ -81,11 +81,6 @@ export const PROJECT_GROUPS: ProjectGroupDef[] = [
     tabs: ["tracking", "drafts", "trackerlinks"],
   },
 ];
-
-/** Old leaf keys that still deep-link to the leaf that replaced them. */
-export const TAB_ALIASES: Readonly<Record<string, ProjectTab>> = {
-  jiralinks: "trackerlinks",
-};
 
 /** The feature gate each leaf sits behind (absent = core, always on). Mirrors the backend catalog. */
 export const TAB_FEATURES: Partial<Record<ProjectTab, string>> = {
@@ -203,9 +198,8 @@ export interface ResolvedTab {
  * snap to the Gantt).
  */
 export function resolveProjectTab(requested: string | null, isOn: IsFeatureOn): ResolvedTab {
-  const key = requested && Object.hasOwn(TAB_ALIASES, requested) ? TAB_ALIASES[requested] : requested;
-  if (key && Object.hasOwn(TAB_GROUP, key)) {
-    const tab = key as ProjectTab;
+  if (requested && Object.hasOwn(TAB_GROUP, requested)) {
+    const tab = requested as ProjectTab;
     if (tabEnabled(tab, isOn)) return { group: TAB_GROUP[tab], tab };
   }
   return { group: "overview", tab: null };

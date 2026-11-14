@@ -121,7 +121,7 @@ curated MCP tools** (one per architect *intent*, not a 1:1 mirror of REST routes
   `persona-playbooks`, `planning-roadmaps`, `writing-adrs`, `syncing-trackers`, `mcp-ingest`,
   `capacity-planning`, `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-tickets`,
   `mapping-epic-docs`, `planning-sprints`, `working-the-board`, `spec-driven-development`,
-  `daily-standup` (`syncing-jira` / `drafting-jira-tickets` remain one release as pointers).
+  `daily-standup`.
 - **7 subagents** (isolated multi-step work): `gantt-planner`, `tracker-sync`, `risk-analyst`,
   `drift-sentinel`, `scenario-architect`, `delivery-enricher`, `signal-harvester`.
 

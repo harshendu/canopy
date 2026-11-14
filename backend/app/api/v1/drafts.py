@@ -3,8 +3,8 @@
 Drafts live apart from the live schedule (the Gantt/CPM/board never see them). Finalising
 (`/finalize`) creates canopy tasks in a native project, or writes ticket **content** to the
 project's tracker (summary/description/story points) — never status — in a mirrored one; the
-next sync pulls the new items back as canopy tasks. `/push-to-jira` is the pre-tracker alias.
-Writes are planner-gated; finalising is human-only.
+next sync pulls the new items back as canopy tasks. Writes are planner-gated; finalising is
+human-only.
 """
 
 from fastapi import APIRouter, HTTPException, status
@@ -14,7 +14,6 @@ from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, HumanOnly, PlannerWriter, SessionDep
 from app.core.events import publish
-from app.models.base import Provider
 from app.models.draft import DraftPlan, DraftTask
 from app.models.project import Project
 from app.schemas.entities import (
@@ -24,15 +23,13 @@ from app.schemas.entities import (
     DraftPlanDetail,
     DraftPlanRead,
     DraftPlanUpdate,
-    DraftPushRequest,
-    DraftPushResult,
     DraftRecordPushRequest,
     DraftRecordPushResult,
     DraftTaskCreate,
     DraftTaskRead,
     DraftTaskUpdate,
 )
-from app.services import draft_sync, integration_policy
+from app.services import draft_sync
 from app.services.access import ensure_project_editable
 
 router = APIRouter()
@@ -166,28 +163,6 @@ async def delete_draft_task(session: SessionDep, user: PlannerWriter, task_id: i
         await session.commit()
 
 
-@router.post("/draft-plans/{plan_id}/push-to-jira", response_model=DraftPushResult)
-async def push_draft_to_jira(  # deprecated alias of /finalize for Jira-bound projects
-    session: SessionDep,
-    user: PlannerWriter,
-    __: HumanOnly,
-    plan_id: int,
-    payload: DraftPushRequest,
-) -> DraftPushResult:
-    write = await integration_policy.resolve_write(session, Provider.jira)
-    if not write.allowed:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=write.reason)
-    existing = await session.get(DraftPlan, plan_id)  # a missing plan is draft_sync's 400
-    if existing is not None:
-        await ensure_project_editable(session, user, existing.project_id)
-    try:
-        return await draft_sync.push_plan_to_jira(
-            session, plan_id, payload.connection_id, user.id
-        )
-    except draft_sync.DraftPushError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-
 @router.post("/draft-plans/{plan_id}/finalize", response_model=DraftFinalizeResult)
 async def finalize_draft_plan(
     session: SessionDep,
@@ -212,6 +187,8 @@ async def finalize_draft_plan(
             user_id=user.id,
             author=user.full_name or user.email,
         )
+    except draft_sync.DraftWriteBlockedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except draft_sync.DraftPushError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -220,9 +197,9 @@ async def finalize_draft_plan(
 async def record_draft_push(
     session: SessionDep, user: PlannerWriter, plan_id: int, payload: DraftRecordPushRequest
 ) -> DraftRecordPushResult:
-    """Write-back for `write_strategy=mcp`: Claude created the Jira tickets itself; record their
-    ids here so re-pushing is idempotent and the plan flips to synced. Internal write — allowed
-    for agent-scope tokens (no `HumanOnly` gate), unlike the direct push above."""
+    """Write-back for `write_strategy=mcp`: Claude created the tracker items itself; record
+    their ids here so re-pushing is idempotent and the plan flips to synced. Internal write —
+    allowed for agent-scope tokens (no `HumanOnly` gate), unlike finalising above."""
     existing = await session.get(DraftPlan, plan_id)
     if existing is not None:
         await ensure_project_editable(session, user, existing.project_id)

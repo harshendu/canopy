@@ -27,11 +27,13 @@ def test_connectors_page_lists_a_connection(auth_driver, base_url, token):
 def test_jira_sync_imports_tasks_from_mock(auth_driver, base_url, token, mock_jira):
     key = f"SYNC{int(time.time() * 1000) % 1_000_000}"
     proj = api_create_project(base_url, token, key, f"Sync {key}")
+    # `project_id` beside the config binds the project: it mirrors the mock's MOCK project.
     conn = api_post(base_url, token, "/connectors/connections", {
         "provider": "jira", "name": "Mock Jira", "token": "mock-token",
+        "project_id": proj["id"],
         "config": {
-            "base_url": mock_jira.base_url, "project_id": proj["id"],
-            "jira_project_key": "MOCK", "email": "e2e@example.com",
+            "base_url": mock_jira.base_url, "jira_project_key": "MOCK",
+            "email": "e2e@example.com",
         },
     })
     # Trigger a full sync (runs inline) against the mock; it returns created/updated counts.

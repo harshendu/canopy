@@ -10,29 +10,26 @@ Where the work lands follows the project's tracking mode:
   `WorkTracker.create_item` / `update_item` (parents first, so an epic exists before its
   stories). Content only: summary, description, story points and the epic→story parent —
   **never status**. canopy does not create local tasks here: the next sync pulls the new items
-  back. Each draft task is stamped with the item's id/key (`external_*`, and `jira_*` for Jira).
+  back. Each draft task is stamped with the item's provider, id and key (`external_*`).
 - `write_strategy=mcp` — Claude creates the items with its own connector and records the ids
   through `record_external_push`.
-
-`push_plan_to_jira` stays as the pre-tracker entry point (the `/push-to-jira` alias).
 """
 
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
+from sqlmodel import select
 
 from app.connectors import get_connector
-from app.connectors.tracker import WorkTracker
+from app.connectors.tracker import WorkTracker, is_tracker
 from app.core.events import publish
-from app.models.base import Provider, TaskType, TrackingMode, utcnow
+from app.models.base import TaskType, TrackingMode, utcnow
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import Connection
 from app.models.project import Project, Task
 from app.schemas.entities import (
     DraftFinalizeResult,
     DraftPushRecord,
-    DraftPushResult,
     DraftPushTaskResult,
     DraftRecordPushResult,
 )
@@ -44,6 +41,11 @@ from app.services.workflow import TrackingError, initialise_native_task
 
 class DraftPushError(Exception):
     """A precondition for finalising a plan failed (no plan, no/ambiguous connection, etc.)."""
+
+
+class DraftWriteBlockedError(DraftPushError):
+    """The admin's integration policy doesn't let canopy write to this tracker directly
+    (`write_strategy` mcp or disabled)."""
 
 
 def _ordered_tasks(tasks: list[DraftTask]) -> list[DraftTask]:
@@ -78,49 +80,20 @@ def _mark_synced(plan: DraftPlan) -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def _resolve_jira_connection(
-    session: AsyncSession, project_id: int, connection_id: int | None
-) -> Connection:
-    if connection_id is not None:
-        connection = await session.get(Connection, connection_id)
-        if connection is None:
-            raise DraftPushError("Connection not found")
-        if connection.provider != Provider.jira:
-            raise DraftPushError("Connection is not a Jira connection")
-        return connection
-    binding = await tracker_sync.binding_for_project(session, project_id)
-    if binding is not None and binding.provider == Provider.jira:
-        found = await session.get(Connection, binding.connection_id)
-        if found is not None:
-            return found
-    rows = await session.execute(
-        select(Connection).where(
-            Connection.provider == Provider.jira, col(Connection.active).is_(True)
-        )
-    )
-    matches = [c for c in rows.scalars().all() if int(c.config.get("project_id", 0)) == project_id]
-    if not matches:
-        raise DraftPushError("No active Jira connection is configured for this project")
-    if len(matches) > 1:
-        raise DraftPushError("Multiple Jira connections match this project — pass connection_id")
-    return matches[0]
-
-
 async def _scope_for(session: AsyncSession, connection: Connection, project_id: int) -> Scope:
+    """The project's binding scope when it is bound through this connection, else an empty
+    scope (the tracker's own defaults apply)."""
     binding = await tracker_sync.binding_for_project(session, project_id)
     if binding is not None and binding.connection_id == connection.id:
         return binding.scope
-    legacy = tracker_sync.legacy_binding(connection)
-    if legacy is not None:
-        return legacy.scope
-    return Scope(kind="project", values=dict(connection.config or {}))
+    return Scope(kind="project")
 
 
-def _existing_ref(task: DraftTask) -> ItemRef | None:
-    ext_id = task.external_id or task.jira_issue_id
-    if not ext_id:
+def _existing_ref(task: DraftTask, provider: str) -> ItemRef | None:
+    """The item a draft task was already created as in this tracker (a re-push updates it)."""
+    if not task.external_id or task.external_provider != provider:
         return None
-    return ItemRef(external_id=ext_id, key=task.external_key or task.jira_key)
+    return ItemRef(external_id=task.external_id, key=task.external_key)
 
 
 async def push_plan_to_tracker(
@@ -151,7 +124,7 @@ async def push_plan_to_tracker(
         assert task.id is not None
         parent = by_id.get(task.parent_id) if task.parent_id is not None else None
         try:
-            ref = _existing_ref(task)
+            ref = _existing_ref(task, provider)
             if ref is not None:
                 await tracker.update_item(
                     scope,
@@ -170,15 +143,12 @@ async def push_plan_to_tracker(
                         kind=KIND_EPIC if task.type == TaskType.summary else KIND_ITEM,
                         description=task.description,
                         estimate=task.story_points,
-                        parent=_existing_ref(parent) if parent is not None else None,
+                        parent=_existing_ref(parent, provider) if parent is not None else None,
                     ),
                 )
                 task.external_provider = provider
                 task.external_id = ref.external_id
                 task.external_key = ref.key
-                if connection.provider == Provider.jira:
-                    task.jira_issue_id = ref.external_id
-                    task.jira_key = ref.key
                 created += 1
                 action = "created"
             results.append(
@@ -186,8 +156,7 @@ async def push_plan_to_tracker(
                     draft_task_id=task.id,
                     name=task.name,
                     action=action,
-                    jira_key=task.jira_key,
-                    external_key=task.external_key or task.jira_key,
+                    external_key=task.external_key,
                 )
             )
         except Exception as exc:  # surface per-task failure, keep pushing the rest
@@ -198,35 +167,6 @@ async def push_plan_to_tracker(
                 )
             )
     return created, updated, failed, results
-
-
-async def push_plan_to_jira(
-    session: AsyncSession,
-    plan_id: int,
-    connection_id: int | None = None,
-    user_id: int | None = None,
-) -> DraftPushResult:
-    """The pre-tracker push (`POST /draft-plans/{id}/push-to-jira`)."""
-    plan = await session.get(DraftPlan, plan_id)
-    if plan is None:
-        raise DraftPushError("Draft plan not found")
-    connection = await _resolve_jira_connection(session, plan.project_id, connection_id)
-    assert connection.id is not None
-    created, updated, failed, results = await push_plan_to_tracker(
-        session, plan, connection, user_id
-    )
-    if failed == 0 and (created or updated):
-        _mark_synced(plan)
-    await session.commit()
-    await publish({"type": "draft_push", "project_id": plan.project_id, "plan_id": plan_id})
-    return DraftPushResult(
-        plan_id=plan_id,
-        connection_id=connection.id,
-        created=created,
-        updated=updated,
-        failed=failed,
-        results=results,
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -328,7 +268,7 @@ async def finalize_plan(
     if connection is not None:
         write = await integration_policy.resolve_write(session, connection.provider)
         if not write.allowed:
-            raise DraftPushError(write.reason)
+            raise DraftWriteBlockedError(write.reason)
         created, updated, failed, results = await push_plan_to_tracker(
             session, plan, connection, user_id
         )
@@ -380,25 +320,24 @@ async def record_external_push(
 
     rows = await session.execute(select(DraftTask).where(DraftTask.plan_id == plan_id))
     by_id = {t.id: t for t in rows.scalars().all()}
+    bound = await tracker_sync.binding_for_project(session, plan.project_id)
 
     recorded = 0
     for record in records:
         task = by_id.get(record.draft_task_id)
         if task is None:
             raise DraftPushError(f"Draft task {record.draft_task_id} is not in plan {plan_id}")
-        ext_id = record.external_id or record.jira_issue_id
-        if not ext_id:
+        provider = record.provider or (bound.provider.value if bound is not None else None)
+        if provider is None:
             raise DraftPushError(
-                f"Draft task {record.draft_task_id}: pass external_id (or jira_issue_id)"
+                f"Draft task {record.draft_task_id}: name the tracker (provider) — the "
+                "project is bound to none"
             )
-        key = record.external_key or record.jira_key
-        provider = record.provider or ("jira" if record.jira_issue_id else None)
+        if not is_tracker(provider):
+            raise DraftPushError(f"{provider} is not a work tracker")
         task.external_provider = provider
-        task.external_id = ext_id
-        task.external_key = key
-        if provider in (None, "jira"):
-            task.jira_issue_id = ext_id
-            task.jira_key = key
+        task.external_id = record.external_id
+        task.external_key = record.external_key
         recorded += 1
 
     if recorded:

@@ -9,7 +9,7 @@ from sqlmodel import select
 
 import app.webhooks.events as events_webhook
 import app.webhooks.github as github_webhook
-import app.webhooks.jira as jira_webhook
+import app.webhooks.trackers as tracker_webhook
 from app.core.config import settings
 from app.models.activity import ActivityEvent
 from app.models.project import Project
@@ -18,7 +18,7 @@ from tests.conftest import TestSession
 
 SECRET = "webhook-test-secret"
 
-# (path, secret setting, signature header)
+# (path, secret setting, signature header) — Jira posts to the tracker route, `/webhooks/{provider}`
 ENDPOINTS = [
     ("/webhooks/github", "GITHUB_WEBHOOK_SECRET", "X-Hub-Signature-256"),
     ("/webhooks/jira", "JIRA_WEBHOOK_SECRET", "X-Hub-Signature"),
@@ -73,7 +73,7 @@ async def test_missing_or_forged_signature_is_rejected(client, monkeypatch, path
     ("module", "path", "setting", "header", "payload"),
     [
         (github_webhook, *ENDPOINTS[0], {"repository": {"full_name": "acme/platform"}}),
-        (jira_webhook, *ENDPOINTS[1], {"issue": {"key": "PLAT-1"}}),
+        (tracker_webhook, *ENDPOINTS[1], {"issue": {"key": "PLAT-1"}}),
     ],
 )
 async def test_signed_sync_webhooks_are_accepted(

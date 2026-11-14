@@ -244,11 +244,9 @@ export default function TrackingPanel({ projectId }: { projectId: number }) {
     enabled: integrationsOn && t !== undefined,
   });
 
-  const boundConnectionId = t?.binding?.connection_id ?? t?.legacy_connection_id ?? null;
+  const boundConnectionId = t?.binding?.connection_id ?? null;
   const boundConnection = (connections.data ?? []).find((c) => c.id === boundConnectionId) ?? null;
-  const label = t
-    ? trackingLabel(t, boundConnection?.provider ?? t.legacy_provider ?? null, catalog.data)
-    : null;
+  const label = t ? trackingLabel(t) : null;
   const trackerName = label ?? "the tracker";
 
   const sync = useMutation({
@@ -288,11 +286,8 @@ export default function TrackingPanel({ projectId }: { projectId: number }) {
   }
 
   const binding = t.binding;
-  const bound = binding !== null || t.legacy_connection_id !== null;
-  const tracker = trackerInfo(
-    catalog.data,
-    binding?.provider ?? boundConnection?.provider ?? t.legacy_provider,
-  );
+  const bound = binding !== null;
+  const tracker = trackerInfo(catalog.data, binding?.provider);
   const scopeFields = schemaFields(tracker?.scope_schema);
   const mayChange = t.can_edit && integrationsOn;
   const busy = sync.isPending || publish.isPending;
@@ -449,17 +444,6 @@ export default function TrackingPanel({ projectId }: { projectId: number }) {
           connectionsError={connections.isError ? trackingFailure(connections.error).message : null}
           onClose={() => setPanel(null)}
         />
-      )}
-
-      {t.legacy_connection_id !== null && !binding && (
-        <p className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          Bound through the settings of{" "}
-          <span className="font-medium text-slate-700">
-            {boundConnection ? boundConnection.name : `connection #${t.legacy_connection_id}`}
-          </span>{" "}
-          (a connection made before bindings), so there is no binding to adjust here. Syncing works as usual; to
-          change its scope, switch tracking onto the same connection — that gives the project a binding of its own.
-        </p>
       )}
 
       {binding && (

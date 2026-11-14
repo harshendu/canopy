@@ -15,6 +15,7 @@ from app.models.integration import Connection
 from app.models.project import Task
 from app.models.sprint import TaskSprintHistory
 from app.models.user import User
+from tests.helpers import bind_project
 
 
 async def _token(client: Any, email: str, password: str = "pw12345678") -> str:
@@ -218,11 +219,14 @@ async def test_membership_owned_by_a_syncing_tracker_is_refused(client, team_wor
     mirrored = await _task(client, w, w["projects"][0], "From Jira")
     task = await db_session.get(Task, mirrored)
     task.status_owner = "jira"
-    db_session.add(
-        Connection(
-            provider=Provider.jira, name="j", encrypted_token=encrypt_token("t"),
-            config={"project_id": w["projects"][0], "board_id": 7},
-        )
+    connection = Connection(
+        provider=Provider.jira, name="j", encrypted_token=encrypt_token("t"), config={}
+    )
+    db_session.add(connection)
+    await db_session.flush()
+    # The project mirrors Jira, sprints included (its board).
+    await bind_project(
+        db_session, connection, w["projects"][0], {"board_id": 7}, sync_iterations=True
     )
     await db_session.commit()
     sprint = (

@@ -196,8 +196,6 @@ export interface Task {
   status_owner: string;
   /** Human key: `<prefix>-<n>` for canopy-owned work, the tracker's key when mirrored. */
   key: string | null;
-  /** Legacy: the sprint's name (kept in step with `sprint_id`). */
-  sprint: string | null;
   /** The sprint the task is planned into (§C11) — changed via the sprint membership
    *  endpoints, never a PATCH. */
   sprint_id: number | null;
@@ -564,7 +562,6 @@ export interface Engineer {
   user_id: number | null;
   skill_tags: string[];
   github_login: string | null;
-  jira_account_id: string | null;
   timezone: string | null;
   committed_hours_per_week: number | null;
 }
@@ -1106,15 +1103,12 @@ export interface DraftTask {
   estimate_days: number;
   story_points: number | null;
   sort_order: number;
-  /** Legacy Jira stamp (kept alongside the tracker-neutral one below). */
-  jira_issue_id: string | null;
-  jira_key: string | null;
   /** The tracker item finalising created for this draft task (any tracker). */
-  external_provider?: string | null;
-  external_id?: string | null;
-  external_key?: string | null;
+  external_provider: string | null;
+  external_id: string | null;
+  external_key: string | null;
   /** The canopy task a native finalise created (a re-finalise updates it). */
-  task_id?: number | null;
+  task_id: number | null;
 }
 
 export interface DraftPlanDetail extends DraftPlan {
@@ -1126,12 +1120,11 @@ export interface DraftPushTaskResult {
   name: string;
   /** created | updated | failed */
   action: string;
-  jira_key: string | null;
   error: string | null;
   /** The tracker item's key, or the native task's key. */
-  external_key?: string | null;
+  external_key: string | null;
   /** The canopy task (native finalise). */
-  task_id?: number | null;
+  task_id: number | null;
 }
 
 /** `POST /draft-plans/{id}/finalize`: canopy tasks (native) or the bound tracker's items. */
@@ -1409,11 +1402,6 @@ export interface PullRequest {
   task_id: number | null;
 }
 
-export interface JiraIssueLink {
-  key: string;
-  url: string | null;
-}
-
 /** The tracker item behind a mirrored task, whatever the tracker. */
 export interface TrackerItemLink {
   provider: string;
@@ -1424,15 +1412,13 @@ export interface TrackerItemLink {
 }
 
 export interface TaskExternalLinks {
-  /** Preferred over `jira`. */
-  tracker?: TrackerItemLink | null;
-  /** Deprecated alias of `tracker`, set only when the tracker is Jira. */
-  jira: JiraIssueLink | null;
+  /** The tracker item a mirrored task comes from (null for canopy-only work). */
+  tracker: TrackerItemLink | null;
   pull_requests: PullRequest[];
   docs: DocReference[];
 }
 
-// --- Tracker links + tracker catalog (neutral successors of the Jira links) ---
+// --- Tracker links + tracker catalog ---
 /** What a tracker link maps an item's subtree into. */
 export type TrackerLinkTarget = "project" | "initiative";
 
@@ -1535,14 +1521,9 @@ export interface ProjectTracking {
   mode: TrackingMode;
   /** The active binding; null for a native project (or a mirrored one not bound yet). */
   binding: TrackerBinding | null;
-  /** Bound only through a pre-binding connection's `config.project_id` (no binding row). */
-  legacy_connection_id: number | null;
-  /** That legacy connection's provider and the tracker's label (null otherwise). */
-  legacy_provider?: string | null;
-  legacy_label?: string | null;
   /** Trackers the project used before, newest first. */
   history: TrackerBinding[];
-  /** The bound (or legacy) tracker's capabilities. */
+  /** The bound tracker's capabilities. */
   capabilities: TrackerCapabilities | null;
   canopy_owned: number;
   tracker_owned: number;

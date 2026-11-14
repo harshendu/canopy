@@ -1,32 +1,46 @@
+"""Jira issues onto canopy tasks: idempotent upserts, epic → story parents and the assignee →
+engineer mapping (recorded as a Jira `EngineerIdentity`). Each raw issue goes through the Jira
+connector's `normalize` and the sync engine's `upsert_item`, as a sync does."""
+
+from dataclasses import dataclass
+from typing import Any
+
 import pytest
 from sqlmodel import func, select
 
 from app.connectors.jira import JiraConnector
-from app.core.crypto import encrypt_token
 from app.models.base import Provider
-from app.models.integration import Connection, ExternalRef
+from app.models.integration import EngineerIdentity, ExternalRef
 from app.models.project import Project, Task
 from app.models.team import Engineer
+from app.services import ingest, tracker_sync
+from tests.helpers import jira_connection
 
 
-async def _make_connector(session) -> JiraConnector:
+@dataclass
+class _Jira:
+    """A Jira connection bound to one project, upserting raw issues the way a sync does."""
+
+    connector: JiraConnector
+    project_id: int
+
+    async def upsert(self, issue: dict[str, Any]) -> str:
+        action, _ = await tracker_sync.upsert_item(
+            self.connector.session,
+            provider=Provider.jira,
+            connection_id=self.connector.connection_id,
+            project_id=self.project_id,
+            item=self.connector.normalize(issue),
+        )
+        return action
+
+
+async def _make_jira(session) -> _Jira:
     project = Project(key="PLAT", name="Platform")
     session.add(project)
     await session.flush()
-    connection = Connection(
-        provider=Provider.jira,
-        name="jira",
-        encrypted_token=encrypt_token("api-token"),
-        config={
-            "base_url": "https://example.atlassian.net",
-            "email": "a@b.com",
-            "project_id": project.id,
-            "jira_project_key": "PLAT",
-        },
-    )
-    session.add(connection)
-    await session.flush()
-    return JiraConnector(connection, session)
+    assert project.id is not None
+    return _Jira(JiraConnector(await jira_connection(session, project.id), session), project.id)
 
 
 def _issue(
@@ -50,14 +64,26 @@ def _issue(
     return {"id": ext_id, "key": key, "fields": fields}
 
 
+async def _jira_account(db_session, engineer: Engineer) -> str | None:
+    rows = (
+        await db_session.execute(
+            select(EngineerIdentity.external_account_id).where(
+                EngineerIdentity.engineer_id == engineer.id,
+                EngineerIdentity.provider == Provider.jira,
+            )
+        )
+    ).scalars().all()
+    return rows[0] if rows else None
+
+
 @pytest.mark.asyncio
 async def test_upsert_is_idempotent(db_session):
-    connector = await _make_connector(db_session)
+    jira = await _make_jira(db_session)
     issue = _issue("10001", "PLAT-1", "Story", "2026-05-01T10:00:00.000+0000")
 
-    action1, _, _ = await connector._upsert_issue(issue)
+    action1 = await jira.upsert(issue)
     await db_session.commit()
-    action2, _, _ = await connector._upsert_issue(issue)
+    action2 = await jira.upsert(issue)
     await db_session.commit()
 
     assert action1 == "created"
@@ -70,28 +96,25 @@ async def test_upsert_is_idempotent(db_session):
 
 @pytest.mark.asyncio
 async def test_newer_update_refreshes(db_session):
-    connector = await _make_connector(db_session)
-    await connector._upsert_issue(
-        _issue("10001", "PLAT-1", "Story", "2026-05-01T10:00:00.000+0000")
-    )
+    jira = await _make_jira(db_session)
+    await jira.upsert(_issue("10001", "PLAT-1", "Story", "2026-05-01T10:00:00.000+0000"))
     await db_session.commit()
-    action, _, _ = await connector._upsert_issue(
-        _issue("10001", "PLAT-1", "Story", "2026-05-02T10:00:00.000+0000")
-    )
+    action = await jira.upsert(_issue("10001", "PLAT-1", "Story", "2026-05-02T10:00:00.000+0000"))
     await db_session.commit()
     assert action == "updated"
 
 
 @pytest.mark.asyncio
 async def test_epic_parent_wiring(db_session):
-    connector = await _make_connector(db_session)
-    await connector._upsert_issue(
-        _issue("20000", "PLAT-10", "Epic", "2026-05-01T10:00:00.000+0000")
+    jira = await _make_jira(db_session)
+    await jira.upsert(_issue("20000", "PLAT-10", "Epic", "2026-05-01T10:00:00.000+0000"))
+    await jira.upsert(
+        _issue("20001", "PLAT-11", "Story", "2026-05-01T10:00:00.000+0000", parent_id="20000"),
     )
-    await connector._upsert_issue(
-        _issue("20001", "PLAT-11", "Story", "2026-05-01T10:00:00.000+0000", parent_id="20000")
+    links = [("20001", "20000")]
+    await ingest.wire_parents(
+        db_session, Provider.jira, links, connection_id=jira.connector.connection_id
     )
-    await connector._wire_parents([("20001", "20000")])
     await db_session.commit()
 
     story_ref = (
@@ -117,21 +140,21 @@ async def _task_for(db_session, ext_id: str) -> Task:
 
 @pytest.mark.asyncio
 async def test_assignee_creates_engineer_and_reuses_by_account_id(db_session):
-    connector = await _make_connector(db_session)
-    await connector._upsert_issue(
+    jira = await _make_jira(db_session)
+    await jira.upsert(
         _issue("30001", "PLAT-20", "Story", "2026-05-01T10:00:00.000+0000",
-               assignee=("acc-1", "Dana Lee"))
+               assignee=("acc-1", "Dana Lee")),
     )
-    await connector._upsert_issue(
+    await jira.upsert(
         _issue("30002", "PLAT-21", "Story", "2026-05-01T10:00:00.000+0000",
-               assignee=("acc-1", "Dana Lee"))
+               assignee=("acc-1", "Dana Lee")),
     )
     await db_session.commit()
 
     engineers = (await db_session.execute(select(Engineer))).scalars().all()
     assert len(engineers) == 1
     assert engineers[0].name == "Dana Lee"
-    assert engineers[0].jira_account_id == "acc-1"
+    assert await _jira_account(db_session, engineers[0]) == "acc-1"
     for ext_id in ("30001", "30002"):
         task = await _task_for(db_session, ext_id)
         assert task.assignee_engineer_id == engineers[0].id
@@ -139,34 +162,32 @@ async def test_assignee_creates_engineer_and_reuses_by_account_id(db_session):
 
 @pytest.mark.asyncio
 async def test_assignee_matches_existing_engineer_by_name_and_backfills_account(db_session):
-    connector = await _make_connector(db_session)
+    jira = await _make_jira(db_session)
     existing = Engineer(name="Dana Lee")
     db_session.add(existing)
     await db_session.flush()
 
-    await connector._upsert_issue(
+    await jira.upsert(
         _issue("30003", "PLAT-22", "Story", "2026-05-01T10:00:00.000+0000",
-               assignee=("acc-1", "dana lee"))
+               assignee=("acc-1", "dana lee")),
     )
     await db_session.commit()
 
     engineers = (await db_session.execute(select(Engineer))).scalars().all()
     assert len(engineers) == 1  # matched, not duplicated
-    assert engineers[0].jira_account_id == "acc-1"
+    assert await _jira_account(db_session, engineers[0]) == "acc-1"
     task = await _task_for(db_session, "30003")
     assert task.assignee_engineer_id == existing.id
 
 
 @pytest.mark.asyncio
 async def test_unassigned_issue_leaves_local_owner_untouched(db_session):
-    connector = await _make_connector(db_session)
+    jira = await _make_jira(db_session)
     local_owner = Engineer(name="Local Owner")
     db_session.add(local_owner)
     await db_session.flush()
 
-    await connector._upsert_issue(
-        _issue("30004", "PLAT-23", "Story", "2026-05-01T10:00:00.000+0000")
-    )
+    await jira.upsert(_issue("30004", "PLAT-23", "Story", "2026-05-01T10:00:00.000+0000"))
     await db_session.commit()
     task = await _task_for(db_session, "30004")
     assert task.assignee_engineer_id is None
@@ -174,9 +195,7 @@ async def test_unassigned_issue_leaves_local_owner_untouched(db_session):
     # Assign locally, then a newer unassigned update arrives: ownership must survive.
     task.assignee_engineer_id = local_owner.id
     await db_session.commit()
-    await connector._upsert_issue(
-        _issue("30004", "PLAT-23", "Story", "2026-05-02T10:00:00.000+0000")
-    )
+    await jira.upsert(_issue("30004", "PLAT-23", "Story", "2026-05-02T10:00:00.000+0000"))
     await db_session.commit()
     task = await _task_for(db_session, "30004")
     assert task.assignee_engineer_id == local_owner.id
@@ -184,26 +203,28 @@ async def test_unassigned_issue_leaves_local_owner_untouched(db_session):
 
 @pytest.mark.asyncio
 async def test_jira_assignee_overrides_local_owner(db_session):
-    connector = await _make_connector(db_session)
+    jira = await _make_jira(db_session)
     local_owner = Engineer(name="Local Owner")
     db_session.add(local_owner)
     await db_session.flush()
 
-    await connector._upsert_issue(
-        _issue("30005", "PLAT-24", "Story", "2026-05-01T10:00:00.000+0000")
-    )
+    await jira.upsert(_issue("30005", "PLAT-24", "Story", "2026-05-01T10:00:00.000+0000"))
     await db_session.commit()
     task = await _task_for(db_session, "30005")
     task.assignee_engineer_id = local_owner.id
     await db_session.commit()
 
-    await connector._upsert_issue(
+    await jira.upsert(
         _issue("30005", "PLAT-24", "Story", "2026-05-02T10:00:00.000+0000",
-               assignee=("acc-2", "Sam Roy"))
+               assignee=("acc-2", "Sam Roy")),
     )
     await db_session.commit()
     task = await _task_for(db_session, "30005")
     sam = (
-        await db_session.execute(select(Engineer).where(Engineer.jira_account_id == "acc-2"))
+        await db_session.execute(
+            select(Engineer)
+            .join(EngineerIdentity, EngineerIdentity.engineer_id == Engineer.id)
+            .where(EngineerIdentity.external_account_id == "acc-2")
+        )
     ).scalar_one()
     assert task.assignee_engineer_id == sam.id

@@ -83,24 +83,13 @@ async def _tracking_read(
 ) -> ProjectTrackingRead:
     assert project.id is not None
     binding = await tracking_service.active_binding(session, project.id)
-    legacy_connection_id: int | None = None
-    legacy_provider: str | None = None
-    provider: str | None = str(binding.provider) if binding is not None else None
-    if binding is None:
-        legacy = await tracker_sync.binding_for_project(session, project.id)
-        if legacy is not None:
-            legacy_connection_id = legacy.connection_id
-            provider = legacy_provider = legacy.provider.value
-    cls = tracker_class(provider) if provider else None
+    cls = tracker_class(binding.provider) if binding is not None else None
     tasks = await tracking_service.project_tasks(session, project.id)
     canopy_owned = sum(1 for t in tasks if t.status_owner == CANOPY_OWNER)
     return ProjectTrackingRead(
         project_id=project.id,
         mode=project.tracking_mode,
         binding=await binding_read(session, binding) if binding is not None else None,
-        legacy_connection_id=legacy_connection_id,
-        legacy_provider=legacy_provider,
-        legacy_label=tracker_label(legacy_provider) if legacy_provider else None,
         history=[
             await binding_read(session, b)
             for b in await tracking_service.past_bindings(session, project.id)

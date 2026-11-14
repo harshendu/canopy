@@ -13,6 +13,7 @@ from app.models.user import User
 from app.schemas.entities import IngestIssue
 from app.services import file_ingest
 from app.services.file_ingest import FileIngestError, _rows_from_bytes, _validate_rows
+from tests.helpers import bind_project
 
 
 # --- parser ---
@@ -43,9 +44,11 @@ async def _jira(session) -> tuple[Project, Connection]:
     project = Project(key="PLAT", name="Platform")
     session.add(project)
     await session.flush()
-    conn = Connection(provider=Provider.jira, name="j", config={"project_id": project.id})
+    conn = Connection(provider=Provider.jira, name="j", config={})
     session.add(conn)
     await session.flush()
+    assert project.id is not None
+    await bind_project(session, conn, project.id)
     return project, conn
 
 

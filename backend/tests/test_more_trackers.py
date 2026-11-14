@@ -365,8 +365,9 @@ async def test_a_linear_connection_with_a_project_binds_it_with_its_scope_keys(
     body = {
         "provider": "linear",
         "name": "Linear",
-        "config": {"project_id": project, "team_key": "ENG", "label": "search",
-                   "linear_project_id": "lp-1", "workspace_url_key": "example"},
+        "project_id": project,
+        "config": {"team_key": "ENG", "label": "search", "linear_project_id": "lp-1",
+                   "workspace_url_key": "example"},
     }
     # Not enabled: it can't mirror a project.
     refused = await client.post("/api/v1/connectors/connections", json=body, headers=admin)
@@ -376,7 +377,7 @@ async def test_a_linear_connection_with_a_project_binds_it_with_its_scope_keys(
     assert created.status_code == 201, created.text
     tracking = (await client.get(f"/api/v1/projects/{project}/tracking", headers=admin)).json()
     assert tracking["mode"] == "mirrored" and tracking["binding"]["label"] == "Linear"
-    # The tracker's own scope keys come over; canopy's project_id never becomes one.
+    # The tracker's own scope keys come over from its config.
     assert tracking["binding"]["scope"] == {
         "team_key": "ENG", "linear_project_id": "lp-1", "label": "search",
     }

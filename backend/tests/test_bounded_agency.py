@@ -111,13 +111,14 @@ async def test_external_write_actions_gated_for_agents(client, db_session) -> No
             headers=full,
         )
     ).json()
-    # push-to-jira is an external write → agent blocked before any Jira logic runs.
+    # finalising a plan makes work real (and writes to a tracker when mirrored) → an agent is
+    # blocked before anything runs.
     pushed = await client.post(
-        f"/api/v1/draft-plans/{plan['id']}/push-to-jira", json={}, headers=agent
+        f"/api/v1/draft-plans/{plan['id']}/finalize", json={}, headers=agent
     )
     assert pushed.status_code == 403
-    # a human is NOT blocked by the agency gate (fails later for lack of a Jira connection).
+    # a human is NOT blocked by the agency gate (the native project's empty plan finalises).
     human_push = await client.post(
-        f"/api/v1/draft-plans/{plan['id']}/push-to-jira", json={}, headers=full
+        f"/api/v1/draft-plans/{plan['id']}/finalize", json={}, headers=full
     )
     assert human_push.status_code != 403

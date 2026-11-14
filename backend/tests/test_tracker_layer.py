@@ -16,13 +16,13 @@ from typing import Any
 import pytest
 from sqlmodel import select
 
-import app.webhooks.jira as jira_webhook
 import app.webhooks.trackers as tracker_webhook
 from app.connectors import get_connector
 from app.connectors.tracker import WorkTracker, registered_trackers
 from app.core.config import settings
 from app.core.crypto import encrypt_token
 from app.core.security import hash_password
+from app.main import app as main_app
 from app.models.base import Provider, TaskType, UserRole
 from app.models.integration import Connection, ExternalRef, PullRequest, TrackerBinding
 from app.models.project import Project, Task, TaskStatusHistory
@@ -114,12 +114,11 @@ def _imports(path: Path) -> set[str]:
 
 def test_only_the_registry_and_provider_specific_reads_import_a_concrete_tracker() -> None:
     """The engine, links, ingest, drafts, workflow and board talk to `WorkTracker` only, so a
-    new tracker is one module. Jira's own features (epic doc fields, Agile reads, the
-    deprecated `/jira-links` alias) are the allowed exceptions."""
+    new tracker is one module. Jira's own features (epic doc fields, Agile reads) are the
+    allowed exceptions."""
     concrete = {f"app.connectors.{p.value}" for p in registered_trackers()}
     allowed = {
         APP / "connectors" / "__init__.py",
-        APP / "services" / "jira_linking.py",  # the /jira-links alias (one release)
         APP / "services" / "doc_graph.py",  # Jira epic doc-field harvest
         APP / "api" / "v1" / "connectors" / "_shared.py",  # provider-specific reads
     }
@@ -186,7 +185,38 @@ async def _project(session: Any, key: str, **fields: Any) -> Project:
 
 
 # --------------------------------------------------------------------------- #
-# Tracker links (+ the /jira-links alias)
+# Retired names (the pre-tracker aliases, one release after the port)
+# --------------------------------------------------------------------------- #
+
+RETIRED = (
+    "/jira-links",
+    "push-to-jira",
+    "jira_account_id",
+    "jira_issue_id",
+    '"jira_key"',
+    "legacy_connection_id",
+    "legacy_provider",
+    "legacy_label",
+    "JiraLink",
+)
+
+
+def test_no_retired_name_remains_in_the_api() -> None:
+    """Every Jira-named surface kept its old name as an alias for one release; that release is
+    over. What stays Jira-named is Jira's own (Agile boards/sprints, epic doc fields, the
+    one-issue changelog replay)."""
+    spec = main_app.openapi()
+    text = json.dumps(spec)
+    assert [name for name in RETIRED if name in text] == []
+    schemas = spec["components"]["schemas"]
+    assert "jira" not in schemas["TaskExternalLinksRead"]["properties"]
+    assert "sprint" not in schemas["TaskRead"]["properties"]  # `sprint_id` is the membership
+    jira_paths = sorted(p for p in spec["paths"] if "/jira" in p)
+    assert all(p.startswith("/api/v1/connectors/jira/") for p in jira_paths), jira_paths
+
+
+# --------------------------------------------------------------------------- #
+# Tracker links
 # --------------------------------------------------------------------------- #
 
 
@@ -228,26 +258,6 @@ async def test_tracker_links_map_a_subtree_idempotently(client, db_session, monk
         await db_session.execute(select(Task).where(Task.project_id == project.id))
     ).scalars().all()
     assert len(kept) == 4
-
-
-async def test_jira_links_alias_is_listed_as_a_tracker_link(client, db_session, monkeypatch):
-    monkeypatch.setattr(settings, "DEMO_MODE", True)
-    admin = await _admin(client, db_session)
-    project = await _project(db_session, "SHOP")
-    connection = await _demo_jira(db_session)
-    listing = {"target_type": "project", "target_id": project.id}
-
-    legacy = await client.post(
-        "/api/v1/jira-links",
-        json={"connection_id": connection.id, "jira_key": "SHOP-200", **listing},
-        headers=admin,
-    )
-    assert legacy.status_code == 201, legacy.text
-    mirrored = (await client.get("/api/v1/tracker-links", params=listing, headers=admin)).json()
-    assert [(m["provider"], m["root_key"]) for m in mirrored] == [("jira", "SHOP-200")]
-
-    await client.delete(f"/api/v1/jira-links/{legacy.json()['link']['id']}", headers=admin)
-    assert (await client.get("/api/v1/tracker-links", params=listing, headers=admin)).json() == []
 
 
 async def test_tracker_link_refuses_a_non_tracker_connection(client, db_session):
@@ -358,7 +368,7 @@ async def test_generic_webhook_is_404_for_anything_but_a_webhook_tracker(client)
 
 async def test_jira_webhook_is_routed_by_binding_scope(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "JIRA_WEBHOOK_SECRET", "s3cret")
-    monkeypatch.setattr(jira_webhook, "async_session_factory", TestSession)
+    monkeypatch.setattr(tracker_webhook, "async_session_factory", TestSession)
     queued: list[tuple[str, tuple[Any, ...]]] = []
 
     async def fake_enqueue(name: str, *args: Any) -> None:
@@ -447,7 +457,6 @@ async def test_task_links_name_the_tracker_item(client, db_session):
         "key": "SHOP-7",
         "url": "https://acme.example.com/browse/SHOP-7",
     }
-    assert links["jira"] == {"key": "SHOP-7", "url": "https://acme.example.com/browse/SHOP-7"}
 
 
 async def test_pull_requests_link_to_tasks_by_any_key(db_session):

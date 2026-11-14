@@ -12,9 +12,6 @@ Reads use the enhanced JQL search (POST /rest/api/3/search/jql, cursor paginatio
 Agile API; all requests are rate-limit-aware (Retry-After + backoff). The epic doc-field
 harvest (`list_fields`, `fetch_epics`, `fetch_remote_links`) is a Jira feature of the document
 graph, not of work tracking, and stays here unchanged.
-
-The pre-tracker methods (`_upsert_issue`, `map_subtree_into_*`, `sync_active_sprints`,
-`sync_status_history`) remain as thin wrappers over the engine for one release.
 """
 
 from __future__ import annotations
@@ -25,16 +22,13 @@ from typing import Any, ClassVar
 
 import httpx
 from pydantic import BaseModel
-from sqlmodel import select
 
-from app.connectors.base import EffectiveCredential, SyncResult
+from app.connectors.base import EffectiveCredential
 from app.connectors.http import request_with_retry
 from app.connectors.tracker import WorkTracker, register_tracker
 from app.models.base import Provider, TaskType
-from app.models.integration import ExternalRef
-from app.services import ingest, tracker_sync, workflow
+from app.services import workflow
 from app.services.links import jira_browse_url
-from app.services.tracker_sync import BindingView, LinkMapResult
 from app.services.tracker_types import (
     KIND_EPIC,
     KIND_ITEM,
@@ -53,7 +47,7 @@ from app.services.tracker_types import (
     WorkItem,
 )
 
-__all__ = ["JiraConnector", "LinkMapResult"]
+__all__ = ["JiraConnector"]
 
 _FIELDS = ["summary", "status", "issuetype", "parent", "updated", "assignee"]
 _EPIC_TYPES = {"Epic"}
@@ -106,11 +100,6 @@ class JiraConnector(WorkTracker):
         return str(self.config["base_url"]).rstrip("/")
 
     @property
-    def canopy_project_id(self) -> int:
-        """The legacy `config.project_id` binding (pre-bindings connections)."""
-        return int(self.config["project_id"])
-
-    @property
     def jira_project_key(self) -> str:
         return str(self.config.get("jira_project_key") or self.config.get("project_key") or "")
 
@@ -147,7 +136,7 @@ class JiraConnector(WorkTracker):
     # --------------------------------------------------------------------- #
 
     def _epic_type_names(self, scope: Scope | None = None) -> set[str]:
-        """Issue-type names treated as epics: the binding's mapping, the legacy configured
+        """Issue-type names treated as epics: the binding's mapping, the connection's configured
         `epic_issue_type`, plus `Epic`."""
         names = set(_EPIC_TYPES)
         configured = self.config.get("epic_issue_type")
@@ -375,24 +364,24 @@ class JiraConnector(WorkTracker):
         scope_key = str(scope.get("project_key") or "")
         if scope_key and scope_key != self.jira_project_key:
             extra["project_key"] = scope_key
-        issue = await self.create_issue(
+        issue = await self._create_issue(
             summary=draft.title,
-            issue_type=self.issue_type_for(
-                TaskType.summary if draft.kind == KIND_EPIC else TaskType.task
-            ),
+            issue_type=self._issue_type(draft.kind, scope),
             description=draft.description,
             story_points=draft.estimate,
             parent_key=draft.parent.key if draft.parent is not None else None,
+            estimate_field=self._estimate_field(scope),
             **extra,
         )
         return ItemRef(external_id=issue["id"], key=issue["key"])
 
     async def update_item(self, scope: Scope, ref: ItemRef, patch: ItemPatch) -> None:
-        await self.update_issue(
+        await self._update_issue(
             ref.external_id,
             summary=patch.title,
             description=patch.description,
             story_points=patch.estimate,
+            estimate_field=self._estimate_field(scope),
         )
 
     # --------------------------------------------------------------------- #
@@ -411,97 +400,6 @@ class JiraConnector(WorkTracker):
         return WebhookEvent(item=self.normalize(issue), scope_hint=self.webhook_scope_hint(payload))
 
     # --------------------------------------------------------------------- #
-    # Pre-tracker entry points (thin wrappers over the engine, one release)
-    # --------------------------------------------------------------------- #
-
-    def _legacy_view(self, project_id: int | None = None) -> BindingView:
-        connection = (
-            self.connection._connection
-            if isinstance(self.connection, EffectiveCredential)
-            else self.connection
-        )
-        view = tracker_sync.legacy_binding(connection)
-        scope = (
-            view.scope
-            if view is not None
-            else Scope(kind="project", values={"project_key": self.jira_project_key})
-        )
-        return BindingView(
-            connection_id=self.connection_id or 0,
-            provider=Provider.jira,
-            target_type="project",
-            target_id=project_id if project_id is not None else self.canopy_project_id,
-            scope=scope,
-            sync_iterations=bool(self.config.get("board_id")),
-        )
-
-    async def _upsert_issue(
-        self, issue: dict[str, Any], *, project_id: int | None = None, force_leaf: bool = False
-    ) -> tuple[str, str | None, str]:
-        """Upsert one raw Jira issue as a canopy task. Returns (action, parent_id, ext_id)."""
-        item = self.normalize(issue)
-        action, _ = await tracker_sync.upsert_item(
-            self.session,
-            provider=Provider.jira,
-            connection_id=self.connection_id,
-            project_id=project_id if project_id is not None else self.canopy_project_id,
-            item=item,
-            force_leaf=force_leaf,
-        )
-        return action, item.parent_external_id, item.external_id
-
-    async def _wire_parents(self, parent_links: list[tuple[str, str]]) -> None:
-        await ingest.wire_parents(
-            self.session, Provider.jira, parent_links, connection_id=self.connection_id
-        )
-
-    async def map_subtree_into_project(
-        self, issues: list[dict[str, Any]], project_id: int
-    ) -> LinkMapResult:
-        return await tracker_sync.map_subtree(
-            self.session,
-            provider=Provider.jira,
-            connection_id=self.connection_id,
-            items=[self.normalize(i) for i in issues],
-            target_type="project",
-            target_id=project_id,
-        )
-
-    async def map_subtree_into_initiative(
-        self, issues: list[dict[str, Any]], initiative_id: int
-    ) -> LinkMapResult:
-        return await tracker_sync.map_subtree(
-            self.session,
-            provider=Provider.jira,
-            connection_id=self.connection_id,
-            items=[self.normalize(i) for i in issues],
-            target_type="initiative",
-            target_id=initiative_id,
-        )
-
-    async def sync_active_sprints(self) -> SyncResult:
-        """Mirror the board's sprints (no-op without a `board_id` config)."""
-        if not self.config.get("board_id"):
-            return SyncResult(provider="jira")
-        return await tracker_sync.sync_iterations(self, self._legacy_view())
-
-    async def sync_status_history(self, issue_key: str) -> int:
-        """Replay one issue's changelog into its task's history (replacing approximate rows)."""
-        ref = (
-            await self.session.execute(
-                select(ExternalRef).where(
-                    ExternalRef.provider == Provider.jira,
-                    ExternalRef.external_key == issue_key,
-                    ExternalRef.entity_type == "task",
-                )
-            )
-        ).scalars().first()
-        if ref is None:
-            return 0
-        view = self._legacy_view(project_id=0)
-        return await tracker_sync.backfill_task_history(self, view, ref.entity_id)
-
-    # --------------------------------------------------------------------- #
     # Helpers
     # --------------------------------------------------------------------- #
 
@@ -516,10 +414,6 @@ class JiraConnector(WorkTracker):
             return dt.strftime("%Y-%m-%d %H:%M")
         except ValueError:
             return None
-
-    def _is_epic_issue(self, issue: dict[str, Any]) -> bool:
-        name = (issue.get("fields", {}).get("issuetype") or {}).get("name", "")
-        return name in self._epic_type_names()
 
     async def get_issue(self, key_or_id: str) -> dict[str, Any] | None:
         """Fetch a single issue (the link root). Returns None if it doesn't exist (404)."""
@@ -583,6 +477,16 @@ class JiraConnector(WorkTracker):
             return str(self.config.get("epic_issue_type", "Epic"))
         return str(self.config.get("story_issue_type", "Story"))
 
+    def _issue_type(self, kind: str, scope: Scope | None = None) -> str:
+        """The issue type a new item is created as: the binding's mapping (its first epic type,
+        or its item type), else the connection's configured type, else Jira's default."""
+        mapping = scope.mapping if scope is not None else {}
+        if kind == KIND_EPIC:
+            epic_types = [str(t) for t in mapping.get("epic_types") or []]
+            return epic_types[0] if epic_types else self.issue_type_for(TaskType.summary)
+        item_type = mapping.get("item_type")
+        return str(item_type) if item_type else self.issue_type_for(TaskType.task)
+
     def _build_create_fields(
         self,
         *,
@@ -592,6 +496,7 @@ class JiraConnector(WorkTracker):
         story_points: float | None,
         parent_key: str | None,
         project_key: str | None = None,
+        estimate_field: str | None = None,
     ) -> dict[str, Any]:
         fields: dict[str, Any] = {
             "project": {"key": project_key or self.jira_project_key},
@@ -602,12 +507,12 @@ class JiraConnector(WorkTracker):
             fields["description"] = self._adf(description)
         if parent_key:
             fields["parent"] = {"key": parent_key}
-        story_field = self._story_point_field
+        story_field = estimate_field or self._story_point_field
         if story_field and story_points is not None:
             fields[story_field] = story_points
         return fields
 
-    async def create_issue(
+    async def _create_issue(
         self,
         *,
         summary: str,
@@ -616,6 +521,7 @@ class JiraConnector(WorkTracker):
         story_points: float | None = None,
         parent_key: str | None = None,
         project_key: str | None = None,
+        estimate_field: str | None = None,
     ) -> dict[str, str]:
         """Create a Jira issue from plan content. Returns {'id', 'key'}. Never sets status."""
         fields = self._build_create_fields(
@@ -625,6 +531,7 @@ class JiraConnector(WorkTracker):
             story_points=story_points,
             parent_key=parent_key,
             project_key=project_key,
+            estimate_field=estimate_field,
         )
         async with await self.open_client() as client:
             resp = await request_with_retry(
@@ -633,13 +540,14 @@ class JiraConnector(WorkTracker):
         data: dict[str, Any] = resp.json()
         return {"id": str(data["id"]), "key": str(data["key"])}
 
-    async def update_issue(
+    async def _update_issue(
         self,
         issue_id_or_key: str,
         *,
         summary: str | None = None,
         description: str | None = None,
         story_points: float | None = None,
+        estimate_field: str | None = None,
     ) -> None:
         """Update an existing issue's content fields. Only provided fields change; status is
         never touched (it stays Jira-owned)."""
@@ -648,7 +556,7 @@ class JiraConnector(WorkTracker):
             fields["summary"] = summary
         if description:
             fields["description"] = self._adf(description)
-        story_field = self._story_point_field
+        story_field = estimate_field or self._story_point_field
         if story_field and story_points is not None:
             fields[story_field] = story_points
         if not fields:

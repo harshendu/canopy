@@ -104,10 +104,13 @@ async def test_task_links_endpoint(client, db_session) -> None:
     resp = await client.get(f"/api/v1/tasks/{task_id}/links", headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["jira"] == {
+    assert body["tracker"] == {
+        "provider": "jira",
+        "label": "Jira",
         "key": "SHOP-105",
         "url": "https://jira.example.com/browse/SHOP-105",
     }
+    assert "jira" not in body  # the pre-tracker field retired with Phase 6
     assert [pr["number"] for pr in body["pull_requests"]] == [412]
     assert body["pull_requests"][0]["task_id"] == task_id
     assert [d["source"] for d in body["docs"]] == ["repo"]
@@ -133,7 +136,7 @@ async def test_task_links_empty_and_404(client, db_session) -> None:
     resp = await client.get(f"/api/v1/tasks/{task_id}/links", headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body == {"tracker": None, "jira": None, "pull_requests": [], "docs": []}
+    assert body == {"tracker": None, "pull_requests": [], "docs": []}
 
     missing = await client.get("/api/v1/tasks/999999/links", headers=headers)
     assert missing.status_code == 404
