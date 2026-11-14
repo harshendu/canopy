@@ -10,7 +10,7 @@ team's initiatives; managers, like pod leads, own the initiatives they are seate
 from sqlalchemy import Column, Text
 from sqlmodel import Field
 
-from app.models.base import TeamRole, TimestampMixin
+from app.models.base import DeliveryMethod, EstimateUnit, TeamRole, TimestampMixin
 
 
 class Team(TimestampMixin, table=True):
@@ -18,6 +18,11 @@ class Team(TimestampMixin, table=True):
     key: str = Field(index=True, unique=True)
     name: str
     description: str | None = Field(default=None, sa_column=Column(Text))
+    # How the team runs work across all its projects (USER_FLOWS §C11): kanban | sprint | both.
+    # Stored as VARCHAR, validated by `DeliveryMethod`.
+    delivery_method: str = DeliveryMethod.kanban.value
+    sprint_length_days: int = 14
+    estimate_unit: str = EstimateUnit.points.value
 
 
 class Pod(TimestampMixin, table=True):

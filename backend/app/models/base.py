@@ -60,6 +60,26 @@ class StatusSource(StrEnum):
 CANOPY_OWNER = "canopy"
 
 
+class DeliveryMethod(StrEnum):
+    """How a team runs its work, across all of its projects (USER_FLOWS §C11)."""
+
+    kanban = "kanban"  # continuous flow: WIP limits, cycle time, weekly forecast
+    sprint = "sprint"  # time boxes: planning, sprint burndown, velocity
+    both = "both"  # sprints on top of a WIP-limited board
+
+
+class EstimateUnit(StrEnum):
+    points = "points"  # Task.story_points
+    days = "days"  # Task.duration (working days)
+    item_count = "count"  # every task counts 1 (member name avoids shadowing str.count)
+
+
+class SprintState(StrEnum):
+    planned = "planned"
+    active = "active"
+    completed = "completed"
+
+
 class DependencyType(StrEnum):
     FS = "FS"  # finish-to-start (default)
     SS = "SS"  # start-to-start

@@ -62,6 +62,10 @@ class TeamRead(BaseModel):
     description: str | None = None
     pods: list[PodRead] = []
     members: list[TeamMemberRead] = []
+    # How the team runs work across its projects (USER_FLOWS §C11).
+    delivery_method: str = "kanban"
+    sprint_length_days: int = 14
+    estimate_unit: str = "points"
 
 
 class TeamCreate(BaseModel):

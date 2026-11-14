@@ -150,6 +150,19 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   `tracking.native`; workflows: `GET/PUT /teams|projects/{id}/workflow`, `/workflows/template`.
   Native tasks get keys `<prefix>-<n>`. MCP: `get_board`/`move_task`/`get_workflow`/
   `set_workflow`. USER_FLOWS §C9.
+- **Delivery methods + sprints (per team):** `Team.delivery_method` kanban|sprint|both (+ sprint
+  length, estimate unit points|days|count) applies to every project the team runs (a team-less
+  project is Kanban-only; gate `tracking.sprints`, off = everyone Kanban). `Sprint`
+  (`app/models/sprint.py`) belongs to a team (optional pod), is canopy-owned or mirrored from a
+  tracker (read-only), state planned→active→completed; `Task.sprint_id` is membership, written
+  ONLY by `sprint_service.record_membership` (appends `TaskSprintHistory` — commitment, scope
+  change, carry-over derive from it). Pure maths (burndown, totals, velocity, per-sprint
+  Monte-Carlo, capacity) in `app/services/sprints.py`; DB side in `app/services/sprint_service.py`;
+  API `app/api/v1/sprints.py` (`/teams/{id}/delivery|board|sprints|velocity`, `/sprints/{id}/…`).
+  Sprints never pin the CPM schedule (`sprint_overrun` alert instead). Team-level only, never
+  per engineer. MCP: `get_team_delivery`/`set_team_delivery`/`list_sprints`/`get_sprint`/
+  `plan_sprint`/`start_sprint`/`complete_sprint`/`get_velocity`; skill `planning-sprints`.
+  USER_FLOWS §C11.
 - **Probabilistic forecast:** `GET /projects/{id}/forecast` and `GET /initiatives/{id}/forecast`
   run a Monte-Carlo simulation (`app/services/forecast.py`, pure) — burn down the remaining items by
   sampling historical weekly throughput (from `TaskStatusHistory`, incl. zero weeks) to report
@@ -331,6 +344,7 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   guide every canopy session starts from, `harvesting-signals`, `persona-playbooks`,
   `planning-roadmaps`, `writing-adrs`, `syncing-jira`, `mcp-ingest`, `capacity-planning`,
   `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-jira-tickets`, `mapping-epic-docs`,
+  `planning-sprints`,
   `spec-driven-development`, `daily-standup`); subagents do isolated multi-step work
   (`jira-sync`, `gantt-planner`, `risk-analyst`, `drift-sentinel`, `scenario-architect`,
   `delivery-enricher`, `signal-harvester`). Add a tool when Claude needs a new verb; register it

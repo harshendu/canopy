@@ -238,6 +238,7 @@ TEAMS: tuple[TeamSpec, ...] = (
         "the marketplace and site reliability.",
         ("Orders & Inventory", "Delivery", "Marketplace", "Platform"),
         directors=("Claire Dubois",), managers=("Hana Sato",),
+        delivery_method="both",
     ),
 )
 

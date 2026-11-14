@@ -56,6 +56,7 @@ from app.models.scenario import (
     ScenarioTask,
 )
 from app.models.spec import Spec, SpecCriterion
+from app.models.sprint import Sprint, TaskSprintHistory
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
 from app.models.workflow import Workflow, WorkflowStatus
@@ -114,7 +115,9 @@ __all__ = [
     "ScenarioTask",
     "Spec",
     "SpecCriterion",
+    "Sprint",
     "Task",
+    "TaskSprintHistory",
     "TaskStatusHistory",
     "Team",
     "TeamMember",

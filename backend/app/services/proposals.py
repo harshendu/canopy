@@ -54,6 +54,7 @@ from app.models.base import (
     Reversibility,
     RiskScope,
     RiskStatus,
+    SprintState,
     StatusSource,
     utcnow,
 )
@@ -63,6 +64,7 @@ from app.models.project import Blocker, Dependency, Initiative, Milestone, Proje
 from app.models.proposal import Proposal, ProposalItem
 from app.models.risk_register import RiskItem
 from app.models.spec import Spec
+from app.models.sprint import Sprint
 from app.models.team import Engineer
 from app.models.user import User
 from app.schemas.entities import (
@@ -78,9 +80,10 @@ from app.schemas.entities import (
     TaskUpdate,
 )
 from app.schemas.proposal import ProposalReviseRequest
-from app.services import workflow
+from app.services import sprint_service, workflow
 from app.services.features import feature_enabled
 from app.services.metadata import normalize_tags
+from app.services.org import project_team_id
 from app.services.planner import reschedule_project
 
 
@@ -128,10 +131,12 @@ class RevisionRejectedError(Exception):
 
 
 class _TaskPatch(TaskUpdate):
-    """A staged task update may also move the task to another workflow column (canopy-owned
-    tasks only — checked against the live task in `_check_target`)."""
+    """A staged task update may also move the task to another workflow column, or into/out of
+    a sprint (null = back to the backlog) — only where canopy owns the status / the sprint
+    membership (checked against the live task in `_check_target`)."""
 
     status: str | None = None
+    sprint_id: int | None = None
 
 
 class _MilestonePatch(BaseModel):
@@ -165,6 +170,7 @@ _ALLOWED_FIELDS: dict[tuple[ProposalEntity, ProposalAction], frozenset[str]] = {
             "project_id", "parent_id", "name", "description", "type", "start", "duration",
             "constraint_start", "deadline", "assignee_engineer_id", "spec_id", "tags",
             "estimate_optimistic", "estimate_likely", "estimate_pessimistic", "status",
+            "story_points",
         }
     ),
     (ProposalEntity.task, ProposalAction.update): frozenset(
@@ -172,6 +178,7 @@ _ALLOWED_FIELDS: dict[tuple[ProposalEntity, ProposalAction], frozenset[str]] = {
             "name", "description", "parent_id", "start", "duration", "constraint_start",
             "deadline", "percent_complete", "assignee_engineer_id", "spec_id", "tags",
             "estimate_optimistic", "estimate_likely", "estimate_pessimistic", "status",
+            "sprint_id", "story_points",
         }
     ),
     (ProposalEntity.dependency, ProposalAction.create): frozenset(
@@ -627,6 +634,23 @@ async def _check_status(session: AsyncSession, project_id: int, status: str) -> 
         raise ValueError(f"status {status!r} is not a column of this project's workflow ({names})")
 
 
+async def _check_sprint(session: AsyncSession, task: Task, sprint_id: int | None) -> None:
+    """A staged sprint change: canopy must own the task's membership, and the sprint must be a
+    live sprint of the task's team (null = back to the backlog)."""
+    owner = await sprint_service.membership_owner(session, task)
+    if owner != CANOPY_OWNER:
+        raise ValueError(f"task {task.id}'s sprint is set in {owner} and is not stageable")
+    if sprint_id is None:
+        return
+    sprint = await session.get(Sprint, int(sprint_id))
+    project = await session.get(Project, task.project_id)
+    team_id = await project_team_id(session, project) if project is not None else None
+    if sprint is None or sprint.team_id != team_id:
+        raise ValueError(f"sprint {sprint_id} is not a sprint of this task's team")
+    if sprint.state == SprintState.completed.value:
+        raise ValueError(f"sprint {sprint_id} is completed")
+
+
 async def _check_polymorphic_scope(
     session: AsyncSession,
     entity: ProposalEntity,
@@ -679,6 +703,8 @@ async def _check_target(
                     "stageable — change it there"
                 )
             await _check_status(session, task.project_id, str(fields["status"]))
+        if "sprint_id" in fields:
+            await _check_sprint(session, task, fields["sprint_id"])
     elif entity == ProposalEntity.milestone:
         milestone = await session.get(Milestone, entity_id)
         if milestone is None or milestone.project_id not in projects:
@@ -808,10 +834,16 @@ async def _apply_item(
         if "tags" in fields and fields["tags"] is not None:
             fields["tags"] = normalize_tags(list(fields["tags"]))
         staged_status = fields.pop("status", None)
+        staged_sprint = fields.pop("sprint_id", _UNSET)
         for key, value in fields.items():
             setattr(task, key, value)
         if staged_status is not None:
             await _apply_status(session, task, str(staged_status), author)
+        if staged_sprint is not _UNSET:
+            sprint = await session.get(Sprint, int(staged_sprint)) if staged_sprint else None
+            sprint_service.record_membership(
+                session, task, sprint, source=StatusSource.canopy, author=author
+            )
         replan.add(task.project_id)
         assert task.id is not None
         return task.id
@@ -914,6 +946,9 @@ async def _apply_item(
     await session.flush()
     assert doc.id is not None
     return doc.id
+
+
+_UNSET = object()
 
 
 async def _apply_status(session: AsyncSession, task: Task, status: str, author: str | None) -> None:

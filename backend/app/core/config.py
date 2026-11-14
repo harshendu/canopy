@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # Cron cadence (minutes) for the Jira reconciliation poll.
     JIRA_POLL_MINUTES: int = 10
 
+    # --- Work tracking ---
+    # Delivery method given to newly created teams (kanban | sprint | both). Projects outside
+    # any team are Kanban-only: there is no team to hold a sprint (USER_FLOWS §C11).
+    DELIVERY_DEFAULT_METHOD: str = "kanban"
+
     # --- OAuth 2.0 (3LO) ---
     # The provider redirects here after consent; must match the app registration.
     OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"

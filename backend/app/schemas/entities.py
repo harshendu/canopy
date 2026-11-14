@@ -11,11 +11,13 @@ from app.models.base import (
     BlockerSeverity,
     CriterionStatus,
     DecisionRule,
+    DeliveryMethod,
     DependencyType,
     DocKind,
     DocLinkHealth,
     DocScope,
     DocSource,
+    EstimateUnit,
     OutcomeScope,
     OutcomeStatus,
     ProjectHealth,
@@ -28,6 +30,7 @@ from app.models.base import (
     RiskScope,
     RiskStatus,
     SpecStatus,
+    SprintState,
     StatusCategory,
     TaskType,
     WipEnforcement,
@@ -155,6 +158,7 @@ class TaskCreate(BaseModel):
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
     estimate_pessimistic: int | None = None
+    story_points: float | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -175,6 +179,9 @@ class TaskUpdate(BaseModel):
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
     estimate_pessimistic: int | None = None
+    # Sprint planning size. (Sprint *membership* is not a PATCH field: it is
+    # `POST/DELETE /sprints/{id}/tasks`, which records the move.)
+    story_points: float | None = None
 
 
 class TaskRead(BaseModel):
@@ -199,6 +206,8 @@ class TaskRead(BaseModel):
     status_owner: str = "canopy"
     key: str | None = None
     sprint: str | None
+    sprint_id: int | None = None
+    story_points: float | None = None
     deadline: date | None
     assignee_engineer_id: int | None
     spec_id: int | None = None
@@ -742,6 +751,8 @@ class BoardTaskRead(BaseModel):
     is_critical: bool = False
     deadline: date | None = None
     tags: list[str] = []
+    sprint_id: int | None = None
+    story_points: float | None = None
 
 
 class BoardLaneRead(BaseModel):
@@ -773,6 +784,155 @@ class BoardResponse(BaseModel):
     mode: str = "native"
     wip_enforcement: str = "warn"
     viewer: BoardViewer | None = None
+    # Set on a team board (`project_id` is then 0); `sprint_id` = the sprint being shown.
+    team_id: int | None = None
+    sprint_id: int | None = None
+    # The delivery method in effect for these cards' team (kanban | sprint | both).
+    delivery_method: str = "kanban"
+
+
+# --- Delivery method + sprints (USER_FLOWS §C11) ---
+class TeamDeliveryRead(BaseModel):
+    team_id: int
+    delivery_method: DeliveryMethod  # what the team chose
+    effective_method: DeliveryMethod  # what applies (kanban when `tracking.sprints` is off)
+    sprint_length_days: int
+    estimate_unit: EstimateUnit
+    sprints_enabled: bool
+    can_manage: bool  # the caller may change these settings and run the team's sprints
+    active_sprint_id: int | None = None
+
+
+class TeamDeliveryUpdate(BaseModel):
+    delivery_method: DeliveryMethod | None = None
+    sprint_length_days: int | None = None
+    estimate_unit: EstimateUnit | None = None
+
+
+class SprintRead(BaseModel):
+    model_config = _read
+    id: int
+    team_id: int
+    pod_id: int | None = None
+    name: str
+    goal: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    state: SprintState
+    # "canopy", or the provider key of the tracker it is mirrored from (then read-only).
+    owner: str = "canopy"
+    estimate_unit: str | None = None
+    committed: float | None = None
+    completed: float | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    # Live counts (current members).
+    task_count: int = 0
+    done_count: int = 0
+    scope: float = 0.0  # current members' estimate, in `unit`
+    done: float = 0.0
+    unit: str = "count"
+
+
+class SprintCreate(BaseModel):
+    name: str | None = None  # defaults to "Sprint <n>"
+    goal: str | None = None
+    start_date: date | None = None  # defaults: the day after the last sprint ends
+    end_date: date | None = None  # defaults: start + the team's sprint length
+    pod_id: int | None = None  # a pod-scoped sprint (pods that plan separately)
+
+
+class SprintUpdate(BaseModel):
+    name: str | None = None
+    goal: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class SprintTasksRequest(BaseModel):
+    task_ids: list[int]
+
+
+class SprintCompleteRequest(BaseModel):
+    # Where unfinished work goes: the backlog, or `next_sprint_id`.
+    carry_over: Literal["next", "backlog"] = "backlog"
+    next_sprint_id: int | None = None
+
+
+class EngineerCapacityRead(BaseModel):
+    engineer_id: int
+    name: str
+    person_days: float
+
+
+class SprintCapacityRead(BaseModel):
+    person_days: float  # allocated capacity over the sprint's working days
+    engineers: list[EngineerCapacityRead] = []
+    velocity_mean: float | None = None  # the team's mean completed estimate per sprint
+    committed: float = 0.0  # current members' estimate (open work)
+    unit: str = "count"
+    # Planned beyond capacity (days unit: vs person-days; points/count: vs mean velocity).
+    # Warns, never blocks. None when there is nothing to compare against.
+    over_capacity: bool | None = None
+
+
+class SprintDetail(SprintRead):
+    tasks: list[TaskRead] = []
+    capacity: SprintCapacityRead | None = None
+
+
+class BurndownDayRead(BaseModel):
+    day: date
+    remaining: float
+    ideal: float
+    scope_added: float
+
+
+class SprintReportRead(BaseModel):
+    sprint: SprintRead
+    unit: str
+    burndown: list[BurndownDayRead]
+    committed: float
+    completed: float
+    scope_added: float
+    scope_removed: float
+    carried_over: float
+    reliability: float | None = None  # completed ÷ committed
+
+
+class VelocityPointRead(BaseModel):
+    sprint_id: int
+    name: str
+    end_date: date | None
+    committed: float
+    completed: float
+    reliability: float | None
+
+
+class SprintForecastRead(BaseModel):
+    sufficient: bool
+    remaining: float
+    history_sprints: int
+    p50_sprints: int | None = None
+    p85_sprints: int | None = None
+    p50_date: date | None = None
+    p85_date: date | None = None
+    reason: str | None = None
+
+
+class VelocityRead(BaseModel):
+    """Team-level only — never per engineer (Goodhart's law)."""
+
+    team_id: int
+    unit: str
+    points: list[VelocityPointRead]
+    mean: float | None
+    low: float | None
+    high: float | None
+    mean_reliability: float | None
+    sufficient: bool
+    reason: str | None = None
+    forecast: SprintForecastRead
 
 
 # --- Blockers (flagged impediments) ---
@@ -1479,6 +1639,13 @@ class MyTodayResponse(BaseModel):
     decisions_to_push: list[ADRRead]  # owned proposed/under_discussion
 
 
+class MySprintRead(BaseModel):
+    """An active sprint the caller has work in, with just their tasks."""
+
+    sprint: SprintRead
+    tasks: list[TaskRead]
+
+
 class MyWorkspaceResponse(BaseModel):
     user: UserRead
     engineer: EngineerRead | None
@@ -1486,6 +1653,7 @@ class MyWorkspaceResponse(BaseModel):
     owned_decisions: list[ADRRead]
     stakeholder_decisions: list[ADRRead]
     blockers: list[BlockerRead] = []  # open blockers on my tasks or raised by me
+    my_sprints: list[MySprintRead] = []  # "My sprint": my tasks in active sprints
 
 
 # --- Document graph (link, don't store) ---

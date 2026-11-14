@@ -77,6 +77,12 @@ FEATURE_CATALOG: tuple[FeatureDef, ...] = (
         "tracking",
     ),
     FeatureDef(
+        "tracking.sprints", "Sprints",
+        "Teams that run sprints: sprint planning against capacity, the sprint board, sprint "
+        "burndown and velocity. Off means every team works as Kanban.",
+        "tracking",
+    ),
+    FeatureDef(
         "tracking.burndown", "Burndown",
         "Remaining/completed per week from task status history.", "tracking",
     ),

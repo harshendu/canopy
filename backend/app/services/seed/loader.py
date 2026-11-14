@@ -12,7 +12,7 @@ populated (architecture, ADRs, specs, risks, outcomes, docs, blockers, retros, a
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from itertools import pairwise
 from typing import TypeVar
 
@@ -41,6 +41,7 @@ from app.models.base import (
     BlockerCategory,
     BlockerSeverity,
     CriterionStatus,
+    DeliveryMethod,
     DocKind,
     DocScope,
     DocSource,
@@ -63,6 +64,8 @@ from app.models.base import (
     RiskScope,
     RiskStatus,
     SpecStatus,
+    SprintState,
+    StatusCategory,
     StatusSource,
     TaskType,
     TeamRole,
@@ -101,10 +104,13 @@ from app.models.scenario import (
     ScenarioTask,
 )
 from app.models.spec import Spec, SpecCriterion
+from app.models.sprint import Sprint
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
 from app.services import proposals as proposal_svc
-from app.services import workflow
+from app.services import sprint_service, workflow
+from app.services import sprints as sprint_metrics
+from app.services.org import team_project_ids
 from app.services.planner import reschedule_project
 from app.services.scenario_engine import snapshot_live_into_scenario
 from app.services.seed import catalog
@@ -277,6 +283,127 @@ async def _build_teams(session: AsyncSession, refs: _Refs) -> None:
                 if eng_id is not None:
                     await _add(session, TeamMember(team_id=_req(team.id), engineer_id=eng_id,
                                                    role=role))
+
+
+_POINT_SCALE = ((1, 1.0), (2, 2.0), (3, 3.0), (5, 5.0), (8, 8.0))
+
+
+def _points_for(duration: int) -> float:
+    for limit, points in _POINT_SCALE:
+        if duration <= limit:
+            return points
+    return 13.0
+
+
+async def _build_sprints(session: AsyncSession, refs: _Refs) -> None:
+    """Delivery methods (USER_FLOWS §C11): each team gets its method; a sprint team gets story
+    points on its tasks and five two-week sprints — three completed (with commitment, carry-over
+    and a velocity trend), one active, one planned — whose membership history is back-dated so
+    the sprint report, velocity and forecast have data."""
+    today = _today()
+    for spec in refs.ds.teams:
+        team = refs.teams[spec.key]
+        team.delivery_method = spec.delivery_method
+        if spec.delivery_method == DeliveryMethod.kanban.value:
+            continue
+        team_id = _req(team.id)
+        project_ids = set(await team_project_ids(session, team_id))
+        leaves = [
+            t
+            for key, tasks in refs.tasks.items()
+            if refs.projects[key].id in project_ids
+            for t in tasks.values()
+            if t.type == TaskType.task
+        ]
+        for task in leaves:
+            task.story_points = _points_for(task.duration)
+        length = team.sprint_length_days
+        first = today - timedelta(days=length * 3 + 7)
+        sprints: list[Sprint] = []
+        for i in range(5):
+            start = first + timedelta(days=length * i)
+            end = start + timedelta(days=length - 1)
+            state = (
+                SprintState.completed if end < today
+                else SprintState.active if start <= today
+                else SprintState.planned
+            )
+            sprints.append(await _add(session, Sprint(
+                team_id=team_id, name=f"{spec.key} Sprint {i + 1}", start_date=start,
+                end_date=end, state=state.value,
+                goal=("Ship the next delivery-promise slice" if i % 2 else
+                      "Burn down operational risk before peak"),
+            )))
+        completed = [s for s in sprints if s.state == SprintState.completed.value]
+        active = next((s for s in sprints if s.state == SprintState.active.value), None)
+        planned = next((s for s in sprints if s.state == SprintState.planned.value), None)
+
+        done_on: dict[int, date] = {}
+        for row in (
+            await session.execute(
+                select(TaskStatusHistory).where(
+                    col(TaskStatusHistory.task_id).in_([t.id for t in leaves]),
+                    TaskStatusHistory.to_category == StatusCategory.done.value,
+                )
+            )
+        ).scalars().all():
+            done_on[row.task_id] = max(done_on.get(row.task_id, date.min),
+                                       row.changed_at.date())
+
+        def at(day: date) -> datetime:
+            return datetime.combine(day, datetime.min.time())
+
+        for task in leaves:
+            assert task.id is not None and active is not None
+            finished = done_on.get(task.id)
+            home = next(
+                (s for s in completed
+                 if finished is not None and s.start_date is not None and s.end_date is not None
+                 and s.start_date <= finished <= s.end_date),
+                None,
+            )
+            if home is not None and home.start_date is not None:
+                index = sprints.index(home)
+                if task.id % 4 == 0 and index > 0:  # carried over from the sprint before
+                    prev = sprints[index - 1]
+                    assert prev.start_date is not None and prev.end_date is not None
+                    sprint_service.record_membership(
+                        session, task, prev, source=StatusSource.canopy, author="canopy",
+                        at=at(prev.start_date - timedelta(days=1)))
+                    sprint_service.record_membership(
+                        session, task, home, source=StatusSource.canopy, author="canopy",
+                        at=at(prev.end_date))
+                else:
+                    sprint_service.record_membership(
+                        session, task, home, source=StatusSource.canopy, author="canopy",
+                        at=at(home.start_date - timedelta(days=1)))
+            elif finished is None and active.start_date is not None:
+                category = workflow.category_of_task(task)
+                if category == StatusCategory.in_progress or task.id % 3 == 0:
+                    joined = (active.start_date - timedelta(days=1)
+                              if category == StatusCategory.in_progress
+                              else active.start_date + timedelta(days=2))  # scope added
+                    sprint_service.record_membership(
+                        session, task, active, source=StatusSource.canopy, author="canopy",
+                        at=at(joined))
+                elif planned is not None and task.id % 3 == 1:
+                    sprint_service.record_membership(
+                        session, task, planned, source=StatusSource.canopy, author="canopy",
+                        at=at(today))
+        await session.flush()
+
+        for sprint in [*completed, active]:
+            if sprint is None or sprint.start_date is None or sprint.end_date is None:
+                continue
+            items, _ = await sprint_service.sprint_items(session, sprint, "points")
+            totals = sprint_metrics.sprint_totals(sprint.start_date, sprint.end_date, items)
+            sprint.estimate_unit = "points"
+            sprint.committed = totals.committed
+            sprint.started_at = at(sprint.start_date)
+            if sprint.state == SprintState.completed.value:
+                sprint.completed = totals.completed
+                sprint.completed_at = at(sprint.end_date)
+        await session.flush()
 
 
 async def _build_initiatives(session: AsyncSession, refs: _Refs) -> None:
@@ -1006,6 +1133,7 @@ async def load_seed_data(
     await _build_initiatives(session, refs)
     await _build_projects(session, refs)
     await _build_allocations(session, refs)
+    await _build_sprints(session, refs)
     await _build_connections(session, refs)
     await _build_scenarios(session, refs)
     await _build_leadership_notes(session, refs)

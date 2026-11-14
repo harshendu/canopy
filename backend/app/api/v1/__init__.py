@@ -34,6 +34,7 @@ from app.api.v1 import (
     risk_register,
     scenarios,
     specs,
+    sprints,
     tasks,
     team,
     teams,
@@ -59,6 +60,11 @@ api_router.include_router(team.router, prefix="/team", tags=["team"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 # Board workflows are core (every native project has one; status changes are gated per move).
 api_router.include_router(workflows.router, tags=["workflows"])
+# A team's delivery settings are core; its board is gated per endpoint (tracking.board).
+api_router.include_router(sprints.delivery_router, tags=["sprints"])
+api_router.include_router(
+    sprints.router, tags=["sprints"], dependencies=[FeatureGate("tracking.sprints")]
+)
 api_router.include_router(
     architecture.router,
     prefix="/architecture",

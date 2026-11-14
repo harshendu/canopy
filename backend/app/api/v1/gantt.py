@@ -13,7 +13,7 @@ from app.api.deps import (
     is_planner,
 )
 from app.core.events import publish
-from app.models.base import RiskScope, RiskStatus, StatusCategory, TaskType
+from app.models.base import RiskScope, RiskStatus, SprintState, StatusCategory, TaskType
 from app.models.project import (
     Baseline,
     Blocker,
@@ -23,6 +23,7 @@ from app.models.project import (
     Task,
 )
 from app.models.risk_register import RiskItem
+from app.models.sprint import Sprint
 from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.models.user import User
 from app.schemas.entities import (
@@ -46,6 +47,7 @@ from app.services.alerts import (
     AlertBlocker,
     AlertMilestone,
     AlertRiskItem,
+    AlertSprintTask,
     AlertTask,
     OverAllocation,
     compute_alerts,
@@ -306,14 +308,18 @@ async def project_forecast(
     response_model=BoardResponse,
     dependencies=[FeatureGate("tracking.board")],
 )
-async def board(session: SessionDep, user: CurrentUser, project_id: int) -> BoardResponse:
+async def board(
+    session: SessionDep, user: CurrentUser, project_id: int, sprint: str | None = None
+) -> BoardResponse:
     """Kanban board: the project's workflow columns in order (empty ones included), cards
     ranked within each, WIP per column against its limit, aging vs cycle-time P85, and what
-    the caller may move. Canopy-owned cards move via `POST /tasks/{id}/move`."""
+    the caller may move. Canopy-owned cards move via `POST /tasks/{id}/move`. `sprint` narrows
+    it to `active` | `backlog` | `all` | a sprint id (teams that run sprints, §C11)."""
     project = await session.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-    return await project_board(session, project, await board_viewer(session, user, project))
+    viewer = await board_viewer(session, user, project)
+    return await project_board(session, project, viewer, sprint)
 
 
 async def board_viewer(session: AsyncSession, user: User, project: Project) -> BoardViewer:
@@ -441,8 +447,39 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
             or (r.scope_level == RiskScope.task and r.scope_id in task_id_set)
         )
     ]
+    sprint_rows = {
+        sp.id: sp
+        for sp in (
+            await session.execute(
+                select(Sprint).where(
+                    col(Sprint.id).in_({t.sprint_id for t in tasks if t.sprint_id is not None}),
+                    Sprint.state == SprintState.active.value,
+                )
+            )
+        ).scalars().all()
+    }
+    alert_sprint_tasks = [
+        AlertSprintTask(
+            task_id=t.id,
+            name=t.name,
+            end=t.end,
+            sprint_name=sprint_rows[t.sprint_id].name,
+            sprint_end=sprint_rows[t.sprint_id].end_date,
+        )
+        for t in tasks
+        if t.id is not None
+        and t.sprint_id in sprint_rows
+        and t.type != TaskType.summary
+        and category_of_task(t) not in (StatusCategory.done, StatusCategory.cancelled)
+    ]
     computed = compute_alerts(
-        date.today(), alert_tasks, alert_milestones, over, alert_blockers, alert_risks
+        date.today(),
+        alert_tasks,
+        alert_milestones,
+        over,
+        alert_blockers,
+        alert_risks,
+        alert_sprint_tasks,
     )
     return AlertsResponse(
         project_id=project_id,

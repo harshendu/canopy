@@ -230,3 +230,33 @@ async def ensure_team_manageable(session: AsyncSession, user: User, team_id: int
             "settings; you have read-only visibility.",
         },
     )
+
+
+async def sprint_can_manage(session: AsyncSession, user: User, team_id: int) -> bool:
+    """May plan and run the team's sprints: an admin, a director/manager seat on the team, or
+    a planner who may edit at least one of the team's projects."""
+    if user.role == UserRole.admin or await team_can_manage(session, user, team_id):
+        return True
+    if user.role not in OWNERSHIP_ROLES:
+        return False
+    from app.services.org import team_project_ids
+
+    for project_id in await team_project_ids(session, team_id):
+        project = await session.get(Project, project_id)
+        if project is not None and await project_can_edit(session, user, project):
+            return True
+    return False
+
+
+async def ensure_sprint_manageable(session: AsyncSession, user: User, team_id: int) -> None:
+    if await sprint_can_manage(session, user, team_id):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "not_team_planner",
+            "team_id": team_id,
+            "message": "Only the team's directors/managers and the planners of its projects "
+            "can plan its sprints; you have read-only visibility.",
+        },
+    )

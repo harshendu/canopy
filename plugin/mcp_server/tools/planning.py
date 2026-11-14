@@ -168,14 +168,21 @@ def register(mcp, client) -> None:
         return await client.get(f"/projects/{project_id}/burndown")
 
     @mcp.tool
-    async def get_board(project_id: int) -> dict:
-        """Get the Kanban board: the project's workflow columns in order (empty ones included)
-        with WIP per column against its limit, cards in rank order, the team's cycle-time P85
-        and which open cards are **aging** (in their status longer than P85 — the leading 'this
-        is stuck' signal). Each card says who owns its status (`status_owner`: "canopy" or a
-        tracker) and whether it is `movable`; `mode` is native|mirrored. Manage flow by
-        finishing aging/high-WIP work before starting more."""
-        return await client.get(f"/projects/{project_id}/board")
+    async def get_board(
+        project_id: int | None = None, team_id: int | None = None, sprint: str | None = None
+    ) -> dict:
+        """Get the Kanban board — for a project, or for a team (one board over every project the
+        team runs, on the team's columns). Columns in order (empty ones included) with WIP per
+        column against its limit, cards in rank order, the cycle-time P85 and which open cards
+        are **aging** (in their status longer than P85 — the leading 'this is stuck' signal).
+        Each card says who owns its status (`status_owner`: "canopy" or a tracker) and whether
+        it is `movable`; `mode` is native|mirrored and `delivery_method` kanban|sprint|both.
+        `sprint` narrows it to active | backlog | all | a sprint id. Manage flow by finishing
+        aging/high-WIP work before starting more."""
+        params = {"sprint": sprint} if sprint else None
+        if team_id is not None:
+            return await client.get(f"/teams/{team_id}/board", params=params)
+        return await client.get(f"/projects/{project_id}/board", params=params)
 
     @mcp.tool
     async def move_task(

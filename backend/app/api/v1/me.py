@@ -9,15 +9,19 @@ from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.api.v1.architecture import _adr_read, _component_ids, _stakeholder_ids
+from app.api.v1.sprints import sprint_read
 from app.models.architecture import ADRStakeholder, ArchitectureDecision
-from app.models.base import ADRStatus, TaskType
+from app.models.base import ADRStatus, SprintState, TaskType
+from app.models.org import Team
 from app.models.project import Blocker, Task
+from app.models.sprint import Sprint
 from app.models.team import Engineer
 from app.schemas.auth import UserRead
 from app.schemas.entities import (
     ADRRead,
     BlockerRead,
     EngineerRead,
+    MySprintRead,
     MyTodayResponse,
     MyWorkspaceResponse,
     TaskRead,
@@ -97,6 +101,39 @@ async def my_workspace(session: SessionDep, user: CurrentUser) -> MyWorkspaceRes
             ).scalars().all()
             stakeholder = [await to_read(a) for a in stake_adrs if a.id is not None]
 
+    my_sprints: list[MySprintRead] = []
+    if engineer is not None and engineer.id is not None:
+        mine = (
+            await session.execute(
+                select(Task).where(
+                    Task.assignee_engineer_id == engineer.id, col(Task.sprint_id).is_not(None)
+                )
+            )
+        ).scalars().all()
+        sprint_ids = {t.sprint_id for t in mine if t.sprint_id is not None}
+        for sprint in (
+            (
+                await session.execute(
+                    select(Sprint).where(
+                        col(Sprint.id).in_(sprint_ids), Sprint.state == SprintState.active.value
+                    )
+                )
+            ).scalars().all()
+            if sprint_ids
+            else []
+        ):
+            team = await session.get(Team, sprint.team_id)
+            if team is None:
+                continue
+            my_sprints.append(
+                MySprintRead(
+                    sprint=await sprint_read(session, sprint, team),
+                    tasks=[
+                        TaskRead.model_validate(t) for t in mine if t.sprint_id == sprint.id
+                    ],
+                )
+            )
+
     return MyWorkspaceResponse(
         user=UserRead.model_validate(user),
         engineer=EngineerRead.model_validate(engineer) if engineer is not None else None,
@@ -104,6 +141,7 @@ async def my_workspace(session: SessionDep, user: CurrentUser) -> MyWorkspaceRes
         owned_decisions=owned,
         stakeholder_decisions=stakeholder,
         blockers=blockers,
+        my_sprints=my_sprints,
     )
 
 

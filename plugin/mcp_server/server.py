@@ -50,6 +50,7 @@ from tools import (  # noqa: E402
     proposals,
     scenarios,
     specs,
+    sprints,
     team,
 )
 
@@ -69,6 +70,7 @@ docs.register(mcp, client)
 specs.register(mcp, client)
 delivery.register(mcp, client)
 outcomes.register(mcp, client)
+sprints.register(mcp, client)
 
 
 class BearerGuard:

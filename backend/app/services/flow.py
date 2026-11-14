@@ -123,7 +123,7 @@ def _lanes_from_statuses(tasks: list[BoardTaskInput]) -> list[BoardLane]:
 
 
 def _lanes_from_columns(
-    tasks: list[BoardTaskInput], columns: list[ColumnDef]
+    tasks: list[BoardTaskInput], columns: list[ColumnDef], fold_unknown: bool = False
 ) -> list[BoardLane]:
     ordered_columns = sorted(columns, key=lambda c: c.position)
     lanes: list[BoardLane] = [
@@ -137,10 +137,13 @@ def _lanes_from_columns(
         for c in ordered_columns
     ]
     known = {lane.status.casefold() for lane in lanes}
+    categories = {lane.category for lane in lanes}
     for t in tasks:
         label = t.status if t.status else NO_STATUS
         if label.casefold() in known:
             continue
+        if fold_unknown and t.status and t.category in categories:
+            continue  # placed in the first column of its category (see `_lane_key`)
         known.add(label.casefold())
         category = t.category if t.status else None
         extra = BoardLane(
@@ -162,18 +165,31 @@ def _lanes_from_columns(
 
 
 def build_board(
-    tasks: list[BoardTaskInput], columns: list[ColumnDef] | None = None
+    tasks: list[BoardTaskInput],
+    columns: list[ColumnDef] | None = None,
+    fold_unknown: bool = False,
 ) -> FlowBoard:
+    """`fold_unknown` (the team board): a status the workflow doesn't name joins the first
+    column of the same category instead of getting a column of its own; the card keeps its
+    own status."""
     cycle_samples = [t.cycle_days for t in tasks if t.cycle_days is not None]
     p85 = _percentile(cycle_samples, 85) if cycle_samples else None
 
-    lanes = _lanes_from_columns(tasks, columns) if columns else _lanes_from_statuses(tasks)
+    lanes = (
+        _lanes_from_columns(tasks, columns, fold_unknown)
+        if columns
+        else _lanes_from_statuses(tasks)
+    )
     by_label = {lane.status.casefold(): lane for lane in lanes}
+    first_of: dict[str | None, BoardLane] = {}
+    for lane in lanes:
+        if lane.in_workflow and lane.category not in first_of:
+            first_of[lane.category] = lane
 
     aging_count = 0
     for t in sorted(tasks, key=lambda x: (x.rank, x.id)):
         label = t.status if t.status else NO_STATUS
-        lane = by_label[label.casefold()]
+        lane = by_label.get(label.casefold()) or first_of[t.category]
         is_open = _is_open(t)
         aging = is_open and p85 is not None and t.age_days > p85
         if aging:
@@ -184,7 +200,7 @@ def build_board(
             BoardTask(
                 id=t.id,
                 name=t.name,
-                status=lane.status,
+                status=label if label.casefold() != lane.status.casefold() else lane.status,
                 assignee_engineer_id=t.assignee_engineer_id,
                 is_done=t.is_done,
                 age_days=t.age_days,

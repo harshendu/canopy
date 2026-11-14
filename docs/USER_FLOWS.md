@@ -805,6 +805,90 @@ card's status differs.
 
 ---
 
+## C11. Delivery method — Kanban, sprints or both (per team) **[new]**
+A **team** chooses how it runs work **once, for all of its projects**: continuous **Kanban**
+flow, time-boxed **sprints**, or **both**. The method switches surfaces and metrics on; the data
+underneath (tasks, statuses, history) is the same.
+
+### C11.1 Choose a team's delivery method
+- **What:** `Team.delivery_method` = `kanban` | `sprint` | `both`, plus `sprint_length_days`
+  (default 14) and `estimate_unit` (`points` → `Task.story_points`, `days` → `Task.duration`,
+  `count` → every task 1; points with no estimates fall back to count, and responses say which
+  `unit` they used).
+- **Which team:** a project's team is its pod's team, else its initiative's team. A project in no
+  team is **Kanban-only** (there is no team to hold a sprint).
+- **API:** `GET/PUT /api/v1/teams/{id}/delivery` (PUT: the team's directors/managers or an
+  admin — `can_manage` in the GET) · **MCP:** `get_team_delivery`, `set_team_delivery`. New teams
+  start on `DELIVERY_DEFAULT_METHOD` (env, default `kanban`). Switching to `kanban` needs the
+  active sprint completed (409 `active_sprint`); nothing is deleted — past sprints stay history.
+- **Gate:** **`tracking.sprints`** — off means every team works as Kanban
+  (`effective_method = kanban`) and the sprint endpoints 403. The delivery settings are core.
+- **Upgrade:** teams whose projects synced Jira sprints start on `both`; every other team on
+  `kanban`.
+
+### C11.2 The team board
+- **API:** `GET /api/v1/teams/{id}/board?pod_id=&project_id=&sprint=` (gate `tracking.board`) —
+  the project board's shape (§C9.2) over **every project the team runs**, on the **team's
+  workflow** (one set of columns and WIP limits: the team's work in progress). A card whose status
+  the team's columns don't name (a mirrored status, a project override) sits in the **first
+  column of its category** and keeps showing its own status. Cards carry their `project_id`; the
+  response carries `team_id`, `sprint_id`, `delivery_method`. `sprint` = `active` | `backlog`
+  (open work in no live sprint) | `all` | a sprint id; the project board takes the same filter
+  (`GET /projects/{id}/board?sprint=`) · **MCP:** `get_board(team_id=…, sprint=…)`.
+
+### C11.3 Plan and run a sprint
+- **Model:** a `Sprint` belongs to a team (optionally a pod), has `name`, `goal`, dates, `state`
+  (`planned` → `active` → `completed`) and an `owner` (`canopy`, or the tracker it is mirrored
+  from — then read-only). `Task.sprint_id` puts a task in at most one sprint; every membership
+  move is a `TaskSprintHistory` row (commitment, scope change and carry-over come from it).
+- **API** (gate `tracking.sprints`): `GET/POST /api/v1/teams/{id}/sprints` (create: dates default
+  to the day after the last sprint, for the team's length; name "Sprint n"; the team must run
+  sprints, else 409 `team_is_kanban`), `GET/PATCH/DELETE /api/v1/sprints/{id}` (delete: planned
+  canopy sprints only), `POST /api/v1/sprints/{id}/tasks {task_ids}` and
+  `DELETE /api/v1/sprints/{id}/tasks/{task_id}` (membership — tasks of the team's projects,
+  each leaves its previous sprint), `POST .../start` (captures the commitment; one active sprint
+  per team, or per pod for pod-scoped sprints), `POST .../complete {carry_over: next|backlog,
+  next_sprint_id?}` (captures what was completed; each unfinished task moves on, recorded),
+  `POST .../reopen` · **MCP:** `list_sprints`, `get_sprint`, `plan_sprint`, `start_sprint`,
+  `complete_sprint`; skill **`planning-sprints`**.
+- **Planning view:** `GET /sprints/{id}` returns the tasks plus `capacity` — the open estimate vs
+  the team's **person-days** over the sprint (allocations to the team's projects × working days ×
+  availability/PTO) and its **mean velocity**; `over_capacity` **warns, never blocks**.
+- **Who:** sprints — the team's directors/managers and the planners who may edit one of its
+  projects (or an admin); reads are open. An agent token acts as its issuer; a sprint change an
+  agent *inferred* goes through a proposal (§AA — task `sprint_id`).
+- **Ownership:** a sprint mirrored from a tracker (Jira's active sprints, synced when the
+  connection has a `board_id` and the project has a team) is read-only (409
+  `sprint_externally_owned`); a mirrored task whose tracker syncs sprints can't be re-planned in
+  canopy (409 `membership_externally_owned`). **canopy never writes sprints to a tracker.** A
+  mirrored sprint may hold canopy-owned tasks (one team sprint over a Jira-bound and a native
+  project).
+- **Schedule:** sprints never pin the CPM schedule; the alerts digest (§I) raises
+  **`sprint_overrun`** for an open task whose computed end falls after its active sprint ends.
+
+### C11.4 Measure sprints (team-level only)
+- **Report:** `GET /api/v1/sprints/{id}/report` — daily **burndown** (remaining estimate vs an
+  ideal line from the captured commitment; work added after the start shown separately as
+  `scope_added`), `committed`, `completed`, `reliability` (completed ÷ committed),
+  `scope_added`, `scope_removed`, `carried_over` (work that left at completion counts as carried,
+  not removed) · **MCP:** `get_sprint(include_report=True)`.
+- **Velocity:** `GET /api/v1/teams/{id}/velocity` — completed estimate per completed sprint, mean
+  and range over the last six, mean reliability, and a **sprint forecast** (P50/P85 sprints to
+  finish the team's open work — the Monte-Carlo of §C8 run per sprint). `sufficient=false` until
+  3 sprints have completed · **MCP:** `get_velocity`.
+- Pure maths in `app/services/sprints.py`; the DB side (membership — the only writer of
+  `Task.sprint_id` — lifecycle, capacity, items) in `app/services/sprint_service.py`.
+  **Never per engineer** (the §X Goodhart rule).
+
+### C11.5 Not built yet
+- The team page (board / sprints / settings), sprint planning drag-between-lists, the sprint
+  selector on boards, the sprint report charts, the task panel's sprint field and "My sprint" in
+  `/me` are API/MCP-only until the UI lands (see Known UI gaps).
+- Native sprint *iterations* in trackers are mirrored only for Jira's **active** sprints today;
+  planned/completed tracker sprints arrive with the tracker engine.
+
+---
+
 ## C10. Draft plans → create/update Jira tickets **[new]**
 
 The architect's "plan first, then make the tickets" flow. A **draft plan** is a staging area
@@ -1065,7 +1149,8 @@ review it, alternatives, reversibility, and a discussion thread.
 ## I. Alerts / digest
 - **UI:** the old standalone **Alerts** tab is **gone** — alerts now live as the *lagging-indicator*
   section inside the **Risk** tab (§Q). Same content: deadline misses (error), overdue milestones /
-  over-allocations / **open blockers** (warning), unscheduled work (info).
+  over-allocations / **open blockers** / **`sprint_overrun`** — an open task in an active sprint
+  whose computed end falls after the sprint ends (§C11) (warning), unscheduled work (info).
 - **API:** `GET /api/v1/projects/{id}/alerts` (unchanged) · **MCP:** `list_alerts`.
 - **Notes:** delivery to Slack/email is **not built** — alerts are computed and shown/queried; a
   delivery integration is a future hook over this output.
@@ -1732,7 +1817,8 @@ the page is open**, watching it update live (§AA5).
 - **What an item can do:** `task.create/update` (planning fields, plus `status` — a column of
   the project's workflow — **on canopy-owned tasks only**: a mirrored task's status belongs to its
   tracker and is refused; apply writes it through the one status write path, so it lands in the
-  history with the reviewer as author; to move work in time stage `duration`, a dependency, or
+  history with the reviewer as author; `sprint_id` (null = back to the backlog) where canopy owns
+  the task's sprint membership, and `story_points`; to move work in time stage `duration`, a dependency, or
   **`constraint_start`** — the "start no earlier than" pin — since a task's `start` is
   computed output the replan overwrites), `dependency.create`, `milestone.create/update`,
   `blocker.create/resolve`, `risk.create/update`, `outcome.create/update`,
@@ -2121,7 +2207,9 @@ team member via `Engineer.user_id` (§A5).
   (most-critical first, then soonest due), and the **decisions they own** and **decisions to
   review** — each linking into the owning project's Gantt / Decisions tab.
 - **API:** `GET /api/v1/me/workspace` · **MCP:** `my_workspace`. The response also includes
-  **`blockers`** — open impediments on your tasks or raised by you (§D0), with flag/resolve in the UI.
+  **`blockers`** — open impediments on your tasks or raised by you (§D0), with flag/resolve in the UI
+  — and **`my_sprints`** ("My sprint"): each active sprint you have work in, with just your tasks
+  (§C11).
 - **Note:** if no engineer is linked to the account, the page prompts to have an admin link one on
   the Team page; tasks/decisions are empty until then.
 
@@ -2236,6 +2324,9 @@ These flows work via the API and the Claude plugin but have no React form yet �
 backlog:
 - **Moving cards, per-column WIP limits and editing the workflow** (§C9) — `POST /tasks/{id}/move`,
   `PUT .../workflow` / MCP `move_task`, `set_workflow`; the board UI still renders read-only.
+- **Teams' delivery methods and sprints** (§C11) — the team board, sprint planning / start /
+  complete, the sprint report and velocity are API/MCP-only (`get_board(team_id)`, `plan_sprint`,
+  `get_velocity`, …) until the team page lands.
 - The **epic doc-field mapping / harvest** setup (§V2/§V3) stays conversational (AI-driven via the
   plugin) — no React wizard (deliberate); the Docs **tab** itself is built (read + add links).
 - Project rename/archive/date edits (B4) — the header has the weekend toggle + health/status/tags

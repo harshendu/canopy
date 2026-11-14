@@ -60,6 +60,7 @@ from app.models.scenario import (
     ScenarioTask,
 )
 from app.models.spec import Spec, SpecCriterion
+from app.models.sprint import TaskSprintHistory
 from app.models.team import Allocation
 from app.models.workflow import Workflow, WorkflowStatus
 
@@ -101,6 +102,9 @@ async def delete_task_cascade(session: AsyncSession, task_id: int) -> None:
     await session.execute(delete(Blocker).where(col(Blocker.task_id) == task_id))
     await session.execute(
         delete(TaskStatusHistory).where(col(TaskStatusHistory.task_id) == task_id)
+    )
+    await session.execute(
+        delete(TaskSprintHistory).where(col(TaskSprintHistory.task_id) == task_id)
     )
     await session.execute(
         delete(RiskItem).where(
@@ -253,6 +257,7 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
         delete(Workflow).where(col(Workflow.project_id) == pid),
         # task-derived rows
         delete(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids)),
+        delete(TaskSprintHistory).where(col(TaskSprintHistory.task_id).in_(task_ids)),
         delete(Dependency).where(
             or_(
                 col(Dependency.predecessor_id).in_(task_ids),

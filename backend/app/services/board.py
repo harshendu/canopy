@@ -15,11 +15,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.models.base import CANOPY_OWNER, StatusCategory, TaskType
+from app.models.org import Team
 from app.models.project import Blocker, Project, Task, TaskStatusHistory
+from app.models.sprint import Sprint
 from app.schemas.entities import BoardLaneRead, BoardResponse, BoardTaskRead, BoardViewer
 from app.services import flow
 from app.services.links import external_urls
-from app.services.workflow import category_of_task, history_point, resolve_workflow
+from app.services.org import team_project_ids
+from app.services.sprint_service import (
+    active_sprints,
+    is_closed,
+    project_delivery,
+    team_delivery,
+    team_sprints,
+)
+from app.services.workflow import (
+    category_of_task,
+    history_point,
+    resolve_workflow,
+    team_workflow,
+)
 
 
 async def history_points(
@@ -98,12 +113,16 @@ async def build_board_response(
     wip_enforcement: str,
     mode: str,
     viewer: BoardViewer | None,
+    fold_unknown: bool = False,
+    team_id: int | None = None,
+    sprint_id: int | None = None,
+    delivery_method: str = "kanban",
 ) -> BoardResponse:
     today = date.today()
     leaves = leaves_of(tasks)
     ids = [t.id for t in leaves if t.id is not None]
     history = await history_points(session, ids)
-    board = flow.build_board(board_inputs(leaves, history, today), columns)
+    board = flow.build_board(board_inputs(leaves, history, today), columns, fold_unknown)
 
     blocked = (
         {
@@ -149,6 +168,8 @@ async def build_board_response(
                     is_critical=t.is_critical,
                     deadline=t.deadline,
                     tags=list(t.tags or []),
+                    sprint_id=t.sprint_id,
+                    story_points=t.story_points,
                 )
             )
         lanes.append(
@@ -172,16 +193,57 @@ async def build_board_response(
         mode=mode,
         wip_enforcement=wip_enforcement,
         viewer=viewer,
+        team_id=team_id,
+        sprint_id=sprint_id,
+        delivery_method=delivery_method,
     )
 
 
+async def filter_by_sprint(
+    session: AsyncSession, tasks: list[Task], team_id: int | None, sprint: str | None
+) -> tuple[list[Task], int | None]:
+    """Narrow a board to a sprint: `active` (the team's active sprint(s)), `backlog` (open work
+    in no live sprint), `all`/None (everything) or a sprint id. Returns the tasks and, when one
+    sprint is shown, its id."""
+    if sprint in (None, "", "all") or team_id is None:
+        return tasks, None
+    if sprint == "active":
+        active = await active_sprints(session, team_id)
+        ids = {s.id for s in active}
+        shown = active[0].id if len(active) == 1 else None
+        return [t for t in tasks if t.sprint_id in ids], shown
+    if sprint == "backlog":
+        live = {
+            s.id for s in await team_sprints(session, team_id) if s.state != "completed"
+        }
+        backlog = [
+            t
+            for t in tasks
+            if not is_closed(t) and (t.sprint_id is None or t.sprint_id not in live)
+        ]
+        return backlog, None
+    try:
+        wanted = int(sprint)
+    except ValueError:
+        return tasks, None
+    row = await session.get(Sprint, wanted)
+    if row is None or row.team_id != team_id:
+        return [], wanted
+    return [t for t in tasks if t.sprint_id == wanted], wanted
+
+
 async def project_board(
-    session: AsyncSession, project: Project, viewer: BoardViewer | None
+    session: AsyncSession,
+    project: Project,
+    viewer: BoardViewer | None,
+    sprint: str | None = None,
 ) -> BoardResponse:
     assert project.id is not None
     tasks = list(
         (await session.execute(select(Task).where(Task.project_id == project.id))).scalars().all()
     )
+    delivery = await project_delivery(session, project)
+    tasks, sprint_id = await filter_by_sprint(session, tasks, delivery.team_id, sprint)
     workflow = await resolve_workflow(session, project)
     return await build_board_response(
         session,
@@ -191,4 +253,60 @@ async def project_board(
         wip_enforcement=workflow.wip_enforcement,
         mode=project.tracking_mode,
         viewer=viewer,
+        sprint_id=sprint_id,
+        delivery_method=delivery.effective_method,
+    )
+
+
+async def team_board(
+    session: AsyncSession,
+    team_id: int,
+    viewer: BoardViewer | None,
+    *,
+    pod_id: int | None = None,
+    project_id: int | None = None,
+    sprint: str | None = None,
+) -> BoardResponse:
+    """One board over every project the team runs, on the team's workflow. A card whose
+    status the team's columns don't name (a mirrored status, a project override) sits in the
+    first column of the same category and keeps its own status."""
+    project_ids = await team_project_ids(session, team_id)
+    if pod_id is not None:
+        project_ids = [
+            pid
+            for pid in project_ids
+            if (p := await session.get(Project, pid)) is not None and p.pod_id == pod_id
+        ]
+    if project_id is not None:
+        project_ids = [pid for pid in project_ids if pid == project_id]
+    tasks = (
+        list(
+            (
+                await session.execute(select(Task).where(col(Task.project_id).in_(project_ids)))
+            ).scalars().all()
+        )
+        if project_ids
+        else []
+    )
+    tasks, sprint_id = await filter_by_sprint(session, tasks, team_id, sprint)
+    workflow = await team_workflow(session, team_id)
+    team = await session.get(Team, team_id)
+    delivery = await team_delivery(session, team) if team is not None else None
+    modes = {
+        p.tracking_mode
+        for pid in project_ids
+        if (p := await session.get(Project, pid)) is not None
+    }
+    return await build_board_response(
+        session,
+        project_id=0,
+        tasks=tasks,
+        columns=workflow.columns,
+        wip_enforcement=workflow.wip_enforcement,
+        mode="mirrored" if "mirrored" in modes else "native",
+        viewer=viewer,
+        fold_unknown=True,
+        team_id=team_id,
+        sprint_id=sprint_id,
+        delivery_method=delivery.effective_method if delivery is not None else "kanban",
     )

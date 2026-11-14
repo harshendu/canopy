@@ -27,7 +27,9 @@ from app.connectors.http import request_with_retry
 from app.models.base import Provider, StatusSource, TaskType
 from app.models.integration import ExternalRef
 from app.models.project import Project, Task, TaskStatusHistory
-from app.services import ingest, mapping, workflow
+from app.models.sprint import Sprint
+from app.services import ingest, mapping, sprint_service, workflow
+from app.services.org import project_team_id
 
 _FIELDS = ["summary", "status", "issuetype", "parent", "updated", "assignee"]
 _EPIC_TYPES = {"Epic"}
@@ -610,25 +612,67 @@ class JiraConnector(Connector):
         return issues
 
     async def sync_active_sprints(self) -> SyncResult:
-        """Tag tasks with their active Jira sprint name (no-op without a board_id config)."""
+        """Mirror the board's active sprints (no-op without a `board_id` config). When the
+        canopy project belongs to a team, each Jira sprint becomes a Jira-owned `Sprint` of that
+        team and its issues' tasks join it (recorded in `TaskSprintHistory`); a team-less
+        project only gets the legacy sprint name on its tasks."""
         result = SyncResult(provider="jira")
         board_id = self.config.get("board_id")
         if not board_id:
             return result
         sprints = await self.list_sprints(int(board_id), state="active")
+        project = await self.session.get(Project, self.canopy_project_id)
+        team_id = await project_team_id(self.session, project) if project is not None else None
         async with await self.open_client() as client:
             for sprint in sprints:
                 sprint_name = sprint.get("name")
+                row = await self._upsert_sprint(sprint, team_id) if team_id is not None else None
                 for issue in await self._sprint_issues(client, int(sprint["id"])):
                     ref = await mapping.get_ref(self.session, Provider.jira, issue["id"], "task")
                     if ref is None:
                         continue
                     task = await self.session.get(Task, ref.entity_id)
-                    if task is not None and task.sprint != sprint_name:
+                    if task is None:
+                        continue
+                    if row is not None:
+                        moved = sprint_service.record_membership(
+                            self.session, task, row, source=StatusSource.sync
+                        )
+                        if moved is not None:
+                            result.updated += 1
+                    elif task.sprint != sprint_name:
                         task.sprint = sprint_name
                         result.updated += 1
         await self.session.commit()
         return result
+
+    async def _upsert_sprint(self, sprint: dict[str, Any], team_id: int) -> Sprint:
+        """A Jira sprint as a Jira-owned canopy `Sprint` (idempotent via `ExternalRef`)."""
+        ext_id = str(sprint["id"])
+        ref = await mapping.get_ref(self.session, Provider.jira, ext_id, "sprint")
+        row = await self.session.get(Sprint, ref.entity_id) if ref is not None else None
+        if row is None:
+            row = Sprint(team_id=team_id, name=str(sprint.get("name") or ext_id), owner="jira")
+            self.session.add(row)
+        row.name = str(sprint.get("name") or row.name)
+        row.goal = sprint.get("goal") or row.goal
+        start = workflow.parse_remote_time(sprint.get("startDate"))
+        end = workflow.parse_remote_time(sprint.get("endDate"))
+        row.start_date = start.date() if start is not None else row.start_date
+        row.end_date = end.date() if end is not None else row.end_date
+        state = str(sprint.get("state") or "active")
+        row.state = {"future": "planned", "closed": "completed"}.get(state, "active")
+        await self.session.flush()
+        assert row.id is not None
+        await mapping.upsert_ref(
+            self.session,
+            provider=Provider.jira,
+            external_id=ext_id,
+            entity_type="sprint",
+            entity_id=row.id,
+            external_key=row.name,
+        )
+        return row
 
     # --- status history (issue changelog) ---
     @staticmethod
