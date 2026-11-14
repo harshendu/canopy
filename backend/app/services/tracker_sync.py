@@ -14,6 +14,7 @@ binding built from that config, so existing installs keep working until the bind
 from __future__ import annotations
 
 import contextlib
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,8 @@ from app.services.tracker_types import (
 
 if TYPE_CHECKING:
     from app.connectors.tracker import WorkTracker
+
+logger = logging.getLogger(__name__)
 
 # Changelog backfill is bounded per run (a nightly job tops up the rest).
 BACKFILL_PER_RUN = 50
@@ -502,7 +505,16 @@ async def sync_binding(
 
     if tracker.capabilities.status_history and mapped.created_task_ids:
         for task_id in mapped.created_task_ids[:BACKFILL_PER_RUN]:
-            await backfill_task_history(tracker, binding, task_id, commit=False)
+            try:
+                await backfill_task_history(tracker, binding, task_id, commit=False)
+            except Exception:  # best-effort (e.g. no changelog access): the nightly job retries
+                logger.warning(
+                    "Changelog backfill skipped for %s binding %s",
+                    binding.provider.value,
+                    binding.id,
+                    exc_info=True,
+                )
+                break
         await session.commit()
     if binding.sync_iterations and tracker.capabilities.iterations:
         result.merge(await sync_iterations(tracker, binding))

@@ -831,3 +831,30 @@ async def test_finalize_into_a_mirrored_project_pushes_content_to_its_tracker(
     assert (
         await db_session.execute(select(Task).where(Task.project_id == project.id))
     ).scalars().all() == []
+
+
+async def test_a_sync_survives_a_tracker_that_hides_its_changelog(db_session, monkeypatch):
+    """The first sync replays new items' changelogs, but only as a bonus: a tracker that
+    refuses (no permission, no endpoint) still gets its items synced."""
+    monkeypatch.setattr(settings, "DEMO_MODE", True)
+    project = await _project(db_session, "SHOP", tracking_mode="mirrored")
+    connection = await _demo_jira(db_session)
+    assert connection.id is not None
+    binding = TrackerBinding(
+        connection_id=connection.id,
+        provider=Provider.jira,
+        target_type="project",
+        target_id=project.id,
+        scope={"project_key": "SHOP"},
+    )
+    db_session.add(binding)
+    await db_session.commit()
+    tracker = get_connector(connection, db_session)
+    assert isinstance(tracker, WorkTracker)
+
+    async def refuse(*_: Any, **__: Any) -> Any:
+        raise RuntimeError("403 Forbidden")
+
+    monkeypatch.setattr(type(tracker), "fetch_status_changes", refuse)
+    result = await tracker_sync.sync_binding(tracker, tracker_sync.view_of(binding), full=True)
+    assert result.created == 4
