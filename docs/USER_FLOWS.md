@@ -990,8 +990,9 @@ tracker, without losing work or history.
   done/cancelled work stays canopy-owned history). `POST .../tracking/publish` re-runs
   publishing (idempotent; human-only).
 - **Refusals (400):** already tracked this way; the same connection with another scope (use
-  `PUT`); not a tracker / not enabled; `match` without direct reads; `publish` without item
-  creation or write access. A detached connection never re-binds through its legacy
+  `PUT`); a scope that already feeds another project (one tracker selection — e.g. a Jira
+  project key or JQL; a board only adds sprints — feeds one project); not a tracker / not
+  enabled; `match` without direct reads; `publish` without item creation or write access. A detached connection never re-binds through its legacy
   `config.project_id`.
 - **MCP:** `get_project_tracking`, `set_project_tracking`, `switch_project_tracking` (previews
   by default; applying 403s on an agent token), `sync_project_tracking`, `publish_project_tasks`
@@ -1471,7 +1472,14 @@ Execution works **with or without** a tracker, and Jira is one tracker among sev
   `board_id`. Merge rule (pure `frontend/src/lib/connectorFields.ts`, unit-tested): advanced JSON is
   the base, typed fields override same-named keys, empty typed values are dropped.
 - **API:** `POST /api/v1/connectors/connections` (token is encrypted at rest) · **MCP:**
-  `list_connections`.
+  `list_connections`. A **tracker** connection given a canopy `project_id` (the project picker)
+  also **binds** that project to it — mirrored, scope from the config (e.g. `jira_project_key`),
+  its existing work kept separate — the same as a switch (§C12); `409 project_already_bound`
+  when the project is already mirrored (switch its tracking instead).
+- **Delete:** `DELETE /api/v1/connectors/connections/{id}` refuses a connection that still feeds
+  a project (`409 connection_in_use`, with the `project_ids` — switch them first); one that
+  synced refs, past bindings, links or personal credentials still name is **deactivated**
+  (kept, so that history keeps its meaning); anything else is deleted.
 - **Cross-link:** the page notes that connecting **Claude Code itself** (MCP token + plugin) lives on
   **Agent Setup** (§A11), and Agent Setup links back here for **data** connectors — the two
   integration surfaces are now explicitly paired.

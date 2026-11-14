@@ -99,6 +99,7 @@ class JiraConnector(WorkTracker):
     config_schema: ClassVar[type[BaseModel]] = JiraConnectionConfig
     scope_schema: ClassVar[type[BaseModel]] = JiraScope
     webhook_signature_header: ClassVar[str | None] = "X-Hub-Signature"
+    scope_selector_keys: ClassVar[tuple[str, ...]] = ("project_key", "jql")
 
     @property
     def base_url(self) -> str:

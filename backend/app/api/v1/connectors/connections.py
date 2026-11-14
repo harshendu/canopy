@@ -1,15 +1,27 @@
-"""Connection lifecycle: list (with per-provider policy) + create/delete (architect-gated)."""
+"""Connection lifecycle: list (with per-provider policy) + create/delete (architect-gated).
+A tracker connection created with a canopy project binds it (USER_FLOWS §J1/§C12)."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
 from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
+from app.connectors.tracker import is_tracker
 from app.core.crypto import encrypt_token
-from app.models.base import ReadStrategy, WriteStrategy
-from app.models.integration import Connection, IntegrationSetting, UserConnection
+from app.models.base import ReadStrategy, TrackingMode, WriteStrategy, utcnow
+from app.models.integration import (
+    Connection,
+    ExternalRef,
+    IntegrationSetting,
+    JiraLink,
+    TrackerBinding,
+    UserConnection,
+)
+from app.models.project import Project
 from app.schemas.entities import ConnectionCreate, ConnectionRead
+from app.services import tracker_sync
+from app.services import tracking as tracking_service
 
 router = APIRouter()
 
@@ -59,10 +71,33 @@ async def list_connections(session: SessionDep, user: CurrentUser) -> list[Conne
     ]
 
 
+def _project_id(config: dict) -> int | None:
+    try:
+        return int(config.get("project_id"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 @router.post("/connections", response_model=ConnectionRead, status_code=status.HTTP_201_CREATED)
 async def create_connection(
     session: SessionDep, _: ArchitectWriter, payload: ConnectionCreate
 ) -> Connection:
+    """Create a connection. A tracker connection given a canopy `project_id` (the Connectors
+    form's project picker) also binds that project to it — mirrored from the tracker's project
+    in the config — the same as a switch that keeps the project's existing work separate."""
+    target_id = _project_id(payload.config) if is_tracker(payload.provider) else None
+    project = await session.get(Project, target_id) if target_id is not None else None
+    if project is not None and project.id is not None:
+        bound = await tracking_service.active_binding(session, project.id)
+        if bound is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "project_already_bound",
+                    "message": f"{project.key} is already mirrored from {bound.provider} — "
+                    "switch its tracking instead",
+                },
+            )
     connection = Connection(
         provider=payload.provider,
         name=payload.name,
@@ -73,6 +108,21 @@ async def create_connection(
         ),
     )
     session.add(connection)
+    await session.flush()
+    if project is not None and project.id is not None and connection.id is not None:
+        session.add(
+            TrackerBinding(
+                connection_id=connection.id,
+                provider=payload.provider,
+                target_type="project",
+                target_id=project.id,
+                scope_kind="project",
+                scope=tracker_sync.legacy_scope(payload.config),
+                mapping=tracker_sync.legacy_mapping(payload.config),
+                sync_iterations=bool(payload.config.get("board_id")),
+            )
+        )
+        project.tracking_mode = TrackingMode.mirrored.value
     await session.commit()
     await session.refresh(connection)
     return connection
@@ -80,7 +130,56 @@ async def create_connection(
 
 @router.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_connection(session: SessionDep, _: ArchitectWriter, connection_id: int) -> None:
+    """Remove a connection. One that still feeds a project is refused (409
+    `connection_in_use` — switch those projects to native or another tracker first). One that
+    other records still name (synced refs, past bindings, links, personal credentials) is
+    deactivated rather than deleted, so that history keeps its meaning; else it is deleted."""
     connection = await session.get(Connection, connection_id)
-    if connection is not None:
+    if connection is None:
+        return
+    feeding = (
+        await session.execute(
+            select(TrackerBinding).where(
+                TrackerBinding.connection_id == connection_id,
+                TrackerBinding.scope_kind != "subtree",
+                col(TrackerBinding.active).is_(True),
+            )
+        )
+    ).scalars().all()
+    if feeding:
+        projects = sorted({b.target_id for b in feeding})
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "connection_in_use",
+                "message": "Projects are still mirrored from this connection — switch their "
+                "tracking first",
+                "project_ids": projects,
+            },
+        )
+    referenced = False
+    for model, column in (
+        (TrackerBinding, TrackerBinding.connection_id),
+        (ExternalRef, ExternalRef.connection_id),
+        (JiraLink, JiraLink.connection_id),
+        (UserConnection, UserConnection.connection_id),
+    ):
+        if (await session.execute(select(model).where(column == connection_id))).first():
+            referenced = True
+            break
+    if referenced:
+        now = utcnow()
+        for link in (
+            await session.execute(
+                select(TrackerBinding).where(
+                    TrackerBinding.connection_id == connection_id,
+                    col(TrackerBinding.active).is_(True),
+                )
+            )
+        ).scalars().all():
+            link.active = False
+            link.detached_at = now
+        connection.active = False
+    else:
         await session.delete(connection)
-        await session.commit()
+    await session.commit()

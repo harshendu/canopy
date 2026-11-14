@@ -58,6 +58,15 @@ class WorkTracker(Connector):
     scope_schema: ClassVar[type[BaseModel]] = EmptyConfig
     # Header carrying an HMAC-SHA256 hex signature (`sha256=<hex>` or bare hex) of the body.
     webhook_signature_header: ClassVar[str | None] = None
+    # The scope keys that select *which items* a binding mirrors (e.g. Jira's project key or
+    # JQL; not a board, which only adds sprints). Two projects may not bind the same selection.
+    # Empty = the whole scope.
+    scope_selector_keys: ClassVar[tuple[str, ...]] = ()
+
+    @classmethod
+    def scope_selection(cls, scope: Mapping[str, Any]) -> dict[str, Any]:
+        keys = cls.scope_selector_keys or tuple(scope)
+        return {k: scope.get(k) for k in keys if scope.get(k) not in (None, "")}
 
     # --- read ---
     async def fetch_items(self, scope: Scope, since: str | None) -> ItemPage:

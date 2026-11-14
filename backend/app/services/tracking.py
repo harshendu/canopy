@@ -302,6 +302,9 @@ async def plan_switch(
             "Same tracker connection — change the binding's scope with PUT /tracking instead"
         )
 
+    if to_mode == TrackingMode.mirrored.value and target is not None:
+        await _refuse_shared_scope(session, project.id, target)
+
     tasks = await project_tasks(session, project.id)
     releasing = {t.id for t in tasks if t.status_owner != CANOPY_OWNER}
     # Columns a released task must fit: the project's own/team/template workflow (a tracker's
@@ -374,6 +377,32 @@ async def plan_switch(
             "now on; their links are kept as history."
         )
     return plan
+
+
+async def _refuse_shared_scope(
+    session: AsyncSession, project_id: int, target: SwitchTarget
+) -> None:
+    """One tracker scope feeds one project: two projects mirroring the same items would pull
+    each item back and forth between them."""
+    for other in (
+        await session.execute(
+            select(TrackerBinding).where(
+                TrackerBinding.connection_id == target.connection.id,
+                TrackerBinding.target_type == "project",
+                TrackerBinding.target_id != project_id,
+                TrackerBinding.scope_kind != "subtree",
+                col(TrackerBinding.active).is_(True),
+            )
+        )
+    ).scalars().all():
+        if target.cls.scope_selection(other.scope or {}) == target.cls.scope_selection(
+            target.scope
+        ):
+            owner = await session.get(Project, other.target_id)
+            name = owner.key if owner is not None else f"project {other.target_id}"
+            raise TrackingConfigError(
+                f"That {target.cls.label} scope already feeds {name} — bind another scope"
+            )
 
 
 def _publishable(task: Task) -> bool:

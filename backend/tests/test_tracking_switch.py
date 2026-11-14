@@ -337,3 +337,77 @@ async def test_adjust_the_binding_and_sync_the_project(client, db_session, monke
         headers=admin,
     )
     assert bad.status_code == 400
+
+
+async def test_a_tracker_connection_with_a_project_binds_it_and_delete_keeps_history(
+    client, db_session
+):
+    admin = await _admin(client, db_session)
+    project = await _native_project(client, admin)
+    body = {
+        "provider": "jira",
+        "name": "Jira",
+        "config": {"base_url": "https://jira.example.com", "project_id": project,
+                   "jira_project_key": "SHOP", "story_point_field": "customfield_10016"},
+    }
+    created = await client.post("/api/v1/connectors/connections", json=body, headers=admin)
+    assert created.status_code == 201, created.text
+    connection_id = created.json()["id"]
+    tracking = (await client.get(f"/api/v1/projects/{project}/tracking", headers=admin)).json()
+    assert tracking["mode"] == "mirrored"
+    assert tracking["binding"]["connection_id"] == connection_id
+    assert tracking["binding"]["scope"] == {"project_key": "SHOP"}
+    assert tracking["binding"]["mapping"] == {"estimate_field": "customfield_10016"}
+    again = await client.post("/api/v1/connectors/connections", json=body, headers=admin)
+    assert again.status_code == 409 and again.json()["detail"]["code"] == "project_already_bound"
+
+    url = f"/api/v1/connectors/connections/{connection_id}"
+    in_use = await client.delete(url, headers=admin)
+    assert in_use.status_code == 409 and in_use.json()["detail"]["project_ids"] == [project]
+    await client.post(
+        f"/api/v1/projects/{project}/tracking/switch",
+        json={"to_mode": "native", "dry_run": False},
+        headers=admin,
+    )
+    assert (await client.delete(url, headers=admin)).status_code == 204
+    # Its past binding still names it, so it is deactivated rather than deleted.
+    connection = await db_session.get(Connection, connection_id)
+    assert connection is not None and connection.active is False
+    # GitHub connections (nothing names them) are still deleted outright.
+    gh = await client.post(
+        "/api/v1/connectors/connections",
+        json={"provider": "github", "name": "gh", "config": {"owner": "o", "repo": "r"}},
+        headers=admin,
+    )
+    assert (
+        await client.delete(f"/api/v1/connectors/connections/{gh.json()['id']}", headers=admin)
+    ).status_code == 204
+    db_session.expire_all()
+    assert await db_session.get(Connection, gh.json()["id"]) is None
+
+
+async def test_one_tracker_scope_feeds_one_project(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "DEMO_MODE", True)
+    admin = await _admin(client, db_session)
+    first = await _native_project(client, admin, "SHOP")
+    second = await _native_project(client, admin, "SHOP2")
+    connection = await _demo_jira(db_session)
+    bound = await client.post(
+        f"/api/v1/projects/{first}/tracking/switch",
+        json={**_switch_body(connection.id), "scope": {"project_key": "SHOP", "board_id": 1},
+              "dry_run": False},
+        headers=admin,
+    )
+    assert bound.status_code == 200, bound.text
+    # The same Jira project (a board only adds sprints) can't feed a second canopy project.
+    clash = await client.post(
+        f"/api/v1/projects/{second}/tracking/switch", json=_switch_body(connection.id),
+        headers=admin,
+    )
+    assert clash.status_code == 400 and "already feeds SHOP" in clash.json()["detail"]
+    other = await client.post(
+        f"/api/v1/projects/{second}/tracking/switch",
+        json={**_switch_body(connection.id), "scope": {"project_key": "OPS"}},
+        headers=admin,
+    )
+    assert other.status_code == 200, other.text
