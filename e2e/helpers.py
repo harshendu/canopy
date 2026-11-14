@@ -67,6 +67,51 @@ def tab(driver: WebDriver, label: str, timeout: int = DEFAULT_TIMEOUT) -> WebEle
     return button_with_text(driver, label, timeout)
 
 
+def heading(driver: WebDriver, text: str, timeout: int = DEFAULT_TIMEOUT) -> WebElement:
+    """A heading (h1–h4) whose visible text is exactly ``text`` (icons inside are ignored)."""
+    q = _q(text)
+    return _xp(
+        driver,
+        f"//*[self::h1 or self::h2 or self::h3 or self::h4][normalize-space()={q}]",
+        timeout,
+    )
+
+
+def radio_with_label(driver: WebDriver, text: str, timeout: int = DEFAULT_TIMEOUT) -> WebElement:
+    """The radio input inside the ``<label>`` whose text contains ``text``."""
+    return wait_until(
+        driver,
+        EC.element_to_be_clickable(
+            (By.XPATH, f"//label[contains(normalize-space(.), {_q(text)})]//input[@type='radio']")
+        ),
+        timeout,
+    )
+
+
+def input_with_label(driver: WebDriver, label: str, timeout: int = DEFAULT_TIMEOUT) -> WebElement:
+    """The input a ``<label for=…>`` starting with ``label`` names (e.g. "Project key (optional)")."""
+    return wait_until(
+        driver,
+        EC.element_to_be_clickable(
+            (By.XPATH, f"//input[@id=//label[starts-with(normalize-space(.), {_q(label)})]/@for]")
+        ),
+        timeout,
+    )
+
+
+def table_cell(driver: WebDriver, text: str, timeout: int = DEFAULT_TIMEOUT) -> WebElement:
+    """A table cell whose visible text is exactly ``text``."""
+    return _xp(driver, f"//table//td[normalize-space()={_q(text)}]", timeout)
+
+
+def accept_confirm(driver: WebDriver, timeout: int = DEFAULT_TIMEOUT) -> str:
+    """Accept the browser ``confirm()`` the last click opened; returns its message."""
+    alert = wait_until(driver, EC.alert_is_present(), timeout)
+    message = alert.text
+    alert.accept()
+    return message
+
+
 def has_text(driver: WebDriver, text: str, timeout: int = DEFAULT_TIMEOUT) -> bool:
     """True once ``text`` appears anywhere in the rendered body."""
     try:
@@ -188,3 +233,13 @@ def open_project_tab(driver: WebDriver, base_url: str, project_id: int, tab_labe
     """Open a project's cockpit and click a tab."""
     driver.get(f"{base_url}/projects/{project_id}")
     tab(driver, tab_label).click()
+
+
+def open_project_view(
+    driver: WebDriver, base_url: str, project_id: int, group_label: str, view_label: str
+) -> None:
+    """Open a project's cockpit, pick a workspace group (e.g. "Integrations"), then one of its
+    views (e.g. "Tracking") — the two-level navigation a user clicks through."""
+    driver.get(f"{base_url}/projects/{project_id}")
+    tab(driver, group_label).click()
+    tab(driver, view_label).click()

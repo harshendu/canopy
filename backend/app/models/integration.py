@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field
 
-from app.models.base import Provider, ReadStrategy, TimestampMixin, WriteStrategy
+from app.models.base import Provider, ProviderType, ReadStrategy, TimestampMixin, WriteStrategy
 
 
 class IntegrationSetting(TimestampMixin, table=True):
@@ -19,7 +19,7 @@ class IntegrationSetting(TimestampMixin, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    provider: Provider = Field(index=True)
+    provider: Provider = Field(sa_type=ProviderType, index=True)
     read_strategy: ReadStrategy = Field(default=ReadStrategy.direct)
     write_strategy: WriteStrategy = Field(default=WriteStrategy.direct)
     # Phase-2 hook: whether non-admin users may connect their own (per-user OAuth) account.
@@ -27,10 +27,12 @@ class IntegrationSetting(TimestampMixin, table=True):
 
 
 class Connection(TimestampMixin, table=True):
-    """A configured connector instance (per provider). Tokens are encrypted at rest."""
+    """A configured connector instance (per provider): a site and a credential. Which canopy
+    project/initiative it feeds, and from where in the tracker, is a `TrackerBinding` (many per
+    connection). Tokens are encrypted at rest."""
 
     id: int | None = Field(default=None, primary_key=True)
-    provider: Provider = Field(index=True)
+    provider: Provider = Field(sa_type=ProviderType, index=True)
     name: str
     encrypted_token: str | None = None  # Fernet-encrypted access token / API token
     encrypted_refresh_token: str | None = None
@@ -79,17 +81,25 @@ class ExternalRef(TimestampMixin, table=True):
     """
 
     __table_args__ = (
-        UniqueConstraint("provider", "external_id", "entity_type", name="uq_external_ref"),
+        UniqueConstraint(
+            "provider", "external_id", "entity_type", "connection_id", name="uq_external_ref"
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    provider: Provider = Field(index=True)
+    provider: Provider = Field(sa_type=ProviderType, index=True)
     external_id: str = Field(index=True)  # Jira issue id, GH node id, Drive file id
     external_key: str | None = None  # human key, e.g. "PROJ-123"
-    entity_type: str  # task | milestone | component | adr | project
+    entity_type: str  # task | milestone | component | adr | project | sprint
     entity_id: int
     remote_updated: str | None = None  # upstream `updated` watermark for staleness checks
     last_synced_at: datetime | None = None
+    # Which site the external id belongs to (two sites of one provider can share numeric ids).
+    # NULL on legacy rows whose connection couldn't be derived — matched by `mapping.get_ref`.
+    connection_id: int | None = Field(default=None, foreign_key="connection.id")
+    # Set when the project stopped mirroring this tracker (a switch): the link is kept so the
+    # task still shows "formerly SHOP-101", and re-attaching re-activates it.
+    detached_at: datetime | None = None
 
 
 class JiraLink(TimestampMixin, table=True):
@@ -132,6 +142,48 @@ class PullRequest(TimestampMixin, table=True):
     url: str | None = None
     author: str | None = None
     remote_updated: str | None = None
-    # The task this PR implements, when known (matched by branch/Jira key on ingest). Lets the
-    # UI surface a task's code changes alongside its Jira issue and design docs.
+    # The task this PR implements, when known (matched on ingest by the issue key in its title
+    # or branch — any tracker's key, or a native canopy key). Lets the UI surface a task's code
+    # changes alongside its tracker item and design docs.
     task_id: int | None = Field(default=None, foreign_key="task.id", index=True)
+
+
+class TrackerBinding(TimestampMixin, table=True):
+    """Attaches a canopy project (or initiative) to a scope inside a tracker connection: a whole
+    tracker project/team (`scope_kind=project`), an item and its descendants (`subtree` — a
+    "tracker link"), or a saved query. Owns everything per-target: the sync watermark, the
+    type/field mapping and the tracker's status map (the mirrored board's columns). A project has
+    at most one active binding; detached rows are kept as the record of every tracker it used."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    connection_id: int = Field(foreign_key="connection.id", index=True)
+    provider: Provider = Field(sa_type=ProviderType, index=True)
+    target_type: str = Field(index=True)  # project | initiative
+    target_id: int = Field(index=True)
+    scope_kind: str = "project"  # project | subtree | query
+    scope: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    mapping: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    # [{name, category, position}] — the tracker's statuses, refreshed on each full sync.
+    status_map: list = Field(default_factory=list, sa_column=Column(JSON))
+    sync_iterations: bool = False  # mirror the tracker's sprints/cycles for this target
+    watermark: str | None = None
+    # The highest task `ExternalRef.id` the nightly changelog backfill has reached.
+    backfill_cursor: int | None = None
+    active: bool = True
+    last_synced_at: datetime | None = None
+    detached_at: datetime | None = None
+
+
+class EngineerIdentity(TimestampMixin, table=True):
+    """An engineer's account in one tracker (replaces `Engineer.jira_account_id`), so synced
+    assignees from any tracker land on the same person."""
+
+    __table_args__ = (
+        UniqueConstraint("provider", "external_account_id", name="uq_engineer_identity"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    engineer_id: int = Field(foreign_key="engineer.id", index=True)
+    provider: Provider = Field(sa_type=ProviderType)
+    external_account_id: str
+    display_name: str | None = None

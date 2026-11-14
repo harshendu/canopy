@@ -3,10 +3,12 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { ADR, MyWorkspace as Workspace } from "../api/types";
+import type { ADR, MySprint, MyWorkspace as Workspace } from "../api/types";
 import { STATUS_LABELS } from "../lib/decisions";
 import { roleLabel } from "../lib/roles";
 import { functionLabel } from "../lib/persona";
+import { formatSprintDates, localToday, timeLeftLabel } from "../lib/sprints";
+import { featureOn, useFeatures } from "../lib/useFeatures";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
 import { Icon } from "../components/icons";
@@ -41,8 +43,72 @@ function DecisionList({ title, decisions }: { title: string; decisions: ADR[] })
   );
 }
 
+/** "My sprint": each active sprint I have work in — its dates, time left and progress — with
+ *  my tasks in it, each linking to its project's board (USER_FLOWS §C11). */
+function MySprints({ sprints }: { sprints: MySprint[] }) {
+  const today = localToday();
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="mb-2 font-semibold">My sprint</h2>
+      <div className="space-y-4">
+        {sprints.map(({ sprint, tasks }) => {
+          const left = timeLeftLabel(sprint, today);
+          const mineDone = tasks.filter((t) => t.status_category === "done").length;
+          const pct = sprint.task_count ? Math.round((sprint.done_count / sprint.task_count) * 100) : 0;
+          return (
+            <section key={sprint.id} aria-label={sprint.name} className="space-y-1.5">
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
+                <span className="font-medium text-slate-800">{sprint.name}</span>
+                <span className="text-xs text-slate-500">
+                  {formatSprintDates(sprint)}
+                  {left && <> · {left}</>}
+                </span>
+                <span className="ml-auto text-xs text-slate-500">
+                  {sprint.done_count}/{sprint.task_count} done · yours {mineDone}/{tasks.length}
+                </span>
+              </div>
+              <div
+                role="progressbar"
+                aria-label={`${sprint.name} progress`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={pct}
+                className="h-1.5 overflow-hidden rounded-full bg-slate-100"
+              >
+                <div className="h-full rounded-full bg-canopy-500" style={{ width: `${pct}%` }} />
+              </div>
+              {sprint.goal && <p className="text-xs text-slate-500">Goal: {sprint.goal}</p>}
+              <ul className="space-y-1 text-sm">
+                {tasks.map((t) => (
+                  <li key={t.id}>
+                    <PreviewLink
+                      target={{ kind: "project", id: t.project_id, tab: "board" }}
+                      className="flex items-center gap-2 rounded px-2 py-1 hover:bg-slate-50"
+                    >
+                      {t.key && <span className="font-mono text-xs text-slate-400">{t.key}</span>}
+                      <span
+                        className={`truncate ${t.status_category === "done" ? "text-slate-400 line-through" : ""}`}
+                      >
+                        {t.name}
+                      </span>
+                      <span className="ml-auto shrink-0 text-xs text-slate-400">
+                        {t.status ?? "no status"}
+                      </span>
+                    </PreviewLink>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function MyWorkspace() {
   const qc = useQueryClient();
+  const features = useFeatures();
   const [blockTask, setBlockTask] = useState<number | "">("");
   const [blockReason, setBlockReason] = useState("");
   const { data, isLoading } = useQuery({
@@ -117,6 +183,10 @@ export default function MyWorkspace() {
           </div>
         }
       />
+
+      {featureOn(features, "tracking.sprints") && data.my_sprints.length > 0 && (
+        <MySprints sprints={data.my_sprints} />
+      )}
 
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="mb-2 font-semibold">My tasks</h2>

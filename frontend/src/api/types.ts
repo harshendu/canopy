@@ -11,7 +11,9 @@ export type ADRStatus =
 export type Reversibility = "one_way" | "two_way";
 export type ADRCommentKind = "comment" | "approve" | "request_changes" | "reject";
 export type DecisionRule = "owner_decides" | "consensus" | "lazy_consensus";
-export type Provider = "jira" | "github" | "gdrive";
+/** A connection's provider: "github", "gdrive", or a work tracker's key as `GET /meta/trackers`
+ *  lists it ("jira", "linear", "generic", …) — label it from that catalog, never assume Jira. */
+export type Provider = string;
 
 // --- Delivery metadata ---
 export type ProjectHealth = "on_track" | "at_risk" | "off_track";
@@ -48,6 +50,9 @@ export interface Project {
   health: ProjectHealth | null;
   status_note: string | null;
   status_updated_at: string | null;
+  /** native: canopy owns every status; mirrored: a bound tracker owns the work it knows (§C12). */
+  tracking_mode?: TrackingMode;
+  task_key_prefix?: string | null;
 }
 
 export interface Initiative {
@@ -184,7 +189,20 @@ export interface Task {
   is_critical: boolean;
   total_float: number;
   status: string | null;
+  /** What the status means — every flow metric reads this, never the display name (§C9). */
+  status_category: StatusCategory | null;
+  /** "canopy", or the provider key of the tracker that owns this task's status (e.g. "jira").
+   *  Only canopy-owned status changes in canopy — via a move, never a PATCH. */
+  status_owner: string;
+  /** Human key: `<prefix>-<n>` for canopy-owned work, the tracker's key when mirrored. */
+  key: string | null;
+  /** Legacy: the sprint's name (kept in step with `sprint_id`). */
   sprint: string | null;
+  /** The sprint the task is planned into (§C11) — changed via the sprint membership
+   *  endpoints, never a PATCH. */
+  sprint_id: number | null;
+  /** Sprint planning size (a team estimating in points plans with it). PATCH-able. */
+  story_points: number | null;
   deadline: string | null;
   assignee_engineer_id: number | null;
   tags: string[];
@@ -709,6 +727,17 @@ export interface RetrospectiveDetail extends Retrospective {
   comments: RetrospectiveComment[];
 }
 
+// --- Kanban board, moves + workflows (USER_FLOWS §C9) ---
+/** What a status means: `done` is throughput, `cancelled` leaves WIP but never counts as
+ *  throughput, `in_progress` is started work, `todo` is not started. */
+export type StatusCategory = "todo" | "in_progress" | "done" | "cancelled";
+/** `warn` lets a move into a full column through (with a warning); `block` refuses it. */
+export type WipEnforcement = "off" | "warn" | "block";
+/** `native`: canopy owns every task's status; `mirrored`: a tracker owns the tasks it knows. */
+export type TrackingMode = "native" | "mirrored";
+
+/** A card. The fields after `aging` are optional: the scenario board renders a projection
+ *  that may omit them (the live board always sends them — see `lib/board.ts:normalizeBoard`). */
 export interface BoardTaskItem {
   id: number;
   name: string;
@@ -717,20 +746,288 @@ export interface BoardTaskItem {
   is_done: boolean;
   age_days: number;
   aging: boolean;
+  project_id?: number | null;
+  key?: string | null;
+  status_category?: StatusCategory | null;
+  /** "canopy", or the provider key of the tracker that owns this card's status. */
+  status_owner?: string;
+  /** The card's status can be changed in canopy (it is canopy-owned). */
+  movable?: boolean;
+  /** The tracker item behind a mirrored card. */
+  external_url?: string | null;
+  rank?: number;
+  parent_id?: number | null;
+  blocked?: boolean;
+  is_critical?: boolean;
+  deadline?: string | null;
+  tags?: string[];
+  sprint_id?: number | null;
+  story_points?: number | null;
+  /** Working days — the estimate of teams that size sprints in days. */
+  duration?: number | null;
 }
 
+/** A column: the workflow's columns arrive in order, empty ones included. `in_workflow=false`
+ *  marks an extra column for a status the workflow doesn't name (e.g. a mirrored status). */
 export interface BoardLane {
   status: string;
   is_done: boolean;
+  /** Open cards in this column on this board. */
   wip: number;
   tasks: BoardTaskItem[];
+  category?: StatusCategory | null;
+  position?: number;
+  wip_limit?: number | null;
+  /** Open cards in this column across the WIP scope (every project sharing the columns, e.g.
+   *  the team's) — more than `wip` when the board shows only part of it (one project of a
+   *  team, a sprint, a pod). The limit is judged on this when set. */
+  scope_wip?: number | null;
+  over_limit?: boolean;
+  in_workflow?: boolean;
+}
+
+/** What the caller may do on the board. */
+export interface BoardViewer {
+  /** May move any canopy-owned card and edit the workflow. */
+  can_plan: boolean;
+  /** May move cards assigned to this engineer, or pull an unassigned one. */
+  engineer_id: number | null;
+  /** Feature `tracking.native` (canopy-owned status) is on. */
+  native_enabled: boolean;
 }
 
 export interface BoardResponse {
+  /** 0 on a team board (cards then carry their own `project_id`). */
   project_id: number;
   lanes: BoardLane[];
   cycle_time_p85_days: number | null;
   aging_count: number;
+  mode?: TrackingMode;
+  wip_enforcement?: WipEnforcement;
+  viewer?: BoardViewer | null;
+  /** Set on a team board. */
+  team_id?: number | null;
+  /** The one sprint the board shows (`?sprint=<id>`, or `active` with a single active sprint). */
+  sprint_id?: number | null;
+  /** The delivery method in effect for these cards' team (§C11). */
+  delivery_method?: DeliveryMethod;
+}
+
+// --- Delivery methods + sprints (USER_FLOWS §C11) ---
+/** How a team runs its work across all its projects. */
+export type DeliveryMethod = "kanban" | "sprint" | "both";
+/** What sprint sizes are counted in: story points, task duration (days) or a task count. */
+export type EstimateUnit = "points" | "days" | "count";
+export type SprintState = "planned" | "active" | "completed";
+
+export interface TeamDelivery {
+  team_id: number;
+  /** What the team chose. */
+  delivery_method: DeliveryMethod;
+  /** What applies — kanban while the `tracking.sprints` feature is off. */
+  effective_method: DeliveryMethod;
+  sprint_length_days: number;
+  estimate_unit: EstimateUnit;
+  sprints_enabled: boolean;
+  /** The caller may change these settings (the team's directors/managers, or an admin). */
+  can_manage: boolean;
+  active_sprint_id: number | null;
+}
+
+export interface TeamDeliveryUpdate {
+  delivery_method?: DeliveryMethod;
+  sprint_length_days?: number;
+  estimate_unit?: EstimateUnit;
+}
+
+export interface Sprint {
+  id: number;
+  team_id: number;
+  pod_id: number | null;
+  name: string;
+  goal: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  state: SprintState;
+  /** "canopy", or the tracker it is mirrored from (then read-only). */
+  owner: string;
+  estimate_unit: string | null;
+  /** Captured when the sprint starts / completes. */
+  committed: number | null;
+  completed: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  /** Live counts over the current members, in `unit`. */
+  task_count: number;
+  done_count: number;
+  scope: number;
+  done: number;
+  unit: EstimateUnit;
+}
+
+export interface SprintCreate {
+  name?: string | null;
+  goal?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  pod_id?: number | null;
+}
+
+export interface SprintUpdate {
+  name?: string;
+  goal?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+export interface SprintCompleteRequest {
+  /** Where unfinished work goes. */
+  carry_over: "next" | "backlog";
+  next_sprint_id?: number | null;
+}
+
+export interface EngineerCapacity {
+  engineer_id: number;
+  name: string;
+  person_days: number;
+}
+
+export interface SprintCapacity {
+  /** Allocated capacity over the sprint's working days. */
+  person_days: number;
+  engineers: EngineerCapacity[];
+  /** The team's mean completed estimate per sprint. */
+  velocity_mean: number | null;
+  /** The members' open estimate. */
+  committed: number;
+  unit: EstimateUnit;
+  /** Planned beyond capacity — warns, never blocks; null when there is nothing to compare. */
+  over_capacity: boolean | null;
+}
+
+export interface SprintDetail extends Sprint {
+  tasks: Task[];
+  capacity: SprintCapacity | null;
+}
+
+export interface SprintBurndownDay {
+  day: string;
+  remaining: number;
+  ideal: number;
+  /** Estimate that joined after the start, cumulative to this day. */
+  scope_added: number;
+}
+
+export interface SprintReport {
+  sprint: Sprint;
+  unit: EstimateUnit;
+  /** One row per day from the start to today (or the end). */
+  burndown: SprintBurndownDay[];
+  committed: number;
+  completed: number;
+  scope_added: number;
+  scope_removed: number;
+  carried_over: number;
+  /** completed ÷ committed. */
+  reliability: number | null;
+}
+
+export interface VelocityPoint {
+  sprint_id: number;
+  name: string;
+  end_date: string | null;
+  committed: number;
+  completed: number;
+  reliability: number | null;
+}
+
+export interface SprintForecast {
+  sufficient: boolean;
+  remaining: number;
+  history_sprints: number;
+  p50_sprints: number | null;
+  p85_sprints: number | null;
+  p50_date: string | null;
+  p85_date: string | null;
+  reason: string | null;
+}
+
+/** Team-level only — never per engineer. */
+export interface Velocity {
+  team_id: number;
+  unit: EstimateUnit;
+  /** Completed sprints, oldest first. */
+  points: VelocityPoint[];
+  mean: number | null;
+  low: number | null;
+  high: number | null;
+  mean_reliability: number | null;
+  sufficient: boolean;
+  reason: string | null;
+  forecast: SprintForecast;
+}
+
+/** An active sprint the caller has work in, with just their tasks (`/me`). */
+export interface MySprint {
+  sprint: Sprint;
+  tasks: Task[];
+}
+
+/** `POST /tasks/{id}/move`: omit `to_status` to only reorder. Placement is between
+ *  `after_task_id` and `before_task_id` (either may be omitted), else the `position` end. */
+export interface TaskMoveRequest {
+  to_status?: string;
+  after_task_id?: number;
+  before_task_id?: number;
+  position?: "top" | "bottom";
+  /** Guards a lost update: 409 `stale` when the card's status no longer matches. */
+  expected_status?: string;
+}
+
+export interface TaskMoveResponse {
+  task: Task;
+  changed: boolean;
+  /** e.g. `wip_limit_exceeded` (enforcement `warn` let an over-limit move through). */
+  warnings: string[];
+}
+
+/** Where a workflow's columns are defined. `tracker`: a mirrored project's columns are its
+ *  tracker's statuses (read-only in canopy — a PUT is 409 `workflow_externally_owned`). */
+export type WorkflowScope = "project" | "team" | "template" | "default" | "tracker";
+
+export interface WorkflowColumn {
+  name: string;
+  category: StatusCategory;
+  position: number;
+  wip_limit: number | null;
+}
+
+export interface WorkflowRead {
+  id: number | null;
+  scope: WorkflowScope;
+  team_id: number | null;
+  project_id: number | null;
+  name: string;
+  wip_enforcement: WipEnforcement;
+  /** True when the asked-for project/team has no workflow of its own and uses this one. */
+  inherited: boolean;
+  columns: WorkflowColumn[];
+}
+
+export interface WorkflowColumnInput {
+  name: string;
+  category: StatusCategory;
+  wip_limit?: number | null;
+  /** Set to rename an existing column; its canopy-owned tasks follow it. */
+  previous_name?: string | null;
+}
+
+export interface WorkflowUpdate {
+  name: string;
+  wip_enforcement: WipEnforcement;
+  columns: WorkflowColumnInput[];
+  /** Where the canopy-owned tasks of a removed column go: `{"Old column": "New column"}`. */
+  move_tasks_to: Record<string, string>;
 }
 
 export interface Blocker {
@@ -754,6 +1051,8 @@ export interface MyWorkspace {
   owned_decisions: ADR[];
   stakeholder_decisions: ADR[];
   blockers: Blocker[];
+  /** "My sprint": my tasks in active sprints (§C11). */
+  my_sprints: MySprint[];
 }
 
 export interface MyToday {
@@ -807,8 +1106,15 @@ export interface DraftTask {
   estimate_days: number;
   story_points: number | null;
   sort_order: number;
+  /** Legacy Jira stamp (kept alongside the tracker-neutral one below). */
   jira_issue_id: string | null;
   jira_key: string | null;
+  /** The tracker item finalising created for this draft task (any tracker). */
+  external_provider?: string | null;
+  external_id?: string | null;
+  external_key?: string | null;
+  /** The canopy task a native finalise created (a re-finalise updates it). */
+  task_id?: number | null;
 }
 
 export interface DraftPlanDetail extends DraftPlan {
@@ -818,14 +1124,22 @@ export interface DraftPlanDetail extends DraftPlan {
 export interface DraftPushTaskResult {
   draft_task_id: number;
   name: string;
+  /** created | updated | failed */
   action: string;
   jira_key: string | null;
   error: string | null;
+  /** The tracker item's key, or the native task's key. */
+  external_key?: string | null;
+  /** The canopy task (native finalise). */
+  task_id?: number | null;
 }
 
-export interface DraftPushResult {
+/** `POST /draft-plans/{id}/finalize`: canopy tasks (native) or the bound tracker's items. */
+export interface DraftFinalizeResult {
   plan_id: number;
-  connection_id: number;
+  mode: "native" | "tracker";
+  provider: string | null;
+  connection_id: number | null;
   created: number;
   updated: number;
   failed: number;
@@ -836,31 +1150,6 @@ export interface ExportToDriveResult {
   file_id: string;
   name: string;
   link: string | null;
-}
-
-export type JiraLinkTarget = "project" | "initiative";
-
-export interface JiraLink {
-  id: number;
-  connection_id: number;
-  jira_issue_id: string;
-  jira_key: string;
-  jira_issue_type: string | null;
-  target_type: string;
-  target_id: number;
-  last_synced_at: string | null;
-  created_at: string;
-}
-
-export interface JiraLinkSyncResult {
-  link: JiraLink;
-  projects_created: number;
-  projects_linked: number;
-  tasks_created: number;
-  tasks_updated: number;
-  skipped: number;
-  created_project_ids: number[];
-  notes: string[];
 }
 
 // --- Scenario simulation ---
@@ -1125,10 +1414,207 @@ export interface JiraIssueLink {
   url: string | null;
 }
 
+/** The tracker item behind a mirrored task, whatever the tracker. */
+export interface TrackerItemLink {
+  provider: string;
+  /** The tracker's display name, e.g. "Jira". */
+  label: string;
+  key: string;
+  url: string | null;
+}
+
 export interface TaskExternalLinks {
+  /** Preferred over `jira`. */
+  tracker?: TrackerItemLink | null;
+  /** Deprecated alias of `tracker`, set only when the tracker is Jira. */
   jira: JiraIssueLink | null;
   pull_requests: PullRequest[];
   docs: DocReference[];
+}
+
+// --- Tracker links + tracker catalog (neutral successors of the Jira links) ---
+/** What a tracker link maps an item's subtree into. */
+export type TrackerLinkTarget = "project" | "initiative";
+
+export interface TrackerLink {
+  id: number;
+  connection_id: number;
+  provider: string;
+  /** The tracker item the link roots at (e.g. an epic). */
+  root_id: string;
+  root_key: string;
+  root_type: string | null;
+  target_type: string;
+  target_id: number;
+  url: string | null;
+  last_synced_at: string | null;
+  created_at: string;
+}
+
+export interface TrackerLinkCreate {
+  connection_id: number;
+  root_key: string;
+  target_type: TrackerLinkTarget;
+  target_id: number;
+}
+
+export interface TrackerLinkSyncResult {
+  link: TrackerLink;
+  projects_created: number;
+  projects_linked: number;
+  tasks_created: number;
+  tasks_updated: number;
+  skipped: number;
+  created_project_ids: number[];
+  notes: string[];
+}
+
+export interface TrackerCapabilities {
+  direct_read: boolean;
+  hierarchy: boolean;
+  status_categories: boolean;
+  status_history: boolean;
+  iterations: boolean;
+  webhooks: boolean;
+  create_items: boolean;
+  update_items: boolean;
+  estimates: boolean;
+  oauth: boolean;
+}
+
+export interface TrackerInfo {
+  provider: string;
+  label: string;
+  enabled: boolean;
+  capabilities: TrackerCapabilities;
+  config_schema: Record<string, unknown>;
+  scope_schema: Record<string, unknown>;
+  webhook_path: string | null;
+  webhook_secret_setting: string | null;
+}
+
+export interface TrackerCatalog {
+  trackers: TrackerInfo[];
+  default_tracking_mode: TrackingMode;
+}
+
+// --- Project tracking: native or mirrored, the binding, switching (USER_FLOWS §C12) ---
+/** One of a tracker's statuses — a mirrored board's columns, in the tracker's order. */
+export interface TrackerStatus {
+  name: string;
+  category: StatusCategory;
+  position: number;
+}
+
+/** Where a project mirrors its work from: a tracker connection and a scope inside it. */
+export interface TrackerBinding {
+  id: number;
+  connection_id: number;
+  connection_name: string | null;
+  provider: string;
+  /** The tracker's display name, e.g. "Jira". */
+  label: string;
+  scope_kind: string;
+  /** Validated against the tracker's `scope_schema` (e.g. `{project_key, board_id}`). */
+  scope: Record<string, unknown>;
+  /** Type/field mapping (epic types, estimate field…). */
+  mapping: Record<string, unknown>;
+  status_map: TrackerStatus[];
+  /** Mirror the tracker's sprints/cycles. */
+  sync_iterations: boolean;
+  active: boolean;
+  last_synced_at: string | null;
+  /** When it stopped feeding the project (past bindings only). */
+  detached_at: string | null;
+  created_at: string;
+}
+
+/** `GET /projects/{id}/tracking`. */
+export interface ProjectTracking {
+  project_id: number;
+  mode: TrackingMode;
+  /** The active binding; null for a native project (or a mirrored one not bound yet). */
+  binding: TrackerBinding | null;
+  /** Bound only through a pre-binding connection's `config.project_id` (no binding row). */
+  legacy_connection_id: number | null;
+  /** That legacy connection's provider and the tracker's label (null otherwise). */
+  legacy_provider?: string | null;
+  legacy_label?: string | null;
+  /** Trackers the project used before, newest first. */
+  history: TrackerBinding[];
+  /** The bound (or legacy) tracker's capabilities. */
+  capabilities: TrackerCapabilities | null;
+  canopy_owned: number;
+  tracker_owned: number;
+  /** A planner who may edit this project. */
+  can_edit: boolean;
+  /** Provider keys a project may be bound to on this instance. */
+  trackers_enabled: string[];
+}
+
+/** `PUT /projects/{id}/tracking` — adjust the active binding in place. A new scope resets the
+ *  sync watermark and status map, so the next sync is a full one. */
+export interface ProjectTrackingUpdate {
+  scope?: Record<string, unknown>;
+  mapping?: Record<string, unknown>;
+  sync_iterations?: boolean;
+}
+
+/** What happens to the work a project already has when it gets a tracker. */
+export type TrackingStrategy = "keep_separate" | "match" | "publish";
+
+export interface TrackingSwitchRequest {
+  to_mode: TrackingMode;
+  connection_id?: number | null;
+  scope: Record<string, unknown>;
+  mapping: Record<string, unknown>;
+  sync_iterations: boolean;
+  strategy: TrackingStrategy;
+  /** Preview (true) or apply exactly the previewed plan (false, human-only). */
+  dry_run: boolean;
+}
+
+/** What a switch does to one task. */
+export interface TrackingSwitchAction {
+  task_id: number;
+  name: string;
+  key: string | null;
+  /** keep | adopt | publish | release | remap */
+  action: string;
+  detail: string | null;
+}
+
+export interface TrackingPublishResult {
+  created: number;
+  skipped: number;
+  failed: number;
+  errors: string[];
+}
+
+export interface TrackingSwitchResult {
+  project_id: number;
+  from_mode: TrackingMode;
+  to_mode: TrackingMode;
+  from_provider: string | null;
+  to_provider: string | null;
+  strategy: TrackingStrategy;
+  dry_run: boolean;
+  applied: boolean;
+  /** Tasks per action. */
+  counts: Record<string, number>;
+  actions: TrackingSwitchAction[];
+  warnings: string[];
+  binding?: TrackerBinding | null;
+  published?: TrackingPublishResult | null;
+  synced_created?: number | null;
+  synced_updated?: number | null;
+}
+
+export interface TrackingSyncResult {
+  provider: string;
+  created: number;
+  updated: number;
+  skipped: number;
 }
 
 // --- Change proposals (agent-staged writes, human-reviewed) ---
@@ -1359,6 +1845,10 @@ export interface Team {
   description: string | null;
   pods: Pod[];
   members: TeamMember[];
+  /** How the team runs work across its projects (§C11; always sent, defaulted). */
+  delivery_method?: DeliveryMethod;
+  sprint_length_days?: number;
+  estimate_unit?: EstimateUnit;
 }
 
 export interface ProjectAccess {
@@ -1369,7 +1859,12 @@ export interface ProjectAccess {
   leads: InitiativeLead[];
   owner_name: string | null;
   pod_name: string | null;
+  /** The initiative's team (who leads it). */
   team_name: string | null;
+  /** The team that runs the project — its pod's team, else its initiative's — whose board,
+   *  workflow and sprints it uses (§C11). */
+  team_id?: number | null;
+  running_team_name?: string | null;
 }
 
 // --- Leadership notes + business review (USER_FLOWS §BR) ---

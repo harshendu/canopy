@@ -66,8 +66,20 @@ FEATURE_CATALOG: tuple[FeatureDef, ...] = (
         "and the capacity heatmap.",
     ),
     FeatureDef(
-        "tracking.board", "Flow board",
-        "Status lanes with WIP and aging derived from the Jira-mirrored status history.",
+        "tracking.board", "Kanban board",
+        "Workflow columns with WIP limits, card order and aging derived from status history.",
+        "tracking",
+    ),
+    FeatureDef(
+        "tracking.native", "canopy-owned status",
+        "Native projects and canopy-owned task status: create tasks with a status and move "
+        "cards on the board. Off means every status must come from an external tracker.",
+        "tracking",
+    ),
+    FeatureDef(
+        "tracking.sprints", "Sprints",
+        "Teams that run sprints: sprint planning against capacity, the sprint board, sprint "
+        "burndown and velocity. Off means every team works as Kanban.",
         "tracking",
     ),
     FeatureDef(

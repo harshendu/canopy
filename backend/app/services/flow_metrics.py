@@ -43,12 +43,13 @@ class DoraMetrics:
 class FlowMetrics:
     completed_items: int  # items finished in the window
     throughput_per_week: float | None
-    cycle_time_median_days: float | None
+    cycle_time_median_days: float | None  # first start (in progress) -> done
     cycle_time_p85_days: int | None
-    wip: int  # current not-done leaf tasks (a now-snapshot, not windowed)
+    wip: int  # leaf tasks in an in-progress category right now (a snapshot, not windowed)
     aging_wip: int  # WIP older than the team's cycle-time P85
     sufficient: bool
     reason: str | None = None
+    lead_time_median_days: float | None = None  # created -> done
 
 
 def _percentile(values: list[int], pct: float) -> int:
@@ -103,12 +104,18 @@ def compute_dora(events: list[ActivityPoint], window_weeks: float) -> DoraMetric
 
 
 def compute_flow(
-    throughput: list[int], cycle_samples: list[int], wip: int, aging_wip: int
+    throughput: list[int],
+    cycle_samples: list[int],
+    wip: int,
+    aging_wip: int,
+    lead_samples: list[int] | None = None,
 ) -> FlowMetrics:
     """`throughput` = items completed per ISO week over the window (incl. zero weeks);
-    `cycle_samples` = per-item created→done days for items finished in the window."""
+    `cycle_samples` = per-item started→done days and `lead_samples` = created→done days, for
+    items finished in the window."""
     sufficient = len(throughput) >= MIN_HISTORY_WEEKS and sum(throughput) > 0
     median = _median(cycle_samples)
+    lead_median = _median(lead_samples or [])
     return FlowMetrics(
         completed_items=len(cycle_samples),
         throughput_per_week=(
@@ -118,6 +125,7 @@ def compute_flow(
         cycle_time_p85_days=_percentile(cycle_samples, 85) if cycle_samples else None,
         wip=wip,
         aging_wip=aging_wip,
+        lead_time_median_days=round(lead_median, 1) if lead_median is not None else None,
         sufficient=sufficient,
         reason=(
             None
@@ -125,7 +133,7 @@ def compute_flow(
             else (
                 "Not enough completed-work history for stable flow metrics — needs at least "
                 f"{MIN_HISTORY_WEEKS} weeks with some throughput "
-                "(sync Jira status / mark tasks done)."
+                "(move cards to done on the board, or sync them from your tracker)."
             )
         ),
     )

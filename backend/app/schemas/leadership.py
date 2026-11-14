@@ -62,6 +62,10 @@ class TeamRead(BaseModel):
     description: str | None = None
     pods: list[PodRead] = []
     members: list[TeamMemberRead] = []
+    # How the team runs work across its projects (USER_FLOWS §C11).
+    delivery_method: str = "kanban"
+    sprint_length_days: int = 14
+    estimate_unit: str = "points"
 
 
 class TeamCreate(BaseModel):
@@ -89,7 +93,11 @@ class ProjectAccess(BaseModel):
     leads: list[InitiativeLeadRead] = []  # the initiative's owners
     owner_name: str | None = None  # the project's single owner
     pod_name: str | None = None
-    team_name: str | None = None
+    team_name: str | None = None  # the initiative's team (who leads it)
+    # The team that runs the project — its pod's team, else its initiative's — the one whose
+    # board, workflow and sprints the project uses (§C11).
+    team_id: int | None = None
+    running_team_name: str | None = None
 
 
 # --- leadership notes ------------------------------------------------------------------------

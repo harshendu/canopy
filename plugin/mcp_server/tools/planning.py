@@ -1,6 +1,17 @@
-"""Scheduling / dependency / architecture-decision tools."""
+"""Scheduling / dependency / architecture-decision tools, plus the board (moves, workflows)."""
 
 from __future__ import annotations
+
+import httpx
+
+
+async def _refusal(exc: httpx.HTTPStatusError) -> dict:
+    """A refused board write as data (owner, url, limit...) instead of an opaque failure."""
+    try:
+        detail = exc.response.json().get("detail")
+    except ValueError:
+        detail = exc.response.text
+    return {"ok": False, "status_code": exc.response.status_code, "error": detail}
 
 
 def register(mcp, client) -> None:
@@ -25,7 +36,8 @@ def register(mcp, client) -> None:
         `duration` is working days; `start`/`end`/`deadline` are YYYY-MM-DD; `percent_complete`
         is 0-100 (the progress an engineer reports); `parent_id` moves it under a summary task.
         Run `replan_schedule` afterward if you changed duration / structure. Task **status** is
-        not settable here — it is mirrored read-only from Jira.
+        not settable here — a status change is a board move (`move_task`), and only for tasks
+        canopy owns (`status_owner == "canopy"`); a mirrored task's status belongs to its tracker.
         """
         body: dict = {}
         for field, value in (
@@ -156,11 +168,106 @@ def register(mcp, client) -> None:
         return await client.get(f"/projects/{project_id}/burndown")
 
     @mcp.tool
-    async def get_board(project_id: int) -> dict:
-        """Get the flow board: leaf tasks in status lanes with WIP per lane, plus the team's
-        cycle-time P85 and which in-progress tasks are **aging** (sat in their status longer than
-        P85 — the leading 'this is stuck' signal). Manage flow by finishing aging/high-WIP work."""
-        return await client.get(f"/projects/{project_id}/board")
+    async def get_board(
+        project_id: int | None = None, team_id: int | None = None, sprint: str | None = None
+    ) -> dict:
+        """Get the Kanban board — for a project, or for a team (one board over every project the
+        team runs, on the team's columns). Columns in order (empty ones included) with WIP per
+        column against its limit, cards in rank order, the cycle-time P85 and which open cards
+        are **aging** (in their status longer than P85 — the leading 'this is stuck' signal).
+        Each card says who owns its status (`status_owner`: "canopy" or a tracker) and whether
+        it is `movable`; `mode` is native|mirrored and `delivery_method` kanban|sprint|both.
+        `sprint` narrows it to active | backlog | all | a sprint id. Manage flow by finishing
+        aging/high-WIP work before starting more."""
+        params = {"sprint": sprint} if sprint else None
+        if team_id is not None:
+            return await client.get(f"/teams/{team_id}/board", params=params)
+        return await client.get(f"/projects/{project_id}/board", params=params)
+
+    @mcp.tool
+    async def move_task(
+        task_id: int,
+        to_status: str | None = None,
+        after_task_id: int | None = None,
+        before_task_id: int | None = None,
+        position: str = "bottom",
+        expected_status: str | None = None,
+    ) -> dict:
+        """Move a card on the board: change its status and/or its place in the column.
+
+        `to_status` must be a column of the project's workflow (see `get_workflow`); omit it to
+        only reorder. Only canopy-owned tasks change status here — for a task mirrored from a
+        tracker the result names the owner and the item's URL (`status_externally_owned`): change
+        it in that tracker, never by any other route. Place the card between `after_task_id` and
+        `before_task_id`, else at the `position` ("top" | "bottom") end of the column.
+        `expected_status` refuses the move if someone changed the card meanwhile.
+
+        Use it for an explicit instruction ("move CHK-12 to In Review"). A status you *inferred*
+        from a signal (Slack, a meeting) goes through `propose_changes` instead, for a human to
+        review. Every move is recorded in the task's status history (burndown, cycle time).
+        Returns {task, changed, warnings} — `wip_limit_exceeded` means the column is now over its
+        limit; under `block` enforcement the move is refused instead.
+        """
+        body: dict = {"position": position}
+        for field, value in (
+            ("to_status", to_status),
+            ("after_task_id", after_task_id),
+            ("before_task_id", before_task_id),
+            ("expected_status", expected_status),
+        ):
+            if value is not None:
+                body[field] = value
+        try:
+            return await client.post(f"/tasks/{task_id}/move", body)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (403, 409, 422):
+                return await _refusal(exc)
+            raise
+
+    @mcp.tool
+    async def get_workflow(project_id: int | None = None, team_id: int | None = None) -> dict:
+        """The board's columns (status, category todo|in_progress|done|cancelled, WIP limit) for
+        a project or a team — pass exactly one. `scope` says where they are defined (project |
+        team | template | default); `inherited` means the project/team uses its team's or the
+        workspace's columns."""
+        if team_id is not None:
+            return await client.get(f"/teams/{team_id}/workflow")
+        return await client.get(f"/projects/{project_id}/workflow")
+
+    @mcp.tool
+    async def set_workflow(
+        columns: list[dict],
+        project_id: int | None = None,
+        team_id: int | None = None,
+        name: str = "Default",
+        wip_enforcement: str = "warn",
+        move_tasks_to: dict | None = None,
+    ) -> dict:
+        """Replace a team's board columns (shared by all its projects) or one project's override
+        — pass exactly one of team_id / project_id.
+
+        `columns` is an ordered list of {name, category, wip_limit?, previous_name?}: category is
+        todo|in_progress|done|cancelled (at least one todo and one done column); set
+        `previous_name` to rename a column (its tasks follow). Removing a column that still holds
+        tasks needs `move_tasks_to` ({"Old": "New"}) — those tasks move with a recorded
+        transition. `wip_enforcement` is off|warn|block. Team columns: the team's directors and
+        managers; a project override: its planners.
+        """
+        body = {
+            "name": name,
+            "wip_enforcement": wip_enforcement,
+            "columns": columns,
+            "move_tasks_to": move_tasks_to or {},
+        }
+        path = f"/teams/{team_id}/workflow" if team_id is not None else (
+            f"/projects/{project_id}/workflow"
+        )
+        try:
+            return await client.put(path, body)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (403, 409, 422):
+                return await _refusal(exc)
+            raise
 
     @mcp.tool
     async def get_forecast(

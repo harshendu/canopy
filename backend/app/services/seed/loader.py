@@ -12,7 +12,7 @@ populated (architecture, ADRs, specs, risks, outcomes, docs, blockers, retros, a
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from itertools import pairwise
 from typing import TypeVar
 
@@ -20,6 +20,8 @@ from sqlalchemy import delete, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, col, select
 
+from app.connectors.demo import DEMO_JIRA_STATUSES
+from app.connectors.tracker import tracker_enabled
 from app.core.crypto import encrypt_token
 from app.core.security import hash_password
 from app.models.activity import ActivityEvent
@@ -41,6 +43,7 @@ from app.models.base import (
     BlockerCategory,
     BlockerSeverity,
     CriterionStatus,
+    DeliveryMethod,
     DocKind,
     DocScope,
     DocSource,
@@ -63,13 +66,23 @@ from app.models.base import (
     RiskScope,
     RiskStatus,
     SpecStatus,
+    SprintState,
+    StatusCategory,
+    StatusSource,
     TaskType,
     TeamRole,
+    TrackingMode,
     utcnow,
 )
 from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
-from app.models.integration import Connection, ExternalRef, JiraLink, PullRequest
+from app.models.integration import (
+    Connection,
+    ExternalRef,
+    JiraLink,
+    PullRequest,
+    TrackerBinding,
+)
 from app.models.leadership import InitiativeLead, LeadershipNote
 from app.models.org import Pod, Team, TeamMember
 from app.models.outcome import Outcome
@@ -99,9 +112,13 @@ from app.models.scenario import (
     ScenarioTask,
 )
 from app.models.spec import Spec, SpecCriterion
+from app.models.sprint import Sprint
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
 from app.services import proposals as proposal_svc
+from app.services import sprint_service, tracker_links, tracker_sync, workflow
+from app.services import sprints as sprint_metrics
+from app.services.org import team_project_ids
 from app.services.planner import reschedule_project
 from app.services.scenario_engine import snapshot_live_into_scenario
 from app.services.seed import catalog
@@ -276,6 +293,127 @@ async def _build_teams(session: AsyncSession, refs: _Refs) -> None:
                                                    role=role))
 
 
+_POINT_SCALE = ((1, 1.0), (2, 2.0), (3, 3.0), (5, 5.0), (8, 8.0))
+
+
+def _points_for(duration: int) -> float:
+    for limit, points in _POINT_SCALE:
+        if duration <= limit:
+            return points
+    return 13.0
+
+
+async def _build_sprints(session: AsyncSession, refs: _Refs) -> None:
+    """Delivery methods (USER_FLOWS §C11): each team gets its method; a sprint team gets story
+    points on its tasks and five two-week sprints — three completed (with commitment, carry-over
+    and a velocity trend), one active, one planned — whose membership history is back-dated so
+    the sprint report, velocity and forecast have data."""
+    today = _today()
+    for spec in refs.ds.teams:
+        team = refs.teams[spec.key]
+        team.delivery_method = spec.delivery_method
+        if spec.delivery_method == DeliveryMethod.kanban.value:
+            continue
+        team_id = _req(team.id)
+        project_ids = set(await team_project_ids(session, team_id))
+        leaves = [
+            t
+            for key, tasks in refs.tasks.items()
+            if refs.projects[key].id in project_ids
+            for t in tasks.values()
+            if t.type == TaskType.task
+        ]
+        for task in leaves:
+            task.story_points = _points_for(task.duration)
+        length = team.sprint_length_days
+        first = today - timedelta(days=length * 3 + 7)
+        sprints: list[Sprint] = []
+        for i in range(5):
+            start = first + timedelta(days=length * i)
+            end = start + timedelta(days=length - 1)
+            state = (
+                SprintState.completed if end < today
+                else SprintState.active if start <= today
+                else SprintState.planned
+            )
+            sprints.append(await _add(session, Sprint(
+                team_id=team_id, name=f"{spec.key} Sprint {i + 1}", start_date=start,
+                end_date=end, state=state.value,
+                goal=("Ship the next delivery-promise slice" if i % 2 else
+                      "Burn down operational risk before peak"),
+            )))
+        completed = [s for s in sprints if s.state == SprintState.completed.value]
+        active = next((s for s in sprints if s.state == SprintState.active.value), None)
+        planned = next((s for s in sprints if s.state == SprintState.planned.value), None)
+
+        done_on: dict[int, date] = {}
+        for row in (
+            await session.execute(
+                select(TaskStatusHistory).where(
+                    col(TaskStatusHistory.task_id).in_([t.id for t in leaves]),
+                    TaskStatusHistory.to_category == StatusCategory.done.value,
+                )
+            )
+        ).scalars().all():
+            done_on[row.task_id] = max(done_on.get(row.task_id, date.min),
+                                       row.changed_at.date())
+
+        def at(day: date) -> datetime:
+            return datetime.combine(day, datetime.min.time())
+
+        for task in leaves:
+            assert task.id is not None and active is not None
+            finished = done_on.get(task.id)
+            home = next(
+                (s for s in completed
+                 if finished is not None and s.start_date is not None and s.end_date is not None
+                 and s.start_date <= finished <= s.end_date),
+                None,
+            )
+            if home is not None and home.start_date is not None:
+                index = sprints.index(home)
+                if task.id % 4 == 0 and index > 0:  # carried over from the sprint before
+                    prev = sprints[index - 1]
+                    assert prev.start_date is not None and prev.end_date is not None
+                    sprint_service.record_membership(
+                        session, task, prev, source=StatusSource.canopy, author="canopy",
+                        at=at(prev.start_date - timedelta(days=1)))
+                    sprint_service.record_membership(
+                        session, task, home, source=StatusSource.canopy, author="canopy",
+                        at=at(prev.end_date))
+                else:
+                    sprint_service.record_membership(
+                        session, task, home, source=StatusSource.canopy, author="canopy",
+                        at=at(home.start_date - timedelta(days=1)))
+            elif finished is None and active.start_date is not None:
+                category = workflow.category_of_task(task)
+                if category == StatusCategory.in_progress or task.id % 3 == 0:
+                    joined = (active.start_date - timedelta(days=1)
+                              if category == StatusCategory.in_progress
+                              else active.start_date + timedelta(days=2))  # scope added
+                    sprint_service.record_membership(
+                        session, task, active, source=StatusSource.canopy, author="canopy",
+                        at=at(joined))
+                elif planned is not None and task.id % 3 == 1:
+                    sprint_service.record_membership(
+                        session, task, planned, source=StatusSource.canopy, author="canopy",
+                        at=at(today))
+        await session.flush()
+
+        for sprint in [*completed, active]:
+            if sprint is None or sprint.start_date is None or sprint.end_date is None:
+                continue
+            items, _ = await sprint_service.sprint_items(session, sprint, "points")
+            totals = sprint_metrics.sprint_totals(sprint.start_date, sprint.end_date, items)
+            sprint.estimate_unit = "points"
+            sprint.committed = totals.committed
+            sprint.started_at = at(sprint.start_date)
+            if sprint.state == SprintState.completed.value:
+                sprint.completed = totals.completed
+                sprint.completed_at = at(sprint.end_date)
+        await session.flush()
+
+
 async def _build_initiatives(session: AsyncSession, refs: _Refs) -> None:
     today = _today()
     for spec in refs.ds.initiatives:
@@ -364,6 +502,7 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
     for phase in spec.phases:
         summary = await _add(session, Task(
             project_id=pid, name=phase.name, type=TaskType.summary, duration=0))
+        await workflow.assign_native_key(session, summary)
         for ts in phase.tasks:
             task = await _add(session, Task(
                 project_id=pid, parent_id=summary.id, name=ts.name,
@@ -374,6 +513,7 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
                 estimate_pessimistic=ts.estimate[2] if ts.estimate else None,
                 deadline=_weeks(today, ts.deadline_weeks) if ts.deadline_weeks else None,
             ))
+            await workflow.assign_native_key(session, task)
             refs.tasks[spec.key][ts.name] = task
             leaves.append(task)
 
@@ -407,21 +547,27 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
 
 async def _apply_lifecycle(session: AsyncSession, refs: _Refs, spec: ProjectSpec) -> None:
     base = utcnow()
+    columns = workflow.default_view().columns
     for phase in spec.phases:
         for ts in phase.tasks:
-            if ts.milestone:
-                continue
+            # Milestones are leaves too: they get a status (and history) so they sit on the
+            # board like any card instead of in the "(no status)" inbox.
             task = refs.tasks[spec.key][ts.name]
             created_days, transitions = _lifecycle(ts.status, ts.entered_days_ago)
             task.created_at = base - timedelta(days=created_days)
-            task.status = ts.status
+            author = ts.assignee or "canopy"
+            # Through the one status write path, back-dated: the task enters To Do when it is
+            # created, then walks its lifecycle — each step stamped with its category.
+            steps = [("To Do", created_days), *[(to, days) for _, to, days in transitions]]
+            for to_status, days_ago in steps:
+                workflow.record_transition(
+                    session, task, to_status,
+                    category=workflow.resolve_category(to_status, columns=columns),
+                    source=StatusSource.canopy, author=author,
+                    at=base - timedelta(days=days_ago),
+                )
             task.percent_complete = _PERCENT.get(ts.status, 0.0)
-            author = ts.assignee or "Jira Sync"
-            for from_status, to_status, days_ago in transitions:
-                await _add(session, TaskStatusHistory(
-                    task_id=_req(task.id), from_status=from_status, to_status=to_status,
-                    changed_at=base - timedelta(days=days_ago), author=author,
-                ))
+            await session.flush()
 
 
 async def _build_project_arch(
@@ -698,6 +844,14 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
             provider=Provider(dc.provider), name=dc.name, config=dict(dc.config),
             encrypted_token=encrypt_token("demo-token")))
 
+    if tracker_enabled(Provider.linear):
+        # An unbound Linear workspace (served by the demo mock): bind a native project to it
+        # from its Tracking tab to try switching trackers offline.
+        await _add(session, Connection(
+            provider=Provider.linear, name="Linear — example workspace",
+            config={"demo": True, "workspace_url_key": "example", "team_key": "ENG"},
+            encrypted_token=encrypt_token("demo-token")))
+
     # GitHub PRs, each tied to the task it implements (a webhook would match by branch/Jira key).
     repo = refs.ds.github_repo
     for pr in refs.ds.pull_requests:
@@ -707,17 +861,41 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
             url=f"https://github.com/{repo}/pull/{pr.number}", author=pr.author,
             task_id=pr_task.id if pr_task is not None else None))
 
+    jira = conns["jira"]
+    jira_id = _req(jira.id)
+    # The flagship is bound to the Jira project (what "Sync now" pulls), with the tracker's
+    # statuses as its board columns — what a full sync stores from Jira.
+    await _add(session, TrackerBinding(
+        connection_id=jira_id, provider=Provider.jira, target_type="project", target_id=fid,
+        scope_kind="project", scope=tracker_sync.legacy_scope(jira.config),
+        mapping=tracker_sync.legacy_mapping(jira.config),
+        status_map=[{"name": n, "category": c, "position": i}
+                    for i, (n, c) in enumerate(DEMO_JIRA_STATUSES)],
+        sync_iterations=bool(jira.config.get("board_id"))))
     epic_id, epic_key = refs.ds.jira_epic
-    await _add(session, JiraLink(
-        connection_id=_req(conns["jira"].id), jira_issue_id=epic_id, jira_key=epic_key,
+    link = await _add(session, JiraLink(
+        connection_id=jira_id, jira_issue_id=epic_id, jira_key=epic_key,
         jira_issue_type="Epic", target_type="project", target_id=fid))
-    # Mirror Jira issue keys onto tasks so each shows a clickable <KEY>-… link in the UI.
+    await tracker_links.mirror_jira_link(session, link)
+    # The flagship is mirrored from Jira: the tasks Jira knows are Jira-owned (status locked to
+    # the tracker on the board, each with its clickable <KEY>-… link); the rest of its tasks —
+    # canopy-only work such as milestones and spikes — stay canopy-owned.
+    flagship = refs.projects[refs.ds.flagship_key]
+    flagship.tracking_mode = TrackingMode.mirrored.value
     for ext_id, key, name in refs.ds.jira_task_keys:
         task = refs.tasks[refs.ds.flagship_key].get(name)
         if task is not None and task.id is not None:
+            task.status_owner = Provider.jira.value
+            task.key = key
             await _add(session, ExternalRef(
                 provider=Provider.jira, external_id=ext_id, external_key=key,
-                entity_type="task", entity_id=task.id))
+                entity_type="task", entity_id=task.id, connection_id=jira_id))
+            # Its history came from Jira, observed by sync.
+            await session.execute(
+                update(TaskStatusHistory)
+                .where(col(TaskStatusHistory.task_id) == task.id)
+                .values(source=StatusSource.sync.value, author="Jira")
+            )
 
 
 async def _build_scenarios(session: AsyncSession, refs: _Refs) -> None:
@@ -983,6 +1161,7 @@ async def load_seed_data(
     await _build_initiatives(session, refs)
     await _build_projects(session, refs)
     await _build_allocations(session, refs)
+    await _build_sprints(session, refs)
     await _build_connections(session, refs)
     await _build_scenarios(session, refs)
     await _build_leadership_notes(session, refs)

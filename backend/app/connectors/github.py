@@ -107,6 +107,7 @@ class GitHubConnector(Connector):
             url=pr.get("html_url"),
             author=(pr.get("user") or {}).get("login"),
             updated=pr.get("updated_at"),
+            branch=(pr.get("head") or {}).get("ref"),
         )
 
     async def handle_webhook(self, payload: dict[str, Any]) -> SyncResult:

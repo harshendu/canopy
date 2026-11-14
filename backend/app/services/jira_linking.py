@@ -1,15 +1,17 @@
-"""Link a chosen Jira ticket into canopy and map its descendant subtree onto canopy entities.
+"""Link a chosen Jira ticket into canopy — the `/jira-links` alias of tracker links
+(`app/services/tracker_links.py`, USER_FLOWS §J9), kept for one release.
 
 The architect picks a Jira ticket (an initiative-level issue, an epic, or a story) and links it
 to a canopy **Project** or **Initiative**. canopy then reads that ticket plus its full descendant
-subtree from Jira and maps it idempotently (via `ExternalRef`):
+subtree from Jira and maps it idempotently through the shared tracker engine:
 
 - target = project    → every issue becomes a Task in that project (epics → summary tasks).
 - target = initiative → each epic becomes a Project under the initiative and its stories become
   tasks in that project (Jira initiative→epic→story mirrored onto canopy initiative→project→task).
 
-Re-running a link is an idempotent update, not a duplicate. Status stays Jira-owned (never written
-back) — the same source-of-truth boundary as the rest of sync.
+Each `JiraLink` is mirrored as a subtree `TrackerBinding`, so `/tracker-links` lists it too.
+Re-running a link is an idempotent update, not a duplicate. Status stays Jira-owned (never
+written back) — the same source-of-truth boundary as the rest of sync.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from app.models.base import Provider, utcnow
 from app.models.integration import Connection, JiraLink
 from app.models.project import Initiative, Project
 from app.schemas.entities import JiraLinkRead, JiraLinkSyncResult
+from app.services import tracker_links
 
 
 class JiraLinkError(Exception):
@@ -120,6 +123,7 @@ async def _run_sync(
     else:
         mapped = await connector.map_subtree_into_initiative(issues, link.target_id)
     link.last_synced_at = utcnow()
+    await tracker_links.mirror_jira_link(session, link)
     await session.commit()
     await session.refresh(link)
     await publish(
@@ -172,6 +176,7 @@ async def delete_link(session: AsyncSession, link_id: int) -> None:
     """Remove a link. Entities already mapped into canopy are kept (they're canopy-owned now)."""
     link = await session.get(JiraLink, link_id)
     if link is not None:
+        await tracker_links.unmirror_jira_link(session, link)
         await session.delete(link)
         await session.commit()
 

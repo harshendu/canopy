@@ -248,7 +248,7 @@ async def test_revision_may_not_make_the_proposal_worse(client, db_session) -> N
     assert bad_add.json()["detail"]["code"] == "invalid_items"
     assert bad_add.json()["detail"]["errors"][0]["add_index"] == 0
     bad_update = await revise(
-        {"update_items": [{"item_id": kept_item, "payload": {"status": "Done"}}]}
+        {"update_items": [{"item_id": kept_item, "payload": {"status": "Shipped"}}]}
     )
     assert bad_update.json()["detail"]["errors"][0]["item_id"] == kept_item
     stranded = await revise({"remove_item_ids": [phase]})

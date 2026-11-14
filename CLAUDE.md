@@ -16,12 +16,20 @@ from **GitHub** and **Google Drive**. One FastAPI backend with two front doors: 
 and a Claude Code plugin (FastMCP server + skills + subagents).
 
 ## Source-of-truth boundaries (do not violate)
-- **Jira** owns epics/stories and ticket **status**. canopy syncs *from* Jira and **never writes
-  status back**. Mirrored status on canopy tasks is read-only. **Scoped exception:** from an
+- **The status owner owns status.** Every task has one `status_owner`: `canopy` (a native
+  project's tasks, and canopy-only work in a mirrored one) or the tracker it is mirrored from.
+  canopy moves only canopy-owned tasks and **never writes status to a tracker**; a mirrored
+  task's status is read-only in canopy. **`workflow.record_transition` is the only writer of
+  `Task.status`** (moves, proposal apply, draft finalise and every inbound sync end there, so
+  history, categories and progress stay consistent — `tests/test_status_single_writer.py`).
+- **Jira** owns the epics/stories it mirrors and their **status**. canopy syncs *from* Jira and
+  **never writes status back**. Mirrored status on canopy tasks is read-only. **Scoped exception:** from an
   architect-reviewed **draft plan** (see Draft plans below) canopy may *create* tickets and *update
   ticket content* (summary/description/story points + epic→story parent) via
   `JiraConnector.create_issue`/`update_issue` — but **status is still never written**, and canopy
-  does not create local tasks on push (the normal Jira sync pulls the new issues back).
+  does not create local tasks on push (the normal Jira sync pulls the new issues back). The same
+  holds for any tracker through `WorkTracker.create_item`/`update_item` (draft finalise, and
+  "publish" when a project switches to a tracker — §C12).
 - **GitHub** owns code + some architecture docs. **Google Drive** holds design docs. canopy reads
   these; it does not own them. **Scoped write:** canopy can upload an *export snapshot* (a generated
   PDF/CSV, see Exports below) into a connected Drive via `GoogleDriveConnector.upload_file`.
@@ -92,19 +100,23 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   event — `GET .../baselines`; the Gantt overlays current-vs-baseline as **schedule variance**, and
   "drift" is reserved for architecture drift §N). A Jira sync that creates tasks auto-replans the
   project. Keep the scheduler/planner pure-ish and unit-tested.
-- **Draft plans (plan → Jira):** `DraftPlan`/`DraftTask` (`app/models/draft.py`) are a staging area
-  the architect reviews **before** any real work exists — kept out of the live Gantt/CPM/board.
-  CRUD + push live in `app/api/v1/drafts.py` (planner-gated); the push orchestration is
-  `app/services/draft_sync.py` (creates epics before stories, stamps each draft task with its Jira
-  id/key so a re-push updates not duplicates, flips the plan to `synced`). It writes **content only**
-  via `JiraConnector.create_issue`/`update_issue` (story points use the connection's
-  `story_point_field`). MCP: `create_draft_plan`/`add_draft_task`/`push_draft_to_jira` (skill:
-  `drafting-jira-tickets`). USER_FLOWS §C10.
+- **Draft plans (plan → tickets or tasks):** `DraftPlan`/`DraftTask` (`app/models/draft.py`) are a
+  staging area the architect reviews **before** any real work exists — kept out of the live
+  Gantt/CPM/board. CRUD + finalise live in `app/api/v1/drafts.py` (planner-gated, finalise
+  human-only); the orchestration is `app/services/draft_sync.py`. `POST /draft-plans/{id}/finalize`
+  follows the project's tracking mode: a **native** project gets canopy tasks (keys, first statuses,
+  parents, replan — `materialize_native`); a **mirrored** one pushes epics before stories to its
+  bound tracker through `WorkTracker.create_item`/`update_item`, stamping each draft task with
+  `external_provider/_id/_key` (and the legacy `jira_*`) so a re-push updates not duplicates — it
+  writes **content only** (story points via the binding's estimate field). `push-to-jira` is the
+  deprecated alias. MCP: `create_draft_plan`/`add_draft_task`/`push_draft_to_jira` (skill:
+  `drafting-tickets`). USER_FLOWS §C10.
 - **Change proposals (agent → human review queue):** `Proposal`/`ProposalItem`
   (`app/models/proposal.py`) stage **inbound canopy writes** an agent inferred (from
   Slack/email/meetings/docs) for a human to review and apply in the UI — the inbound twin of
   draft plans. Items are whitelisted per entity×action (task/dependency/milestone/blocker/
-  risk/outcome/decision/doc_reference; Jira-mirrored `status` never stageable), scope-contained
+  risk/outcome/decision/doc_reference; task `status` stageable only on canopy-owned tasks,
+  never on a mirrored one), scope-contained
   to one project/initiative, may reference each other via `ref`/`*_ref` handles, and carry
   provenance (`source_kind/label/url`) + a stage-time `before` snapshot. Apply is
   **all-or-nothing** + auto-replan (`app/services/proposals.py`); staging/withdraw/**revise**
@@ -130,10 +142,36 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   features, open proposals). Skills: `updating-canopy` (the write-ladder contract + the
   reviewing-together loop), `harvesting-signals`, `persona-playbooks`; subagent
   `signal-harvester`. USER_FLOWS §AA.
-- **Flow board:** `GET /projects/{id}/board` groups leaf tasks into status lanes with WIP per lane,
-  and flags **aging** tasks (in-status age > the team's cycle-time P85) — pure logic in
-  `app/services/flow.py`; age/cycle dates derived from `TaskStatusHistory`. WIP limits are a
-  client-side knob (not persisted). MCP: `get_board`.
+- **Kanban board + native tracking:** a project is `tracking_mode` native|mirrored. Board columns
+  are a **workflow** (`app/models/workflow.py`: ordered statuses, each with a **category**
+  todo|in_progress|done|cancelled + optional WIP limit, enforcement off|warn|block), resolved
+  project override → team → workspace template → built-in default (`app/services/workflow.py`,
+  nothing written on read); a **mirrored** project whose binding holds the tracker's status map
+  shows the tracker's statuses instead (`scope="tracker"`, edits 409
+  `workflow_externally_owned`). **Metrics read categories, never status names** (stamped on the task
+  and on each `TaskStatusHistory` row). `GET /projects/{id}/board` shows every column (empty ones
+  too) with ranked cards, WIP vs limit and **aging** (in-status age > cycle-time P85, cycle =
+  first start → last done); pure logic in `app/services/flow.py`, assembly in
+  `app/services/board.py`. A column's WIP limit counts its **WIP scope** — every project sharing
+  those columns (`wip_scope_project_ids`) — on the board (`scope_wip`) and in the move check alike.
+  `POST /tasks/{id}/move` changes a canopy-owned card's status/rank (a planner who may edit the
+  project; anyone else contributing moves own cards or pulls an unassigned one *into another
+  column*; 409 for a mirrored card), gated by `tracking.native`; workflows: `GET/PUT /teams|projects/{id}/workflow`, `/workflows/template`.
+  Native tasks get keys `<prefix>-<n>`. MCP: `get_board`/`move_task`/`get_workflow`/
+  `set_workflow`. USER_FLOWS §C9.
+- **Delivery methods + sprints (per team):** `Team.delivery_method` kanban|sprint|both (+ sprint
+  length, estimate unit points|days|count) applies to every project the team runs (a team-less
+  project is Kanban-only; gate `tracking.sprints`, off = everyone Kanban). `Sprint`
+  (`app/models/sprint.py`) belongs to a team (optional pod), is canopy-owned or mirrored from a
+  tracker (read-only), state planned→active→completed; `Task.sprint_id` is membership, written
+  ONLY by `sprint_service.record_membership` (appends `TaskSprintHistory` — commitment, scope
+  change, carry-over derive from it). Pure maths (burndown, totals, velocity, per-sprint
+  Monte-Carlo, capacity) in `app/services/sprints.py`; DB side in `app/services/sprint_service.py`;
+  API `app/api/v1/sprints.py` (`/teams/{id}/delivery|board|sprints|velocity`, `/sprints/{id}/…`).
+  Sprints never pin the CPM schedule (`sprint_overrun` alert instead). Team-level only, never
+  per engineer. MCP: `get_team_delivery`/`set_team_delivery`/`list_sprints`/`get_sprint`/
+  `plan_sprint`/`start_sprint`/`complete_sprint`/`get_velocity`; skill `planning-sprints`.
+  USER_FLOWS §C11.
 - **Probabilistic forecast:** `GET /projects/{id}/forecast` and `GET /initiatives/{id}/forecast`
   run a Monte-Carlo simulation (`app/services/forecast.py`, pure) — burn down the remaining items by
   sampling historical weekly throughput (from `TaskStatusHistory`, incl. zero weeks) to report
@@ -193,8 +231,9 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   (skill: `spec-driven-development`). Vision + roadmap in `docs/AI_NATIVE_EXECUTION.md`; USER_FLOWS §W.
 - **Delivery metrics (DORA + flow):** `GET /projects|initiatives/{id}/delivery` computes DORA
   (deploy freq, change-fail rate, recovery time from the §J8 activity feed) + flow (throughput,
-  cycle time, WIP, aging from `TaskStatusHistory` + the board) — pure in
-  `app/services/flow_metrics.py`, reusing `build_board`/`weekly_throughput`/`is_done_status`.
+  cycle time started→done, lead time, WIP = in-progress category, aging from
+  `TaskStatusHistory` + the board) — pure in `app/services/flow_metrics.py`, reusing
+  `build_board`/`weekly_throughput` and the stamped status categories.
   **Team-level only — never per-engineer** (Goodhart); reports `sufficient=false`/`null` instead of
   faking thin data. MCP: `get_delivery_metrics`. USER_FLOWS §X; roadmap gap #3 in AI_NATIVE_EXECUTION.md.
 - **Outcomes (outcomes over output):** `Outcome` (`app/models/outcome.py`) makes a project/
@@ -253,15 +292,44 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   deliberately ungated. **When adding a feature, pick its gate (or call it core)** and gate new
   routers at include time. USER_FLOWS §A10.
 - Connectors implement the ABC in `app/connectors/base.py` and self-register via `@register`. Sync is
-  idempotent through the `ExternalRef` table (`app/services/mapping.py`). Connector tokens are
-  encrypted at rest with Fernet (`app/core/crypto.py`). All outbound HTTP goes through
+  idempotent through the `ExternalRef` table (`app/services/mapping.py`; a ref names its
+  `connection_id` — legacy NULL rows still match any connection — and a `detached_at`). Connector
+  tokens are encrypted at rest with Fernet (`app/core/crypto.py`). All outbound HTTP goes through
   `app/connectors/http.py:request_with_retry` (Retry-After + backoff/jitter on 429/5xx).
-- Jira (`app/connectors/jira.py`): enhanced JQL search + Agile API (`sync_active_sprints` tags tasks
-  with their sprint when `board_id` is configured) + changelog → `TaskStatusHistory`
-  (`sync_status_history`). Jira status stays read-only. **Assignee → ownership:** sync maps the
-  issue assignee to an `Engineer` (match `jira_account_id`, then exact name + back-fill, else
-  auto-create — `resolve_assignee_engineer` in `app/services/ingest.py`) and sets
-  `Task.assignee_engineer_id`; an issue unassigned in Jira leaves a locally-set owner alone.
+- **Work trackers are pluggable** (USER_FLOWS §J0): a tracker is a `WorkTracker`
+  (`app/connectors/tracker.py`, `@register_tracker`) that declares `capabilities` +
+  `config_schema`/`scope_schema` and only **fetches/normalizes** into
+  `app/services/tracker_types.py` and writes item **content** — it has **no status write**. The
+  engine `app/services/tracker_sync.py` is its only caller (upsert, parents, epic → project,
+  watermarks, status map, changelog backfill, sprints, replan) and never imports a concrete
+  tracker (`tests/test_tracker_layer.py` pins this + a per-tracker contract). What a connection
+  feeds is a **`TrackerBinding`** (project | subtree = a tracker link | query scope, with its
+  watermark, mapping, status map, backfill cursor); a connection with only the legacy
+  `config.project_id` gets an in-memory binding. `EngineerIdentity` maps tracker accounts onto
+  engineers. Provider columns are VARCHAR(32), so a new tracker is an enum member + one module
+  (CONTRIBUTING "Adding a work tracker"). Shipped: **Jira**, **Linear** (`connectors/linear.py`,
+  GraphQL; cycles → sprints; `Linear-Signature` webhooks) and a **generic** ingest/webhook-only
+  tracker (`connectors/generic.py`, `direct_read=False`); Linear/generic are opt-in via
+  `TRACKERS_ENABLED`, and the admin integration policy lists only trackers in use.
+  Neutral surfaces: `/tracker-links` (`/jira-links` is the alias), ingest/file ingest for any
+  tracker connection, `/webhooks/{provider}`, `GET /meta/trackers`, `TaskExternalLinksRead.tracker`,
+  PR → task matching by any key (`ingest.issue_keys`). Config: `TRACKERS_ENABLED`,
+  `TRACKING_DEFAULT_MODE`, `TRACKER_POLL_MINUTES`, `<PROVIDER>_WEBHOOK_SECRET`.
+  A project's tracking (`/projects/{id}/tracking`, `app/services/tracking.py`, USER_FLOWS §C12)
+  is read/adjusted in place and **switched** native ⇄ mirrored ⇄ another tracker through a plan:
+  `plan_switch` (read-only, per-task keep|adopt|publish|release|remap) → `apply_switch` (one
+  transaction: detach old binding keeping refs as history, release + remap, new binding, adopt,
+  flip mode) → publish (content only, idempotent) → first sync. Preview == apply is pinned by
+  `tests/test_tracking_switch.py`; applying is human-only.
+- Jira (`app/connectors/jira.py`) is a `WorkTracker`: enhanced JQL search + Agile API (sprints
+  mirrored when the binding syncs iterations) + changelog → `TaskStatusHistory`, project statuses →
+  the binding's status map. Its pre-tracker methods (`_upsert_issue`, `map_subtree_into_*`,
+  `sync_active_sprints`, `sync_status_history`, `create_issue`/`update_issue`) stay as thin wrappers
+  for one release. Jira status stays read-only. **Assignee → ownership:** sync maps the issue
+  assignee to an `Engineer` (match the tracker identity / legacy `jira_account_id`, then email, then
+  exact name, recording the identity, else auto-create — `resolve_assignee_engineer` in
+  `app/services/ingest.py`) and sets `Task.assignee_engineer_id`; an issue unassigned in the
+  tracker leaves a locally-set owner alone.
 - **Decision fitness functions:** an ADR can carry machine-checkable dependency rules
   (`ADRFitnessFunction`: forbid|require between two components). The drift scan evaluates accepted
   ADRs' rules against the observed edges (`FitnessRule` in `app/services/drift.py`); a violation is a
@@ -272,10 +340,12 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   returns directly-affected components plus everything that transitively depends on them
   (`app/services/impact.py` reverse-walks `ComponentLink` edges, pure).
 - Webhooks (`app/webhooks/`) verify HMAC **before** parsing, match the repo/project to active
-  connections, then enqueue `process_webhook` (arq) — never process inline. Intake **fails
-  closed**: `require_valid_signature` answers 403 while the endpoint's `*_WEBHOOK_SECRET` is unset
-  and 401 on a missing/forged signature — never accept an unsigned payload. `GitHubConnector.handle_webhook`
-  upserts the `PullRequest` cache; `JiraConnector.handle_webhook` upserts the task.
+  connections (trackers: the payload's scope hint against each connection's bindings —
+  `app/webhooks/trackers.py`), then enqueue `process_webhook` (arq) — never process inline. Intake
+  **fails closed**: `require_valid_signature` (or the tracker's `verify_webhook` on the generic
+  `/webhooks/{provider}`) answers 403 while the endpoint's `*_WEBHOOK_SECRET` is unset and 401 on a
+  missing/forged signature — never accept an unsigned payload. `GitHubConnector.handle_webhook`
+  upserts the `PullRequest` cache; a tracker's `handle_webhook` upserts the task via the engine.
 - **OAuth 2.0 (3LO)** lives in `app/connectors/oauth.py` (provider configs, authorize-URL, code
   exchange, refresh). Flow: create a `Connection` (no token) → `GET /connectors/oauth/{id}/authorize`
   returns the provider URL (CSRF `state` is a signed short-lived JWT carrying the connection id) →
@@ -309,17 +379,22 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
     `session.delete()` 500s on PG/MySQL and silently orphans on SQLite. `tests/test_cascade_delete.py`
     verifies it under `PRAGMA foreign_keys=ON` over the full demo graph, so a missed table fails CI.
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
-  REST routes (~125 across projects/planning/proposals/connectors/team/architecture/scenarios/
-  specs/docs/delivery/outcomes). Skills are runbooks (`updating-canopy` — the session operating
-  guide every canopy session starts from, `harvesting-signals`, `persona-playbooks`,
-  `planning-roadmaps`, `writing-adrs`, `syncing-jira`, `mcp-ingest`, `capacity-planning`,
-  `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-jira-tickets`, `mapping-epic-docs`,
-  `spec-driven-development`, `daily-standup`); subagents do isolated multi-step work
-  (`jira-sync`, `gantt-planner`, `risk-analyst`, `drift-sentinel`, `scenario-architect`,
-  `delivery-enricher`, `signal-harvester`). Add a tool when Claude needs a new verb; register it
+  REST routes (~150 across projects/planning/proposals/connectors/tracking/team/architecture/
+  scenarios/specs/docs/delivery/outcomes/sprints; tracker tools are neutral — `sync_tracker`,
+  `link_tracker_item`, `ingest_work_items`, `finalize_draft_plan`, `*_project_tracking` — with
+  the `*_jira_*` names kept one release as aliases). Skills are runbooks (`updating-canopy` — the
+  session operating guide every canopy session starts from, `harvesting-signals`,
+  `persona-playbooks`, `planning-roadmaps`, `writing-adrs`, `syncing-trackers`, `mcp-ingest`,
+  `capacity-planning`, `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-tickets`,
+  `mapping-epic-docs`, `planning-sprints`, `working-the-board`, `spec-driven-development`,
+  `daily-standup`; `syncing-jira` / `drafting-jira-tickets` are one-release pointers); subagents
+  do isolated multi-step work (`tracker-sync`, `gantt-planner`, `risk-analyst`, `drift-sentinel`,
+  `scenario-architect`, `delivery-enricher`, `signal-harvester`). Add a tool when Claude needs a new verb; register it
   in `mcp_server/server.py`.
-- **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the Jira
-  reconciliation poll and a **nightly risk-snapshot sweep** (`capture_risk_snapshots` → `run_risk_snapshots`)
+- **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the tracker
+  reconciliation poll (`tracker_incremental_sync` over every enabled direct-read tracker;
+  `jira_incremental_sync` is its old name), a **nightly changelog backfill**
+  (`tracker_history_backfill`, bounded per binding via its cursor) and a **nightly risk-snapshot sweep** (`capture_risk_snapshots` → `run_risk_snapshots`)
   so the risk timeline is a real trend. Drift carries a **scan log** (`DriftScan`): `GET .../drift`
   returns `last_scanned_at` + `scan_due` (true when code bindings exist but the scan is missing or
   >7 days old), surfacing staleness so the Drift Sentinel re-scans (the server can't crawl code).

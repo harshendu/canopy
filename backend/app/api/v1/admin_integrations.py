@@ -9,8 +9,9 @@ from fastapi import APIRouter
 from sqlmodel import select
 
 from app.api.deps import AdminUser, HumanOnly, SessionDep
+from app.connectors.tracker import is_tracker, tracker_enabled
 from app.models.base import Provider
-from app.models.integration import IntegrationSetting
+from app.models.integration import Connection, IntegrationSetting
 from app.schemas.integration import IntegrationSettingRead, IntegrationSettingUpdate
 
 router = APIRouter()
@@ -22,12 +23,20 @@ async def list_integration_settings(
 ) -> list[IntegrationSettingRead]:
     rows = (await session.execute(select(IntegrationSetting))).scalars().all()
     by_provider = {r.provider: r for r in rows}
-    # Synthesize the default (direct/direct) for any provider without a stored row.
+    in_use = {
+        c.provider for c in (await session.execute(select(Connection))).scalars().all()
+    }
+    # Synthesize the default (direct/direct) for any provider without a stored row. Trackers
+    # are listed when this instance enables them (TRACKERS_ENABLED) or has a connection to one.
     return [
         IntegrationSettingRead.model_validate(
             by_provider.get(provider) or IntegrationSetting(provider=provider)
         )
         for provider in Provider
+        if not is_tracker(provider)
+        or tracker_enabled(provider)
+        or provider in in_use
+        or provider in by_provider
     ]
 
 

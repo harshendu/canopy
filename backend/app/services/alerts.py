@@ -56,6 +56,17 @@ class AlertRiskItem:
 
 
 @dataclass
+class AlertSprintTask:
+    """An open task in an active sprint, with the sprint's end — for the overrun alert."""
+
+    task_id: int
+    name: str
+    end: date | None  # the task's computed (CPM) end
+    sprint_name: str
+    sprint_end: date | None
+
+
+@dataclass
 class Alert:
     kind: str
     severity: str  # info | warning | error
@@ -75,8 +86,25 @@ def compute_alerts(
     over_allocations: list[OverAllocation],
     blockers: list[AlertBlocker] | None = None,
     register_risks: list[AlertRiskItem] | None = None,
+    sprint_tasks: list[AlertSprintTask] | None = None,
 ) -> list[Alert]:
     alerts: list[Alert] = []
+
+    # Sprints never pin the schedule (CPM dates stay computed): surface the conflict instead.
+    for st in sprint_tasks or []:
+        if st.end is not None and st.sprint_end is not None and st.end > st.sprint_end:
+            alerts.append(
+                Alert(
+                    kind="sprint_overrun",
+                    severity="warning",
+                    message=(
+                        f"'{st.name}' is scheduled to finish {st.end}, after "
+                        f"{st.sprint_name} ends ({st.sprint_end})"
+                    ),
+                    entity_type="task",
+                    entity_id=st.task_id,
+                )
+            )
 
     for blocker in blockers or []:
         severity = "error" if blocker.severity in _ERROR_BLOCKER_SEVERITIES else "warning"

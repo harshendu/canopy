@@ -78,5 +78,8 @@ class CanopyClient:
     async def patch(self, path: str, json: dict | None = None):
         return await self._request("PATCH", path, json=json)
 
+    async def put(self, path: str, json: dict | None = None):
+        return await self._request("PUT", path, json=json)
+
     async def delete(self, path: str):
         return await self._request("DELETE", path)

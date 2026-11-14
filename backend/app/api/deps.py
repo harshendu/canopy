@@ -171,6 +171,11 @@ def is_planner(user: User) -> bool:
     return _effective_role(user.role) in PLANNER_ROLES
 
 
+def is_contributor(user: User) -> bool:
+    """May write their own work (planners + engineers; not viewers) — `ContributorWriter`."""
+    return _effective_role(user.role) in PLANNER_ROLES | {UserRole.engineer}
+
+
 def require_roles(*roles: UserRole) -> Callable[[User], Awaitable[User]]:
     """Dependency factory: require the current user to hold one of `roles` (admin always
     allowed). `member` is treated as `architect` for back-compat. Reads stay open to any

@@ -95,9 +95,12 @@ PUBLIC_BASE_URL=https://<your-tunnel>.ngrok.app
 docker compose -f compose.prod.yml up -d backend
 ```
 
-- **Webhooks:** point GitHub at `https://<public>/webhooks/github` and Jira at
-  `https://<public>/webhooks/jira` (secrets: `GITHUB_WEBHOOK_SECRET` /
-  `JIRA_WEBHOOK_SECRET` in `.env`).
+- **Webhooks:** point GitHub at `https://<public>/webhooks/github`, Jira at
+  `https://<public>/webhooks/jira` and any other tracker at `https://<public>/webhooks/<provider>`
+  (e.g. Linear → `/webhooks/linear`; secrets: `GITHUB_WEBHOOK_SECRET` / `JIRA_WEBHOOK_SECRET` /
+  `<PROVIDER>_WEBHOOK_SECRET` in `.env`). The Connectors page shows each tracker's webhook URL.
+- **Trackers:** `TRACKERS_ENABLED` (default `jira`; e.g. `jira,linear,generic`, or empty for
+  native tracking only) and `TRACKING_DEFAULT_MODE` (`native`) — see USER_FLOWS §J0/§C12.
 - **OAuth apps:** register the callback `https://<public>/api/v1/connectors/oauth/callback`.
 
 With your own domain instead of ngrok: point DNS at the machine, open 80/443, set
@@ -151,8 +154,10 @@ curl -s https://<public>/mcp -X POST \
 - [ ] `DEMO_MODE=false` (verify via `/api/v1/health`)
 - [ ] `CANOPY_MCP_AUTH_TOKEN` set (the `/mcp` path is public through the tunnel)
 - [ ] MCP service account has the least role that fits (or a bounded agent token)
-- [ ] Webhook secrets set (`GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`, `EVENTS_WEBHOOK_SECRET`)
-      for each integration you use — an endpoint rejects every request (403) until its secret is set
+- [ ] Webhook secrets set (`GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`, `EVENTS_WEBHOOK_SECRET`,
+      and `<PROVIDER>_WEBHOOK_SECRET` for other trackers) for each integration you use — an
+      endpoint rejects every request (403) until its secret is set
+- [ ] `TRACKERS_ENABLED` lists only the trackers you use (empty = native tracking only)
 - [ ] The superuser password was rotated after first login (sidebar → Change password)
 
 ## Bare-metal variant (no Docker)

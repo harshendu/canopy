@@ -23,6 +23,7 @@ from app.schemas.leadership import (
     TeamMemberRead,
     TeamRead,
 )
+from app.services.sprint_service import default_method
 
 router = APIRouter()
 
@@ -47,6 +48,9 @@ async def team_reads(session: AsyncSession) -> list[TeamRead]:
                 key=t.key,
                 name=t.name,
                 description=t.description,
+                delivery_method=t.delivery_method,
+                sprint_length_days=t.sprint_length_days,
+                estimate_unit=t.estimate_unit,
                 pods=[
                     PodRead(id=p.id or 0, team_id=p.team_id, name=p.name)
                     for p in pods
@@ -78,12 +82,21 @@ async def create_team(session: SessionDep, _: AdminUser, payload: TeamCreate) ->
     existing = await session.execute(select(Team).where(Team.key == payload.key))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Team key exists")
-    team = Team(**payload.model_dump())
+    # New teams start on the deployment's default delivery method (DELIVERY_DEFAULT_METHOD).
+    team = Team(**payload.model_dump(), delivery_method=default_method())
     session.add(team)
     await session.commit()
     await session.refresh(team)
     assert team.id is not None
-    return TeamRead(id=team.id, key=team.key, name=team.name, description=team.description)
+    return TeamRead(
+        id=team.id,
+        key=team.key,
+        name=team.name,
+        description=team.description,
+        delivery_method=team.delivery_method,
+        sprint_length_days=team.sprint_length_days,
+        estimate_unit=team.estimate_unit,
+    )
 
 
 @router.post("/{team_id}/pods", response_model=PodRead, status_code=status.HTTP_201_CREATED)

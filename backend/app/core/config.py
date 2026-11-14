@@ -61,10 +61,27 @@ class Settings(BaseSettings):
 
     GITHUB_WEBHOOK_SECRET: str = ""
     JIRA_WEBHOOK_SECRET: str = ""
+    # Other trackers verify `/webhooks/{provider}` with `<PROVIDER>_WEBHOOK_SECRET`.
+    LINEAR_WEBHOOK_SECRET: str = ""
+    GENERIC_WEBHOOK_SECRET: str = ""
     EVENTS_WEBHOOK_SECRET: str = ""
 
-    # Cron cadence (minutes) for the Jira reconciliation poll.
+    # Cron cadence (minutes) of the tracker reconciliation poll (every bound tracker canopy reads
+    # directly). Unset falls back to the pre-tracker JIRA_POLL_MINUTES.
+    TRACKER_POLL_MINUTES: int | None = None
     JIRA_POLL_MINUTES: int = 10
+
+    # --- Work tracking ---
+    # Delivery method given to newly created teams (kanban | sprint | both). Projects outside
+    # any team are Kanban-only: there is no team to hold a sprint (USER_FLOWS §C11).
+    DELIVERY_DEFAULT_METHOD: str = "kanban"
+    # Which trackers can be bound to a project (comma-separated provider keys; empty = native
+    # only — no tracker can be bound). See `app/connectors/tracker.py`.
+    TRACKERS_ENABLED: str = "jira"
+    # The tracking mode a new project starts in: native (canopy owns status; the board is the
+    # source of truth) or mirrored (status comes from a bound tracker). Existing projects keep
+    # theirs; a project switches explicitly (USER_FLOWS §C1a).
+    TRACKING_DEFAULT_MODE: str = "native"
 
     # --- OAuth 2.0 (3LO) ---
     # The provider redirects here after consent; must match the app registration.
@@ -77,6 +94,8 @@ class Settings(BaseSettings):
     GITHUB_OAUTH_CLIENT_SECRET: str = ""
     GOOGLE_OAUTH_CLIENT_ID: str = ""
     GOOGLE_OAUTH_CLIENT_SECRET: str = ""
+    LINEAR_OAUTH_CLIENT_ID: str = ""
+    LINEAR_OAUTH_CLIENT_SECRET: str = ""
 
     # --- Plugin / MCP setup instructions (shown on the Agent Setup page) ---
     # A deployment (or a fork) overrides these so the copy-paste snippets point at *its* repo/
@@ -94,6 +113,10 @@ class Settings(BaseSettings):
     FILE_DROP_S3_BUCKET: str = ""  # required when FILE_DROP_BACKEND=s3 (needs the [s3] extra)
     FILE_DROP_S3_PREFIX: str = "canopy-drops"  # key prefix within the bucket
     FILE_DROP_POLL_MINUTES: int = 10
+
+    @property
+    def tracker_poll_minutes(self) -> int:
+        return self.TRACKER_POLL_MINUTES or self.JIRA_POLL_MINUTES
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod

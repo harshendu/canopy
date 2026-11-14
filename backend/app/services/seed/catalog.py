@@ -336,6 +336,9 @@ class TeamSpec:
     pods: tuple[str, ...]
     directors: tuple[str, ...] = ()  # engineer names
     managers: tuple[str, ...] = ()
+    # How the team runs work (USER_FLOWS §C11). A sprint team gets seeded sprints: three
+    # completed, one active, one planned, with story points on its projects' tasks.
+    delivery_method: str = "kanban"
 
 
 @dataclass(frozen=True)

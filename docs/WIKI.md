@@ -114,14 +114,15 @@ deep-linkable with `?tab=` (e.g. `/projects/12?tab=drift`).
 ![The project cockpit: an Overview entry plus five workspaces — Schedule (Gantt, Dependencies, Roadmap), Execution (Board, Capacity, Delivery, Burndown, Activity), Architecture (Decisions, Architecture, Drift), Governance (Risk score, Risk register, Specs, Docs, Retros) and Integrations (Plan → Jira, Jira Links)](images/cockpit.png)
 
 ### 2) The Claude Code plugin
-Install the `canopy` plugin, point it at your Canopy URL, and paste a token. You then get **120+
+Install the `canopy` plugin, point it at your Canopy URL, and paste a token. You then get **140+
 curated MCP tools** (one per architect *intent*, not a 1:1 mirror of REST routes), plus:
 
-- **14 skills** (runbooks): `updating-canopy` (the session operating guide), `harvesting-signals`,
-  `persona-playbooks`, `planning-roadmaps`, `writing-adrs`, `syncing-jira`, `mcp-ingest`,
-  `capacity-planning`, `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-jira-tickets`,
-  `mapping-epic-docs`, `spec-driven-development`, `daily-standup`.
-- **7 subagents** (isolated multi-step work): `gantt-planner`, `jira-sync`, `risk-analyst`,
+- **16 skills** (runbooks): `updating-canopy` (the session operating guide), `harvesting-signals`,
+  `persona-playbooks`, `planning-roadmaps`, `writing-adrs`, `syncing-trackers`, `mcp-ingest`,
+  `capacity-planning`, `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-tickets`,
+  `mapping-epic-docs`, `planning-sprints`, `working-the-board`, `spec-driven-development`,
+  `daily-standup` (`syncing-jira` / `drafting-jira-tickets` remain one release as pointers).
+- **7 subagents** (isolated multi-step work): `gantt-planner`, `tracker-sync`, `risk-analyst`,
   `drift-sentinel`, `scenario-architect`, `delivery-enricher`, `signal-harvester`.
 
 Both front doors call the **same REST API** (`/api/v1/...`), so anything you can click you can also
@@ -228,7 +229,11 @@ ask Claude to do — and vice-versa.
 ### Claude plugin (agentic flows)
 - **Plan a roadmap** (`planning-roadmaps` / `gantt-planner`): break down and sequence work, replan,
   and report the critical path and end date.
-- **Sync Jira** (`syncing-jira` / `jira-sync`): find the connection, sync, reconcile the plan.
+- **Sync the tracker** (`syncing-trackers` / `tracker-sync`): orient on each project's tracking,
+  sync its binding (Jira, Linear, …), reconcile the plan; bind or switch trackers with a preview a
+  human applies.
+- **Work the board** (`working-the-board`): move and pull cards, respect WIP, leave mirrored
+  statuses to their tracker.
 - **Write & shepherd decisions** (`writing-adrs`): draft, propose, transition, discuss, or import ADRs.
 - **Plan capacity** (`capacity-planning`): cross-reference capacity, the critical path, and what-if.
 - **Assess risk** (`risk-analyst`): lead with the risk breakdown, drill into burndown/critical path/

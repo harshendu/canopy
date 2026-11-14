@@ -29,6 +29,11 @@ signal, is flagged, not assumed green). See `docs/AI_NATIVE_EXECUTION.md` §5.
    - most likely to slip → `canopy:get_forecast(initiative_id=…)` (P50/P85) and the cross-project
      critical path `canopy:get_initiative_critical_path(initiative_id)` (the hand-offs).
    - outcomes off-track → `canopy:list_outcomes(scope_level="initiative", scope_id=…)`.
+   - **sprint teams** (`canopy:get_team_delivery(team_id)` → `effective_method` sprint or
+     both): the active sprint's burndown and scope added
+     (`canopy:get_sprint(sprint_id, include_report=True)`, the id from `list_sprints`) and any
+     `sprint_overrun` alerts. Kanban teams: the board's aging cards and over-limit columns
+     (`canopy:get_board(team_id=…)`).
 
 4. **Write the briefing.** Lead with the **headline** and a tight **"needs attention / needs a
    decision"** list (each with the owner and the one next action), then a one-line status, then

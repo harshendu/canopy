@@ -56,7 +56,7 @@ confirm the mapping with the admin, save it, and harvest.
    neutral.
 
 ## Notes
-- Epics must already be synced into canopy (run the `syncing-jira` skill first) — harvest
+- Epics must already be synced into canopy (run the `syncing-trackers` skill first) — harvest
   attaches to the epic's existing canopy entity and **skips** epics that aren't mapped yet.
 - Re-run this skill (steps 2–6) whenever the team adds a new doc field or changes conventions.
 - canopy reads only; it never writes the links back to Jira and never stores the documents.

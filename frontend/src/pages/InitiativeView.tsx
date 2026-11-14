@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -18,13 +18,15 @@ import DeliveryMetaBar from "../components/DeliveryMetaBar";
 import RiskRegister from "../components/RiskRegister";
 import LeadershipNotesPanel from "../components/LeadershipNotesPanel";
 import { leadTeamLabel } from "../lib/initiativeAccess";
-import JiraLinksPanel from "../components/JiraLinksPanel";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
 import { QueryError } from "../components/QueryError";
 import { Icon } from "../components/icons";
 import { useCurrentUser } from "../lib/useCurrentUser";
+import { featureOn, useFeatures } from "../lib/useFeatures";
 import { canWriteProjects, isPlanner } from "../lib/permissions";
+
+const TrackerLinksPanel = lazy(() => import("../components/TrackerLinksPanel"));
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -41,6 +43,7 @@ export default function InitiativeView() {
   const id = Number(initiativeId);
   const qc = useQueryClient();
   const { data: me } = useCurrentUser();
+  const features = useFeatures();
 
   const rollup = useQuery({
     queryKey: ["initiative-rollup", id],
@@ -146,7 +149,14 @@ export default function InitiativeView() {
       )}
       {(r.team_name || r.pods.length > 0 || leadTeam) && (
         <p className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-          {r.team_name && <span className="text-slate-700">{r.team_name} team</span>}
+          {r.team_name &&
+            (r.team_id != null ? (
+              <Link to={`/teams/${r.team_id}`} className="font-medium text-canopy-700 hover:underline">
+                {r.team_name} team
+              </Link>
+            ) : (
+              <span className="text-slate-700">{r.team_name} team</span>
+            ))}
           {r.pods.map((p) => (
             <span key={p} className="rounded bg-canopy-50 px-1.5 py-0.5 text-canopy-700">
               {p} pod
@@ -348,7 +358,11 @@ export default function InitiativeView() {
         )}
       </div>
 
-      <JiraLinksPanel targetType="initiative" targetId={id} />
+      {featureOn(features, "integrations") && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading linked tracker items…</p>}>
+          <TrackerLinksPanel targetType="initiative" targetId={id} mayLink={mayPlan} />
+        </Suspense>
+      )}
     </div>
   );
 }

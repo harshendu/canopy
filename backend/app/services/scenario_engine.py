@@ -19,7 +19,7 @@ from typing import Protocol, TypeVar
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from app.models.base import TaskType
+from app.models.base import StatusCategory, TaskType
 from app.models.project import Dependency, Holiday, Milestone, Project, Task, TaskStatusHistory
 from app.models.scenario import (
     Scenario,
@@ -55,7 +55,7 @@ from app.services.alerts import (
     OverAllocation,
     compute_alerts,
 )
-from app.services.burndown import compute_burndown, done_dates_per_task, is_done_status
+from app.services.burndown import compute_burndown
 from app.services.capacity import (
     AllocationSpan,
     AvailabilitySpan,
@@ -65,10 +65,11 @@ from app.services.capacity import (
     weekly_capacity,
 )
 from app.services.cross_project import CPDep, CPTask, cross_project_critical_path
-from app.services.flow import BoardTaskInput, build_board
+from app.services.flow import BoardTaskInput, build_board, completion_dates, flow_facts
 from app.services.forecast import monte_carlo_forecast, weekly_throughput
 from app.services.planner import SchedInput, compute_schedule, effective_duration
 from app.services.scheduling import SchedDep, SchedResult, WorkingCalendar
+from app.services.workflow import category_of_task, history_point
 
 
 class _HasRemoved(Protocol):
@@ -592,15 +593,15 @@ def scenario_alerts(m: MaterializedScenario, project_id: int) -> AlertsResponse:
 
 
 def _done_dates(m: MaterializedScenario, tasks: list[ScenarioTask]) -> list[date]:
-    """One completion date per cloned task (last done transition) from its live history — a
-    reopened-then-redone task counts once, not once per transition (added tasks have none)."""
+    """One completion date per cloned task (last transition into a done category) from its
+    live history — a reopened-then-redone task counts once (added tasks have none)."""
     rows = [
-        (t.live_task_id, h.to_status, h.changed_at.date())
+        (t.live_task_id, history_point(h))
         for t in tasks
         if t.live_task_id is not None
         for h in m.live_history.get(t.live_task_id, [])
     ]
-    return done_dates_per_task(rows)
+    return completion_dates(rows)
 
 
 def scenario_burndown(m: MaterializedScenario, project_id: int) -> BurndownResponse:
@@ -668,20 +669,20 @@ def scenario_board(m: MaterializedScenario, project_id: int) -> BoardResponse:
         assert t.id is not None
         live = m.live_tasks.get(t.live_task_id) if t.live_task_id is not None else None
         status = live.status if live is not None else None
+        category = category_of_task(live) if live is not None else None
         rows = m.live_history.get(t.live_task_id, []) if t.live_task_id is not None else []
         created = live.created_at.date() if live is not None else today
-        entered = max((h.changed_at.date() for h in rows if h.to_status == status), default=created)
-        done_dates = [h.changed_at.date() for h in rows if is_done_status(h.to_status)]
-        cycle_days = max(0, (max(done_dates) - created).days) if done_dates else None
+        facts = flow_facts(status, created, created, [history_point(h) for h in rows], today)
         inputs.append(
             BoardTaskInput(
                 id=t.id,
                 name=t.name,
                 status=status,
                 assignee_engineer_id=t.assignee_engineer_id,
-                is_done=is_done_status(status),
-                age_days=max(0, (today - entered).days),
-                cycle_days=cycle_days,
+                is_done=category == StatusCategory.done,
+                age_days=facts.age_days,
+                cycle_days=facts.cycle_days,
+                category=category,
             )
         )
     board = build_board(inputs)

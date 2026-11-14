@@ -27,7 +27,6 @@ import ExportMenu from "../components/ExportMenu";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
 import ProjectOverview from "../components/ProjectOverview";
 import RiskRegister from "../components/RiskRegister";
-import JiraLinksPanel from "../components/JiraLinksPanel";
 import TaskDetailPanel from "../components/TaskDetailPanel";
 import HolidaysEditor from "../components/HolidaysEditor";
 import { PageHeader } from "../components/PageHeader";
@@ -42,13 +41,14 @@ import {
   type ProjectTab,
 } from "../lib/projectNav";
 import { useCurrentUser } from "../lib/useCurrentUser";
+import { useProjectTeam } from "../lib/useProjectTeam";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
 import { leadTeamLabel } from "../lib/initiativeAccess";
 import { featureOn, useFeatures } from "../lib/useFeatures";
 
 // Heavy (React Flow / Recharts) — code-split.
 const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
-const FlowBoard = lazy(() => import("../components/FlowBoard"));
+const KanbanBoard = lazy(() => import("../components/board/KanbanBoard"));
 const ArchitectureView = lazy(() => import("../components/ArchitectureView"));
 const DecisionsView = lazy(() => import("../components/DecisionsView"));
 const RiskView = lazy(() => import("../components/RiskView"));
@@ -57,6 +57,8 @@ const RetrosView = lazy(() => import("../components/RetrosView"));
 const ActivityView = lazy(() => import("../components/ActivityView"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
 const DraftPlanView = lazy(() => import("../components/DraftPlanView"));
+const TrackingPanel = lazy(() => import("../components/tracking/TrackingPanel"));
+const TrackerLinksPanel = lazy(() => import("../components/TrackerLinksPanel"));
 
 export default function ProjectView() {
   const { projectId } = useParams();
@@ -107,6 +109,8 @@ export default function ProjectView() {
   });
   const canEdit = access.data?.can_edit ?? true;
   const mayPlan = isPlanner(me?.role) && canEdit;
+  // The project's team (pod → team, else initiative → team): its page, and its sprints.
+  const projectTeam = useProjectTeam(id);
   const mayWriteProject = canWriteProjects(me?.role) && canEdit;
   const mayContribute = canContribute(me?.role);
 
@@ -273,9 +277,23 @@ export default function ProjectView() {
         ]}
         title={project.data ? project.data.name : "Project"}
         subtitle={
-          access.data && (access.data.owner_name || access.data.pod_name) ? (
+          access.data && (access.data.owner_name || access.data.pod_name || projectTeam.team) ? (
             <span className="text-xs">
-              {access.data.team_name && <>{access.data.team_name} team · </>}
+              {projectTeam.team ? (
+                <>
+                  <Link
+                    to={`/teams/${projectTeam.team.id}`}
+                    className="font-medium text-canopy-700 hover:underline"
+                  >
+                    {projectTeam.team.name} team
+                  </Link>{" "}
+                  ·{" "}
+                </>
+              ) : (
+                (access.data.running_team_name ?? access.data.team_name) && (
+                  <>{access.data.running_team_name ?? access.data.team_name} team · </>
+                )
+              )}
               {access.data.pod_name && <>{access.data.pod_name} pod · </>}
               {access.data.initiative_name && <>{access.data.initiative_name} · </>}
               {access.data.owner_name && (
@@ -567,7 +585,12 @@ export default function ProjectView() {
 
       {activeTab === "board" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading board…</p>}>
-          <FlowBoard projectId={id} onTaskClick={setSelectedTaskId} />
+          <KanbanBoard
+            source={{ kind: "project", id }}
+            onTaskClick={setSelectedTaskId}
+            onTaskCreated={replanAfterEdit}
+            teamId={projectTeam.teamId}
+          />
         </Suspense>
       )}
 
@@ -610,13 +633,23 @@ export default function ProjectView() {
 
       {activeTab === "roadmap" && <RoadmapView projectId={id} />}
 
-      {activeTab === "drafts" && (
-        <Suspense fallback={<p className="text-sm text-slate-500">Loading drafts…</p>}>
-          <DraftPlanView projectId={id} />
+      {activeTab === "tracking" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading tracking…</p>}>
+          <TrackingPanel projectId={id} />
         </Suspense>
       )}
 
-      {activeTab === "jiralinks" && <JiraLinksPanel targetType="project" targetId={id} />}
+      {activeTab === "drafts" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading drafts…</p>}>
+          <DraftPlanView projectId={id} mayPlan={mayPlan} />
+        </Suspense>
+      )}
+
+      {activeTab === "trackerlinks" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading tracker links…</p>}>
+          <TrackerLinksPanel targetType="project" targetId={id} mayLink={mayPlan} />
+        </Suspense>
+      )}
 
       {activeTab === "burndown" &&
         (burndown.data ? (

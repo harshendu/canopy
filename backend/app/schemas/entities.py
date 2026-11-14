@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
@@ -11,11 +11,13 @@ from app.models.base import (
     BlockerSeverity,
     CriterionStatus,
     DecisionRule,
+    DeliveryMethod,
     DependencyType,
     DocKind,
     DocLinkHealth,
     DocScope,
     DocSource,
+    EstimateUnit,
     OutcomeScope,
     OutcomeStatus,
     ProjectHealth,
@@ -28,7 +30,10 @@ from app.models.base import (
     RiskScope,
     RiskStatus,
     SpecStatus,
+    SprintState,
+    StatusCategory,
     TaskType,
+    WipEnforcement,
     WriteStrategy,
 )
 from app.schemas.auth import UserRead
@@ -50,6 +55,9 @@ class ProjectCreate(BaseModel):
     start_date: date | None = None
     target_date: date | None = None
     tags: list[str] = []
+    # native | mirrored; omitted = TRACKING_DEFAULT_MODE. A mirrored project shows "not bound"
+    # until a tracker is bound (the project's Tracking panel / switch, §C12).
+    tracking_mode: Literal["native", "mirrored"] | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -67,6 +75,8 @@ class ProjectUpdate(BaseModel):
     tags: list[str] | None = None
     health: ProjectHealth | None = None
     status_note: str | None = None
+    # Prefix of native task keys (`<prefix>-<n>`); empty string clears it (the key is used).
+    task_key_prefix: str | None = None
 
 
 class ProjectRead(BaseModel):
@@ -88,6 +98,9 @@ class ProjectRead(BaseModel):
     health: ProjectHealth | None = None
     status_note: str | None = None
     status_updated_at: datetime | None = None
+    # Work tracking: native (canopy owns status) | mirrored (an external tracker does).
+    tracking_mode: str = "native"
+    task_key_prefix: str | None = None
 
 
 class HolidayCreate(BaseModel):
@@ -136,10 +149,11 @@ class TaskCreate(BaseModel):
     # A "start no earlier than" (SNET) scheduling constraint — the CPM pin. Distinct from `start`,
     # which is the computed output (overwritten each replan). Set this to hold a task's start.
     constraint_start: date | None = None
-    # NB: `status` is deliberately NOT writable here — it is the Jira-mirrored, read-only field
-    # (Source-of-truth boundary). Writing it directly silently corrupts the status-derived views
-    # (board/aging, burndown, forecast, DORA) with no TaskStatusHistory row. The proposal and MCP
-    # write paths already exclude it; the direct REST route now matches them.
+    # The first status of a new (canopy-owned) task: a column of the project's workflow, else the
+    # first `todo` column. It goes through `workflow.record_transition` like every status write,
+    # so the creation is in the task's history. Changing it later is `POST /tasks/{id}/move` —
+    # `TaskUpdate` deliberately has no `status` (a PATCH would skip history and ownership).
+    status: str | None = None
     deadline: date | None = None
     assignee_engineer_id: int | None = None
     spec_id: int | None = None
@@ -147,6 +161,7 @@ class TaskCreate(BaseModel):
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
     estimate_pessimistic: int | None = None
+    story_points: float | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -159,7 +174,7 @@ class TaskUpdate(BaseModel):
     duration: int | None = None
     percent_complete: float | None = None
     constraint_start: date | None = None  # SNET pin (see TaskCreate); `start` is computed output
-    # `status` is Jira-mirrored + read-only — not writable via this route (see TaskCreate).
+    # No `status`: a status change is a move (`POST /tasks/{id}/move`) — see TaskCreate.
     deadline: date | None = None
     assignee_engineer_id: int | None = None
     spec_id: int | None = None
@@ -167,6 +182,9 @@ class TaskUpdate(BaseModel):
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
     estimate_pessimistic: int | None = None
+    # Sprint planning size. (Sprint *membership* is not a PATCH field: it is
+    # `POST/DELETE /sprints/{id}/tasks`, which records the move.)
+    story_points: float | None = None
 
 
 class TaskRead(BaseModel):
@@ -187,7 +205,12 @@ class TaskRead(BaseModel):
     is_critical: bool
     total_float: int
     status: str | None
+    status_category: str | None = None
+    status_owner: str = "canopy"
+    key: str | None = None
     sprint: str | None
+    sprint_id: int | None = None
+    story_points: float | None = None
     deadline: date | None
     assignee_engineer_id: int | None
     spec_id: int | None = None
@@ -228,8 +251,65 @@ class TaskStatusHistoryRead(BaseModel):
     task_id: int
     from_status: str | None
     to_status: str | None
+    to_category: str | None = None
     changed_at: datetime
     author: str | None
+    source: str = "sync"
+
+
+# --- Board moves + workflows (USER_FLOWS §C9) ---
+class TaskMoveRequest(BaseModel):
+    """Move a card. `to_status` changes the status (canopy-owned tasks only); omit it to only
+    reorder. Placement: between `after_task_id` and `before_task_id` (either may be omitted),
+    else at the `position` end of the column. `expected_status` guards against a lost update."""
+
+    to_status: str | None = None
+    after_task_id: int | None = None
+    before_task_id: int | None = None
+    position: Literal["top", "bottom"] = "bottom"
+    expected_status: str | None = None
+
+
+class TaskMoveResponse(BaseModel):
+    task: TaskRead
+    changed: bool
+    warnings: list[str] = []
+
+
+class WorkflowColumnRead(BaseModel):
+    name: str
+    category: StatusCategory
+    position: int
+    wip_limit: int | None = None
+
+
+class WorkflowRead(BaseModel):
+    id: int | None
+    # Where the columns are defined: project | team | template | default.
+    scope: str
+    team_id: int | None
+    project_id: int | None
+    name: str
+    wip_enforcement: WipEnforcement
+    # True when the asked-for project/team has no workflow of its own and uses this one.
+    inherited: bool
+    columns: list[WorkflowColumnRead]
+
+
+class WorkflowColumnIn(BaseModel):
+    name: str
+    category: StatusCategory
+    wip_limit: int | None = None
+    # Set to rename an existing column; its canopy-owned tasks keep their place.
+    previous_name: str | None = None
+
+
+class WorkflowUpdate(BaseModel):
+    name: str = "Default"
+    wip_enforcement: WipEnforcement = WipEnforcement.warn
+    columns: list[WorkflowColumnIn]
+    # Where the canopy-owned tasks of a removed column go: {"Old column": "New column"}.
+    move_tasks_to: dict[str, str] = {}
 
 
 # --- Dependency ---
@@ -603,6 +683,138 @@ class JiraLinkSyncResult(BaseModel):
     notes: list[str] = []
 
 
+class TrackerLinkCreate(BaseModel):
+    connection_id: int  # the tracker connection to read the item(s) through
+    root_key: str  # the root item to link, e.g. "PROJ-123" (Jira) or "ENG-42" (Linear)
+    target_type: Literal["project", "initiative"]
+    target_id: int
+
+
+class TrackerLinkRead(BaseModel):
+    """A tracker link: a subtree binding (one root item + its descendants → a target)."""
+
+    id: int
+    connection_id: int
+    provider: str
+    root_id: str
+    root_key: str
+    root_type: str | None
+    target_type: str
+    target_id: int
+    url: str | None = None
+    last_synced_at: datetime | None
+    created_at: datetime
+
+
+class TrackerLinkSyncResult(BaseModel):
+    """What a link create / resync mapped into canopy (idempotent via ExternalRef)."""
+
+    link: TrackerLinkRead
+    projects_created: int = 0
+    projects_linked: int = 0
+    tasks_created: int = 0
+    tasks_updated: int = 0
+    skipped: int = 0
+    created_project_ids: list[int] = []
+    notes: list[str] = []
+
+
+# --- Project tracking (native | mirrored, the binding, switching) — USER_FLOWS §C12 ---
+class TrackerBindingRead(BaseModel):
+    id: int
+    connection_id: int
+    connection_name: str | None = None
+    provider: str
+    label: str
+    scope_kind: str
+    scope: dict[str, Any]
+    mapping: dict[str, Any]
+    # The tracker's statuses ({name, category, position}) — the mirrored board's columns.
+    status_map: list[dict[str, Any]]
+    sync_iterations: bool
+    active: bool
+    last_synced_at: datetime | None
+    detached_at: datetime | None
+    created_at: datetime
+
+
+class ProjectTrackingRead(BaseModel):
+    project_id: int
+    mode: str  # native | mirrored
+    # The active binding; None for a native project (or a mirrored one not bound yet).
+    binding: TrackerBindingRead | None
+    # Bound only through a pre-binding connection's `config.project_id` (no binding row yet).
+    legacy_connection_id: int | None = None
+    legacy_provider: str | None = None
+    legacy_label: str | None = None
+    history: list[TrackerBindingRead]  # trackers this project used before (detached)
+    capabilities: dict[str, bool] | None = None  # the bound tracker's
+    canopy_owned: int  # tasks whose status canopy owns
+    tracker_owned: int  # tasks whose status the tracker owns
+    can_edit: bool
+    trackers_enabled: list[str]
+
+
+class ProjectTrackingUpdate(BaseModel):
+    """Adjust the active binding in place (same connection). Changing the scope resets the
+    watermark and status map, so the next sync is a full one."""
+
+    scope: dict[str, Any] | None = None
+    mapping: dict[str, Any] | None = None
+    sync_iterations: bool | None = None
+
+
+class TrackingSwitchRequest(BaseModel):
+    to_mode: Literal["native", "mirrored"]
+    connection_id: int | None = None  # mirrored: the tracker connection
+    scope: dict[str, Any] = {}  # mirrored: where in the tracker (its scope_schema)
+    mapping: dict[str, Any] = {}  # epic types, estimate field…
+    sync_iterations: bool = False  # mirror the tracker's sprints/cycles (team projects)
+    strategy: Literal["keep_separate", "match", "publish"] = "keep_separate"
+    # Preview by default: nothing changes until a human applies with dry_run=false.
+    dry_run: bool = True
+
+
+class TrackingSwitchActionRead(BaseModel):
+    task_id: int
+    name: str
+    key: str | None
+    action: str  # keep | adopt | publish | release | remap
+    detail: str | None = None
+
+
+class TrackingPublishRead(BaseModel):
+    created: int
+    skipped: int
+    failed: int
+    errors: list[str]
+
+
+class TrackingSwitchResult(BaseModel):
+    project_id: int
+    from_mode: str
+    to_mode: str
+    from_provider: str | None
+    to_provider: str | None
+    strategy: str
+    dry_run: bool
+    applied: bool
+    counts: dict[str, int]
+    actions: list[TrackingSwitchActionRead]
+    warnings: list[str]
+    binding: TrackerBindingRead | None = None
+    published: TrackingPublishRead | None = None
+    synced_created: int | None = None
+    synced_updated: int | None = None
+
+
+class TrackingSyncResult(BaseModel):
+    provider: str
+    created: int
+    updated: int
+    skipped: int
+
+
 # --- Gantt / scheduling ---
 class GanttTask(BaseModel):
     id: int
@@ -659,6 +871,24 @@ class BoardTaskRead(BaseModel):
     is_done: bool
     age_days: int
     aging: bool
+    # Card detail (optional so the scenario board, which renders a projection, can omit it).
+    project_id: int | None = None
+    key: str | None = None
+    status_category: str | None = None
+    # "canopy", or the provider key of the tracker that owns this card's status.
+    status_owner: str = "canopy"
+    # The card's status can be changed in canopy (it is canopy-owned).
+    movable: bool = True
+    external_url: str | None = None
+    rank: int = 0
+    parent_id: int | None = None
+    blocked: bool = False
+    is_critical: bool = False
+    deadline: date | None = None
+    tags: list[str] = []
+    sprint_id: int | None = None
+    story_points: float | None = None
+    duration: int | None = None  # working days — the estimate of teams sized in days
 
 
 class BoardLaneRead(BaseModel):
@@ -666,6 +896,24 @@ class BoardLaneRead(BaseModel):
     is_done: bool
     wip: int
     tasks: list[BoardTaskRead]
+    category: str | None = None
+    position: int = 0
+    wip_limit: int | None = None
+    # Measured against `scope_wip` when set — the same count the move check enforces.
+    over_limit: bool = False
+    # False = a status found on a card that the workflow does not name (e.g. a mirrored status).
+    in_workflow: bool = True
+    # Open cards in this column across the WIP scope (every project sharing these columns —
+    # e.g. the team's), which can exceed `wip` when the board shows only part of the scope.
+    scope_wip: int | None = None
+
+
+class BoardViewer(BaseModel):
+    """What the caller may do, so the client can tell which cards it can move."""
+
+    can_plan: bool = False  # may move any canopy-owned card and edit the workflow
+    engineer_id: int | None = None  # may move cards assigned to this engineer (or pull one)
+    native_enabled: bool = True  # feature `tracking.native`
 
 
 class BoardResponse(BaseModel):
@@ -673,6 +921,158 @@ class BoardResponse(BaseModel):
     lanes: list[BoardLaneRead]
     cycle_time_p85_days: int | None
     aging_count: int
+    mode: str = "native"
+    wip_enforcement: str = "warn"
+    viewer: BoardViewer | None = None
+    # Set on a team board (`project_id` is then 0); `sprint_id` = the sprint being shown.
+    team_id: int | None = None
+    sprint_id: int | None = None
+    # The delivery method in effect for these cards' team (kanban | sprint | both).
+    delivery_method: str = "kanban"
+
+
+# --- Delivery method + sprints (USER_FLOWS §C11) ---
+class TeamDeliveryRead(BaseModel):
+    team_id: int
+    delivery_method: DeliveryMethod  # what the team chose
+    effective_method: DeliveryMethod  # what applies (kanban when `tracking.sprints` is off)
+    sprint_length_days: int
+    estimate_unit: EstimateUnit
+    sprints_enabled: bool
+    can_manage: bool  # the caller may change these settings and run the team's sprints
+    active_sprint_id: int | None = None
+
+
+class TeamDeliveryUpdate(BaseModel):
+    delivery_method: DeliveryMethod | None = None
+    sprint_length_days: int | None = None
+    estimate_unit: EstimateUnit | None = None
+
+
+class SprintRead(BaseModel):
+    model_config = _read
+    id: int
+    team_id: int
+    pod_id: int | None = None
+    name: str
+    goal: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    state: SprintState
+    # "canopy", or the provider key of the tracker it is mirrored from (then read-only).
+    owner: str = "canopy"
+    estimate_unit: str | None = None
+    committed: float | None = None
+    completed: float | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    # Live counts (current members).
+    task_count: int = 0
+    done_count: int = 0
+    scope: float = 0.0  # current members' estimate, in `unit`
+    done: float = 0.0
+    unit: str = "count"
+
+
+class SprintCreate(BaseModel):
+    name: str | None = None  # defaults to "Sprint <n>"
+    goal: str | None = None
+    start_date: date | None = None  # defaults: the day after the last sprint ends
+    end_date: date | None = None  # defaults: start + the team's sprint length
+    pod_id: int | None = None  # a pod-scoped sprint (pods that plan separately)
+
+
+class SprintUpdate(BaseModel):
+    name: str | None = None
+    goal: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class SprintTasksRequest(BaseModel):
+    task_ids: list[int]
+
+
+class SprintCompleteRequest(BaseModel):
+    # Where unfinished work goes: the backlog, or `next_sprint_id`.
+    carry_over: Literal["next", "backlog"] = "backlog"
+    next_sprint_id: int | None = None
+
+
+class EngineerCapacityRead(BaseModel):
+    engineer_id: int
+    name: str
+    person_days: float
+
+
+class SprintCapacityRead(BaseModel):
+    person_days: float  # allocated capacity over the sprint's working days
+    engineers: list[EngineerCapacityRead] = []
+    velocity_mean: float | None = None  # the team's mean completed estimate per sprint
+    committed: float = 0.0  # current members' estimate (open work)
+    unit: str = "count"
+    # Planned beyond capacity (days unit: vs person-days; points/count: vs mean velocity).
+    # Warns, never blocks. None when there is nothing to compare against.
+    over_capacity: bool | None = None
+
+
+class SprintDetail(SprintRead):
+    tasks: list[TaskRead] = []
+    capacity: SprintCapacityRead | None = None
+
+
+class BurndownDayRead(BaseModel):
+    day: date
+    remaining: float
+    ideal: float
+    scope_added: float
+
+
+class SprintReportRead(BaseModel):
+    sprint: SprintRead
+    unit: str
+    burndown: list[BurndownDayRead]
+    committed: float
+    completed: float
+    scope_added: float
+    scope_removed: float
+    carried_over: float
+    reliability: float | None = None  # completed ÷ committed
+
+
+class VelocityPointRead(BaseModel):
+    sprint_id: int
+    name: str
+    end_date: date | None
+    committed: float
+    completed: float
+    reliability: float | None
+
+
+class SprintForecastRead(BaseModel):
+    sufficient: bool
+    remaining: float
+    history_sprints: int
+    p50_sprints: int | None = None
+    p85_sprints: int | None = None
+    p50_date: date | None = None
+    p85_date: date | None = None
+    reason: str | None = None
+
+
+class VelocityRead(BaseModel):
+    """Team-level only — never per engineer (Goodhart's law)."""
+
+    team_id: int
+    unit: str
+    points: list[VelocityPointRead]
+    mean: float | None
+    low: float | None
+    high: float | None
+    mean_reliability: float | None
+    sufficient: bool
+    reason: str | None = None
+    forecast: SprintForecastRead
 
 
 # --- Blockers (flagged impediments) ---
@@ -1263,6 +1663,10 @@ class DraftTaskRead(BaseModel):
     sort_order: int
     jira_issue_id: str | None
     jira_key: str | None
+    external_provider: str | None = None
+    external_id: str | None = None
+    external_key: str | None = None
+    task_id: int | None = None
 
 
 class DraftPlanDetail(DraftPlanRead):
@@ -1280,6 +1684,25 @@ class DraftPushTaskResult(BaseModel):
     action: str  # created | updated | failed
     jira_key: str | None = None
     error: str | None = None
+    external_key: str | None = None  # the tracker item's key (any tracker)
+    task_id: int | None = None  # the canopy task (native finalise)
+
+
+class DraftFinalizeRequest(BaseModel):
+    # Push into this tracker connection. Omit to follow the project's tracking mode: a native
+    # project gets canopy tasks; a mirrored one pushes to its bound tracker.
+    connection_id: int | None = None
+
+
+class DraftFinalizeResult(BaseModel):
+    plan_id: int
+    mode: Literal["native", "tracker"]
+    provider: str | None = None
+    connection_id: int | None = None
+    created: int
+    updated: int
+    failed: int
+    results: list[DraftPushTaskResult]
 
 
 class DraftPushResult(BaseModel):
@@ -1293,22 +1716,32 @@ class DraftPushResult(BaseModel):
 
 # --- MCP-orchestrated ingest (Claude pushes external data into canopy idempotently) ---
 class IngestIssue(BaseModel):
-    """A normalized external issue (e.g. a Jira issue Claude read with its own connector)."""
+    """A normalized tracker item (e.g. a Jira/Linear issue Claude read with its own connector,
+    or a row of a generic tracker's export)."""
 
-    external_id: str  # provider issue id (opaque, stable) — the ExternalRef key
+    external_id: str  # provider item id (opaque, stable) — the ExternalRef key
     external_key: str | None = None  # human key, e.g. "PROJ-123"
     summary: str
-    status: str | None = None  # mirrored read-only (Jira stays status owner)
+    status: str | None = None  # mirrored read-only (the tracker stays the status owner)
+    # todo | in_progress | done | cancelled, when the tracker says; else derived from the name.
+    status_category: Literal["todo", "in_progress", "done", "cancelled"] | None = None
     issue_type: str | None = None  # epic types become summary tasks
+    # epic | item | subitem — overrides `issue_type` when given (trackers without type names).
+    kind: Literal["epic", "item", "subitem"] | None = None
     parent_external_id: str | None = None
     updated: str | None = None  # remote "updated" timestamp, for staleness checks
     # Upstream assignee → canopy Engineer (matched/created); omitted = leave ownership alone.
     assignee_account_id: str | None = None
     assignee_name: str | None = None
+    assignee_email: str | None = None
+    estimate: float | None = None  # story points / estimate, when the tracker has one
+    url: str | None = None  # the item's browse URL, when known
 
 
 class IngestIssuesRequest(BaseModel):
     issues: list[IngestIssue]
+    # The bound project to ingest into, when the connection feeds several.
+    project_id: int | None = None
 
 
 class IngestPullRequest(BaseModel):
@@ -1320,6 +1753,7 @@ class IngestPullRequest(BaseModel):
     url: str | None = None
     author: str | None = None
     updated: str | None = None
+    branch: str | None = None  # head branch — its issue key (e.g. "feat/SHOP-12-x") links a task
 
 
 class IngestPullRequestsRequest(BaseModel):
@@ -1343,8 +1777,14 @@ class FileIngestResult(IngestResult):
 
 # --- Draft push write-back (write_strategy=mcp: Claude creates tickets, records ids here) ---
 class DraftPushRecord(BaseModel):
+    """One item Claude created in a tracker for a draft task (write_strategy=mcp). Either the
+    generic `external_id`/`external_key` (+ `provider`) or the legacy `jira_*` pair."""
+
     draft_task_id: int
-    jira_issue_id: str
+    external_id: str | None = None
+    external_key: str | None = None
+    provider: str | None = None
+    jira_issue_id: str | None = None
     jira_key: str | None = None
 
 
@@ -1377,6 +1817,13 @@ class MyTodayResponse(BaseModel):
     decisions_to_push: list[ADRRead]  # owned proposed/under_discussion
 
 
+class MySprintRead(BaseModel):
+    """An active sprint the caller has work in, with just their tasks."""
+
+    sprint: SprintRead
+    tasks: list[TaskRead]
+
+
 class MyWorkspaceResponse(BaseModel):
     user: UserRead
     engineer: EngineerRead | None
@@ -1384,6 +1831,7 @@ class MyWorkspaceResponse(BaseModel):
     owned_decisions: list[ADRRead]
     stakeholder_decisions: list[ADRRead]
     blockers: list[BlockerRead] = []  # open blockers on my tasks or raised by me
+    my_sprints: list[MySprintRead] = []  # "My sprint": my tasks in active sprints
 
 
 # --- Document graph (link, don't store) ---
@@ -1436,11 +1884,21 @@ class JiraIssueLink(BaseModel):
     url: str | None  # browse URL, when the connection exposes a site (None for OAuth API bases)
 
 
+class TrackerItemLink(BaseModel):
+    """The tracker item behind a task (any tracker)."""
+
+    provider: str  # jira | linear | generic …
+    label: str  # the tracker's display name, e.g. "Jira"
+    key: str  # human key, e.g. "SHOP-101" / "ENG-42"
+    url: str | None  # browse URL, when the tracker exposes a site
+
+
 class TaskExternalLinksRead(BaseModel):
-    """Everything that links a task out to the systems that own the work: its Jira issue,
+    """Everything that links a task out to the systems that own the work: its tracker item,
     the GitHub PRs implementing it, and the design docs (GitHub/Drive) scoped to it."""
 
-    jira: JiraIssueLink | None
+    tracker: TrackerItemLink | None = None
+    jira: JiraIssueLink | None = None  # deprecated alias of `tracker` when it is Jira
     pull_requests: list[PullRequestRead]
     docs: list[DocReferenceRead]
 
@@ -1593,6 +2051,7 @@ class FlowMetricsRead(BaseModel):
     aging_wip: int
     sufficient: bool
     reason: str | None = None
+    lead_time_median_days: float | None = None
 
 
 class DeliveryMetricsRead(BaseModel):

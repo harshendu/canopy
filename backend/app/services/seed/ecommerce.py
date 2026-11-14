@@ -238,6 +238,7 @@ TEAMS: tuple[TeamSpec, ...] = (
         "the marketplace and site reliability.",
         ("Orders & Inventory", "Delivery", "Marketplace", "Platform"),
         directors=("Claire Dubois",), managers=("Hana Sato",),
+        delivery_method="both",
     ),
 )
 
@@ -676,7 +677,8 @@ ECOMMERCE = Dataset(
     cross_project_handoffs=CROSS_PROJECT_HANDOFFS, scenarios=SCENARIOS,
     flagship_key="ONEPAGE", baseline_inflight_task="Integrate tokenized payments",
     github_repo="example-shop/checkout", jira_project_key="SHOP",
-    jira_epic=("930000", "SHOP-100"),
+    # The epic the offline Jira mock serves (app/connectors/demo.py), so Resync works.
+    jira_epic=("930200", "SHOP-200"),
     jira_task_keys=(("930101", "SHOP-101", "Checkout funnel analysis"),
                     ("930102", "SHOP-102", "One-page checkout UX"),
                     ("930103", "SHOP-103", "Checkout session service"),

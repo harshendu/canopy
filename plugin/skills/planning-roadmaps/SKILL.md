@@ -7,7 +7,7 @@ description: Turns a high-level initiative or spec into a canopy plan — projec
 
 Use this when the architect describes work to be planned ("plan the auth rewrite",
 "lay out Q3", "what's our critical path?"). canopy owns the schedule; Jira owns the
-tickets (see the `syncing-jira` skill to pull real epics/stories first).
+tickets (see the `syncing-trackers` skill to pull real epics/stories first).
 
 ## Direct build vs staged proposal (decide first)
 

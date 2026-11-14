@@ -129,13 +129,43 @@ migration must run forward on all three.
   removes something a user (or Claude) interacts with — an endpoint, page, tab, MCP tool, skill or
   subagent — updates the matching flow in the same PR, including its *Known UI gaps* / *Not built*
   notes.
-- **Respect the sources of truth.** Jira owns tickets and their status: canopy syncs *from* Jira
-  and never writes status back. Its only Jira write is pushing the *content* of an architect-reviewed
-  draft plan. GitHub and Google Drive are read-only, except for uploading export snapshots to Drive.
+- **Respect the sources of truth.** Each task has one status owner: canopy for a native project's
+  tasks, or the work tracker (Jira, Linear, …) a mirrored task comes from. canopy syncs *from* a
+  tracker and never writes status back; its only tracker writes are item *content* — a reviewed
+  draft plan, or publishing a project's open tasks when it switches to a tracker. GitHub and
+  Google Drive are read-only, except for uploading export snapshots to Drive.
 - **Gate new features.** New surfaces get a feature flag in `app/services/features.py` (or are
   explicitly core) — see *Feature gates* in `CLAUDE.md`.
 - **Extend the demo seed** (`backend/app/services/seed/`) when you add a feature, so demo mode and the
   e2e suite exercise it. Demo data must stay fictional.
+
+### Adding a work tracker
+
+A tracker (Jira, Linear and a generic, ingest-only tracker ship today) is **one module**; the sync
+engine, bindings, board, switching, MCP tools and UI work for it unchanged (USER_FLOWS §J0).
+
+1. Add a member to `Provider` in `backend/app/models/base.py` (provider columns are VARCHAR — no
+   migration).
+2. Create `backend/app/connectors/<provider>.py` with a `WorkTracker` subclass decorated with
+   `@register_tracker(Provider.<provider>)`, and import it in `app/connectors/__init__.py`:
+   - `label`, `capabilities` (`TrackerCapabilities` — declare only what you implement),
+     `config_schema` (the connection form) and `scope_schema` (a binding's scope), as Pydantic
+     models; `scope_selector_keys` (which scope keys select *which items*);
+   - `_client()` (auth + base URL) and, for what you declared: `fetch_items` (with a watermark),
+     `fetch_item`/`fetch_subtree`, `list_statuses` (each status with its category
+     `todo|in_progress|done|cancelled` and order), `fetch_status_changes`, `fetch_iterations`,
+     `create_item`/`update_item` (**content only — there is no status write, keep it that way**),
+     `webhook_signature_header` (+ `verify_webhook` if the scheme isn't HMAC-SHA256 hex),
+     `webhook_scope_hint`, `parse_webhook`, and `browse_url`.
+   Normalize into `app/services/tracker_types.py`; never touch canopy models from the tracker.
+3. Webhooks arrive at `/webhooks/<provider>`, verified with `<PROVIDER>_WEBHOOK_SECRET` (add it to
+   `app/core/config.py` and `.env.example`). OAuth: add the provider to `app/connectors/oauth.py`.
+4. Serve it offline in demo mode: a handler in `app/connectors/demo.py`.
+5. `tests/test_tracker_layer.py` runs the tracker contract over every registered tracker
+   automatically (declared capabilities implemented, no status write, webhook verification fails
+   closed) and the import boundary; add tests for your normalization and API calls against the
+   demo mock.
+6. Enable it with `TRACKERS_ENABLED`, and document it in `docs/USER_FLOWS.md` (§J0).
 
 ## Pull requests
 

@@ -1,4 +1,4 @@
-"""OAuth 2.0 (3LO) machinery for Jira, GitHub, and Google.
+"""OAuth 2.0 (3LO) machinery for Jira, GitHub, Google and Linear.
 
 Builds authorize URLs, exchanges authorization codes for tokens, and refreshes
 access tokens. CSRF `state` is a short-lived signed JWT carrying the connection id,
@@ -79,6 +79,17 @@ def provider_config(provider: Provider) -> OAuthProviderConfig:
             client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
             client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
             extra_authorize_params={"access_type": "offline", "prompt": "consent"},
+        )
+    if provider == Provider.linear:
+        return OAuthProviderConfig(
+            authorize_url="https://linear.app/oauth/authorize",
+            token_url="https://api.linear.app/oauth/token",
+            # read for sync; write to create/update issue content from a reviewed draft plan
+            # (never a state change).
+            scopes="read,write",
+            client_id=settings.LINEAR_OAUTH_CLIENT_ID,
+            client_secret=settings.LINEAR_OAUTH_CLIENT_SECRET,
+            extra_authorize_params={"prompt": "consent"},
         )
     raise ValueError(f"Unsupported OAuth provider: {provider}")
 

@@ -1,3 +1,4 @@
+import re
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
@@ -33,6 +34,8 @@ from app.services.capacity import AvailabilitySpan
 from app.services.cascade import delete_project_cascade
 from app.services.drift import level as drift_level
 from app.services.metadata import normalize_tags
+from app.services.org import project_team_id
+from app.services.tracking import default_tracking_mode
 
 router = APIRouter()
 
@@ -204,6 +207,7 @@ async def create_project(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project key exists")
     data = payload.model_dump()
     data["tags"] = normalize_tags(data.get("tags") or [])
+    data["tracking_mode"] = payload.tracking_mode or default_tracking_mode()
     project = Project(**data)
     session.add(project)
     await session.commit()
@@ -284,6 +288,23 @@ async def project_summary(
     )
 
 
+_KEY_PREFIX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,15}$")
+
+
+def _clean_key_prefix(value: object) -> str | None:
+    """A task-key prefix: 1-16 letters/digits/underscores starting with a letter, stored upper
+    case; blank clears it (native keys then use the project key)."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if not _KEY_PREFIX.match(text):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="task_key_prefix must be 1-16 letters, digits or _, starting with a letter",
+        )
+    return text.upper()
+
+
 async def _validate_org_refs(
     session: AsyncSession, pod_id: int | None, owner_engineer_id: int | None
 ) -> None:
@@ -321,6 +342,9 @@ async def project_access(session: SessionDep, user: CurrentUser, project_id: int
         if initiative is not None and initiative.team_id is not None
         else None
     )
+    # The team that runs the project (its pod's team first) — what boards and sprints use.
+    running = await project_team_id(session, project)
+    running_team = await session.get(Team, running) if running is not None else None
     return ProjectAccess(
         project_id=project_id,
         initiative_id=project.initiative_id,
@@ -330,6 +354,8 @@ async def project_access(session: SessionDep, user: CurrentUser, project_id: int
         owner_name=owner.name if owner is not None else None,
         pod_name=pod.name if pod is not None else None,
         team_name=team.name if team is not None else None,
+        team_id=running,
+        running_team_name=running_team.name if running_team is not None else None,
     )
 
 
@@ -347,6 +373,8 @@ async def update_project(
     await _validate_org_refs(session, data.get("pod_id"), data.get("owner_engineer_id"))
     if "tags" in data and data["tags"] is not None:
         data["tags"] = normalize_tags(data["tags"])
+    if "task_key_prefix" in data:
+        data["task_key_prefix"] = _clean_key_prefix(data["task_key_prefix"])
     for field, value in data.items():
         setattr(project, field, value)
     if "health" in data or "status_note" in data:

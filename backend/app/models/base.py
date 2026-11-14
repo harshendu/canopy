@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
+import sqlalchemy as sa
 from sqlmodel import Field, SQLModel
 
 
@@ -20,6 +21,64 @@ class TaskType(StrEnum):
     task = "task"
     milestone = "milestone"
     summary = "summary"  # a summary task acts as a phase / workstream in the WBS
+
+
+# --- Work tracking (status ownership, categories, workflows) ---
+# These closed sets are stored as plain VARCHAR columns (no native DB enum type) and validated
+# by these StrEnums at the API boundary — the pattern `Milestone.status` already uses — so
+# adding a value never needs a dialect-branched enum migration.
+class TrackingMode(StrEnum):
+    """Who owns a project's work items: canopy itself, or an external tracker it mirrors."""
+
+    native = "native"
+    mirrored = "mirrored"
+
+
+class StatusCategory(StrEnum):
+    """What a status *means* — every flow metric reads this, never the display name."""
+
+    todo = "todo"  # not started
+    in_progress = "in_progress"  # started, not finished (counts as WIP)
+    done = "done"  # completed — counts as throughput
+    cancelled = "cancelled"  # dropped — leaves WIP, never counts as throughput
+
+
+class WipEnforcement(StrEnum):
+    off = "off"
+    warn = "warn"  # the move succeeds and reports `wip_limit_exceeded`
+    block = "block"  # the move is refused with 409 `wip_limit_reached`
+
+
+class StatusSource(StrEnum):
+    """Where a `TaskStatusHistory` row came from (approximate rows can later be replaced)."""
+
+    canopy = "canopy"  # a move made in canopy (board, API, MCP, proposal apply)
+    sync = "sync"  # observed by a sync/webhook/ingest; dated by the item's `updated`
+    backfill = "backfill"  # replayed from a tracker's changelog (exact transition times)
+
+
+# The `status_owner` value of a task whose status canopy owns (else a provider key, e.g. "jira").
+CANOPY_OWNER = "canopy"
+
+
+class DeliveryMethod(StrEnum):
+    """How a team runs its work, across all of its projects (USER_FLOWS §C11)."""
+
+    kanban = "kanban"  # continuous flow: WIP limits, cycle time, weekly forecast
+    sprint = "sprint"  # time boxes: planning, sprint burndown, velocity
+    both = "both"  # sprints on top of a WIP-limited board
+
+
+class EstimateUnit(StrEnum):
+    points = "points"  # Task.story_points
+    days = "days"  # Task.duration (working days)
+    item_count = "count"  # every task counts 1 (member name avoids shadowing str.count)
+
+
+class SprintState(StrEnum):
+    planned = "planned"
+    active = "active"
+    completed = "completed"
 
 
 class DependencyType(StrEnum):
@@ -73,6 +132,14 @@ class Provider(StrEnum):
     jira = "jira"
     github = "github"
     gdrive = "gdrive"
+    # Work trackers beyond Jira (USER_FLOWS §J0) — opt-in through TRACKERS_ENABLED.
+    linear = "linear"
+    generic = "generic"
+
+
+# `provider` columns are VARCHAR (not a native DB enum), so adding a tracker is one enum member
+# + one module — no dialect-branched enum migration (USER_FLOWS §J0).
+ProviderType = sa.Enum(Provider, native_enum=False, create_constraint=False, length=32)
 
 
 class ReadStrategy(StrEnum):

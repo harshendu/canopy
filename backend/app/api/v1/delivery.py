@@ -1,9 +1,10 @@
 """Delivery metrics — DORA + flow, at project and initiative scope.
 
-Reuses the existing flow building blocks (the board's WIP/aging, `weekly_throughput`,
-`is_done_status`) and the §J8 activity substrate. **Team-level by design** — there is no
-per-engineer breakdown (a Goodhart trap). Computation is pure in `app/services/flow_metrics.py`;
-this module gathers the rows and assembles the response. See `docs/AI_NATIVE_EXECUTION.md` §4.
+Reuses the existing flow building blocks (the board's aging, `weekly_throughput`, the status
+categories stamped on history) and the §J8 activity substrate. **Team-level by design** — there
+is no per-engineer breakdown (a Goodhart trap). Computation is pure in
+`app/services/flow_metrics.py`; this module gathers the rows and assembles the response.
+See `docs/AI_NATIVE_EXECUTION.md` §4.
 """
 
 from datetime import date, datetime, time, timedelta
@@ -13,17 +14,18 @@ from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.models.activity import ActivityEvent
-from app.models.base import TaskType
-from app.models.project import Initiative, Project, Task, TaskStatusHistory
+from app.models.base import StatusCategory
+from app.models.project import Initiative, Project, Task
 from app.schemas.entities import (
     DeliveryMetricsRead,
     DoraMetricsRead,
     FlowMetricsRead,
 )
 from app.services import flow_metrics
-from app.services.burndown import is_done_status
-from app.services.flow import BoardTaskInput, build_board
+from app.services.board import board_inputs, history_points, leaves_of, task_flow_facts
+from app.services.flow import build_board
 from app.services.forecast import weekly_throughput
+from app.services.workflow import category_of_task
 
 router = APIRouter()
 
@@ -55,7 +57,7 @@ async def _delivery(
         points = [flow_metrics.ActivityPoint(kind=e.kind, at=e.created_at) for e in events]
     dora = flow_metrics.compute_dora(points, float(weeks))
 
-    # Flow — leaf tasks + their status history.
+    # Flow — leaf tasks + their status history, read by category (not status name).
     leaves: list[Task] = []
     if project_ids:
         tasks = (
@@ -63,54 +65,28 @@ async def _delivery(
                 select(Task).where(col(Task.project_id).in_(project_ids))
             )
         ).scalars()
-        leaves = [t for t in tasks if t.type != TaskType.summary and t.id is not None]
+        leaves = leaves_of(list(tasks))
+    history = await history_points(session, [t.id for t in leaves if t.id is not None])
 
-    by_task: dict[int, list[TaskStatusHistory]] = {}
-    if leaves:
-        history = (
-            await session.execute(
-                select(TaskStatusHistory).where(
-                    col(TaskStatusHistory.task_id).in_([t.id for t in leaves if t.id is not None])
-                )
-            )
-        ).scalars()
-        for h in history:
-            by_task.setdefault(h.task_id, []).append(h)
-
-    inputs: list[BoardTaskInput] = []
     cycle_samples: list[int] = []
+    lead_samples: list[int] = []
     done_dates_window: list[date] = []
     for t in leaves:
-        assert t.id is not None
-        rows = by_task.get(t.id, [])
-        # Last update, not created_at, when there's no matching status-history row (see gantt.py).
-        entered = max(
-            (h.changed_at.date() for h in rows if h.to_status == t.status),
-            default=t.updated_at.date(),
-        )
-        done_dates = [h.changed_at.date() for h in rows if is_done_status(h.to_status)]
-        cycle_days = max(0, (max(done_dates) - t.created_at.date()).days) if done_dates else None
-        inputs.append(
-            BoardTaskInput(
-                id=t.id,
-                name=t.name,
-                status=t.status,
-                assignee_engineer_id=t.assignee_engineer_id,
-                is_done=is_done_status(t.status),
-                age_days=max(0, (today - entered).days),
-                cycle_days=cycle_days,
-            )
-        )
-        if done_dates:
-            last_done = max(done_dates)
-            if last_done >= window_start:  # completed within the window
-                done_dates_window.append(last_done)
-                cycle_samples.append(max(0, (last_done - t.created_at.date()).days))
+        facts = task_flow_facts(t, history, today)
+        if facts.done_on is not None and facts.done_on >= window_start:  # done in the window
+            done_dates_window.append(facts.done_on)
+            if facts.cycle_days is not None:
+                cycle_samples.append(facts.cycle_days)
+            if facts.lead_days is not None:
+                lead_samples.append(facts.lead_days)
 
-    board = build_board(inputs)
-    wip = sum(lane.wip for lane in board.lanes)
+    board = build_board(board_inputs(leaves, history, today))
+    # Team WIP = work that has started and not finished (the backlog is not WIP).
+    wip = sum(1 for t in leaves if category_of_task(t) == StatusCategory.in_progress)
     throughput = weekly_throughput(sorted(done_dates_window), today)
-    flow = flow_metrics.compute_flow(throughput, cycle_samples, wip, board.aging_count)
+    flow = flow_metrics.compute_flow(
+        throughput, cycle_samples, wip, board.aging_count, lead_samples
+    )
 
     notes = [
         "Team-level only — deliberately never broken down per engineer (Goodhart's law).",

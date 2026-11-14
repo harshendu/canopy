@@ -60,7 +60,9 @@ from app.models.scenario import (
     ScenarioTask,
 )
 from app.models.spec import Spec, SpecCriterion
+from app.models.sprint import TaskSprintHistory
 from app.models.team import Allocation
+from app.models.workflow import Workflow, WorkflowStatus
 
 
 async def delete_task_cascade(session: AsyncSession, task_id: int) -> None:
@@ -100,6 +102,9 @@ async def delete_task_cascade(session: AsyncSession, task_id: int) -> None:
     await session.execute(delete(Blocker).where(col(Blocker.task_id) == task_id))
     await session.execute(
         delete(TaskStatusHistory).where(col(TaskStatusHistory.task_id) == task_id)
+    )
+    await session.execute(
+        delete(TaskSprintHistory).where(col(TaskSprintHistory.task_id) == task_id)
     )
     await session.execute(
         delete(RiskItem).where(
@@ -149,6 +154,7 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
     alloc_ids = select(col(Allocation.id)).where(
         or_(col(Allocation.project_id) == pid, col(Allocation.task_id).in_(task_ids))
     )
+    workflow_ids = select(col(Workflow.id)).where(col(Workflow.project_id) == pid)
 
     # 1) Break self-references and cross-project references that would block the deletes below.
     await session.execute(
@@ -246,8 +252,12 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
         delete(ScenarioMilestone).where(col(ScenarioMilestone.project_id) == pid),
         delete(ScenarioTask).where(col(ScenarioTask.project_id) == pid),
         delete(ScenarioProject).where(col(ScenarioProject.project_id) == pid),
+        # the project's own board workflow (override), columns first
+        delete(WorkflowStatus).where(col(WorkflowStatus.workflow_id).in_(workflow_ids)),
+        delete(Workflow).where(col(Workflow.project_id) == pid),
         # task-derived rows
         delete(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids)),
+        delete(TaskSprintHistory).where(col(TaskSprintHistory.task_id).in_(task_ids)),
         delete(Dependency).where(
             or_(
                 col(Dependency.predecessor_id).in_(task_ids),

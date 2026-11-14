@@ -145,15 +145,15 @@ export default function AgentSetup() {
             Generate an access token so Claude Code can work in canopy on your behalf through the
             MCP server, then connect it as a full plugin or a bare MCP server. The token is{" "}
             <strong>agent-scoped</strong>: it carries your own permissions but is blocked from
-            one-way-door / external-write actions (accepting an irreversible decision, pushing to
-            Jira, applying a scenario) — those stay human-only.
+            one-way-door / external-write actions (accepting an irreversible decision, pushing a
+            plan to a tracker, applying a tracking switch or a scenario) — those stay human-only.
           </>
         }
       />
 
       <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-600">
         This connects <strong>Claude Code</strong> to canopy. To connect canopy's{" "}
-        <strong>data sources</strong> — Jira, GitHub, Drive — head to{" "}
+        <strong>data sources</strong> — work trackers, GitHub, Drive — head to{" "}
         <Link to="/connectors" className="font-medium text-canopy-700 hover:underline">
           Connectors →
         </Link>

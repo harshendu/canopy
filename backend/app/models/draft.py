@@ -48,5 +48,12 @@ class DraftTask(TimestampMixin, table=True):
     sort_order: int = 0
 
     # Set after a successful push to Jira; their presence makes a re-push an update.
+    # Legacy (kept in step with `external_*` for one release, then dropped).
     jira_issue_id: str | None = None
     jira_key: str | None = None  # human key, e.g. "PROJ-123"
+    # Where finalising put it: an item in a tracker (`external_*`), or a native canopy task
+    # (`task_id`). Either makes a re-finalise an update rather than a duplicate.
+    external_provider: str | None = None
+    external_id: str | None = None
+    external_key: str | None = None
+    task_id: int | None = Field(default=None, foreign_key="task.id")

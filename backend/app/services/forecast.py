@@ -87,8 +87,8 @@ def monte_carlo_forecast(
             trials=trials,
             reason=(
                 "Not enough completed-work history to forecast — needs at least "
-                f"{MIN_HISTORY_WEEKS} weeks with some throughput (sync Jira status, or mark "
-                "tasks done, to build a trend)."
+                f"{MIN_HISTORY_WEEKS} weeks with some throughput (move cards to done on the "
+                "board, or sync them from your tracker, to build a trend)."
             ),
         )
 

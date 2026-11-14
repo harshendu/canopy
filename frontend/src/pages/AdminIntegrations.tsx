@@ -1,19 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
+import { TRACKERS_KEY, getTrackers } from "../api/trackers";
 import type {
   IntegrationSetting,
   Provider,
   ReadStrategy,
   WriteStrategy,
 } from "../api/types";
+import { providerLabel } from "../lib/tracking";
 import { PageHeader } from "../components/PageHeader";
-
-const PROVIDER_LABELS: Record<Provider, string> = {
-  jira: "Jira",
-  github: "GitHub",
-  gdrive: "Google Drive",
-};
 
 const READ_OPTIONS: { value: ReadStrategy; label: string }[] = [
   { value: "direct", label: "Direct — canopy polls with its own credentials" },
@@ -33,6 +29,8 @@ export default function AdminIntegrations() {
     queryKey: ["integration-settings"],
     queryFn: () => api.get<IntegrationSetting[]>("/admin/integrations"),
   });
+  // Trackers are labelled from the catalog (a new tracker needs no UI change).
+  const catalog = useQuery({ queryKey: TRACKERS_KEY, queryFn: getTrackers, staleTime: 5 * 60 * 1000 });
 
   const update = useMutation({
     mutationFn: (vars: { provider: Provider; body: Partial<IntegrationSetting> }) =>
@@ -52,7 +50,7 @@ export default function AdminIntegrations() {
             <code>file</code> loads from an upload or watched folder. <strong>Writes:</strong>{" "}
             <code>direct</code> writes with canopy's credentials; <code>mcp</code> disables the
             in-app push/export (Claude does the write); <code>disabled</code> blocks writes.
-            Choosing <code>mcp</code>/<code>disabled</code> writes will disable push-to-Jira and
+            Choosing <code>mcp</code>/<code>disabled</code> writes will disable pushing draft plans to a tracker and
             export-to-Drive for users. <strong>Per-user SSO</strong> lets each contributor connect
             their own account so canopy acts as them. Defaults are direct/direct, SSO off.
           </span>
@@ -62,7 +60,7 @@ export default function AdminIntegrations() {
       <div className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
         {(settings.data ?? []).map((s) => (
           <div key={s.provider} className="flex flex-wrap items-center gap-4 px-4 py-4">
-            <span className="w-32 shrink-0 font-medium">{PROVIDER_LABELS[s.provider]}</span>
+            <span className="w-32 shrink-0 font-medium">{providerLabel(s.provider, catalog.data)}</span>
             <label className="flex items-center gap-2 text-sm text-slate-600">
               <span className="text-xs uppercase text-slate-400">Reads</span>
               <select
