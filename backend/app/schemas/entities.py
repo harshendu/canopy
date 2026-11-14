@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
@@ -55,6 +55,9 @@ class ProjectCreate(BaseModel):
     start_date: date | None = None
     target_date: date | None = None
     tags: list[str] = []
+    # native | mirrored; omitted = TRACKING_DEFAULT_MODE. A mirrored project shows "not bound"
+    # until a tracker is bound (the project's Tracking panel / switch, §C12).
+    tracking_mode: Literal["native", "mirrored"] | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -680,6 +683,136 @@ class JiraLinkSyncResult(BaseModel):
     notes: list[str] = []
 
 
+class TrackerLinkCreate(BaseModel):
+    connection_id: int  # the tracker connection to read the item(s) through
+    root_key: str  # the root item to link, e.g. "PROJ-123" (Jira) or "ENG-42" (Linear)
+    target_type: Literal["project", "initiative"]
+    target_id: int
+
+
+class TrackerLinkRead(BaseModel):
+    """A tracker link: a subtree binding (one root item + its descendants → a target)."""
+
+    id: int
+    connection_id: int
+    provider: str
+    root_id: str
+    root_key: str
+    root_type: str | None
+    target_type: str
+    target_id: int
+    url: str | None = None
+    last_synced_at: datetime | None
+    created_at: datetime
+
+
+class TrackerLinkSyncResult(BaseModel):
+    """What a link create / resync mapped into canopy (idempotent via ExternalRef)."""
+
+    link: TrackerLinkRead
+    projects_created: int = 0
+    projects_linked: int = 0
+    tasks_created: int = 0
+    tasks_updated: int = 0
+    skipped: int = 0
+    created_project_ids: list[int] = []
+    notes: list[str] = []
+
+
+# --- Project tracking (native | mirrored, the binding, switching) — USER_FLOWS §C12 ---
+class TrackerBindingRead(BaseModel):
+    id: int
+    connection_id: int
+    connection_name: str | None = None
+    provider: str
+    label: str
+    scope_kind: str
+    scope: dict[str, Any]
+    mapping: dict[str, Any]
+    # The tracker's statuses ({name, category, position}) — the mirrored board's columns.
+    status_map: list[dict[str, Any]]
+    sync_iterations: bool
+    active: bool
+    last_synced_at: datetime | None
+    detached_at: datetime | None
+    created_at: datetime
+
+
+class ProjectTrackingRead(BaseModel):
+    project_id: int
+    mode: str  # native | mirrored
+    # The active binding; None for a native project (or a mirrored one not bound yet).
+    binding: TrackerBindingRead | None
+    # Bound only through a pre-binding connection's `config.project_id` (no binding row yet).
+    legacy_connection_id: int | None = None
+    history: list[TrackerBindingRead]  # trackers this project used before (detached)
+    capabilities: dict[str, bool] | None = None  # the bound tracker's
+    canopy_owned: int  # tasks whose status canopy owns
+    tracker_owned: int  # tasks whose status the tracker owns
+    can_edit: bool
+    trackers_enabled: list[str]
+
+
+class ProjectTrackingUpdate(BaseModel):
+    """Adjust the active binding in place (same connection). Changing the scope resets the
+    watermark and status map, so the next sync is a full one."""
+
+    scope: dict[str, Any] | None = None
+    mapping: dict[str, Any] | None = None
+    sync_iterations: bool | None = None
+
+
+class TrackingSwitchRequest(BaseModel):
+    to_mode: Literal["native", "mirrored"]
+    connection_id: int | None = None  # mirrored: the tracker connection
+    scope: dict[str, Any] = {}  # mirrored: where in the tracker (its scope_schema)
+    mapping: dict[str, Any] = {}  # epic types, estimate field…
+    sync_iterations: bool = False  # mirror the tracker's sprints/cycles (team projects)
+    strategy: Literal["keep_separate", "match", "publish"] = "keep_separate"
+    # Preview by default: nothing changes until a human applies with dry_run=false.
+    dry_run: bool = True
+
+
+class TrackingSwitchActionRead(BaseModel):
+    task_id: int
+    name: str
+    key: str | None
+    action: str  # keep | adopt | publish | release | remap
+    detail: str | None = None
+
+
+class TrackingPublishRead(BaseModel):
+    created: int
+    skipped: int
+    failed: int
+    errors: list[str]
+
+
+class TrackingSwitchResult(BaseModel):
+    project_id: int
+    from_mode: str
+    to_mode: str
+    from_provider: str | None
+    to_provider: str | None
+    strategy: str
+    dry_run: bool
+    applied: bool
+    counts: dict[str, int]
+    actions: list[TrackingSwitchActionRead]
+    warnings: list[str]
+    binding: TrackerBindingRead | None = None
+    published: TrackingPublishRead | None = None
+    synced_created: int | None = None
+    synced_updated: int | None = None
+
+
+class TrackingSyncResult(BaseModel):
+    provider: str
+    created: int
+    updated: int
+    skipped: int
+
+
 # --- Gantt / scheduling ---
 class GanttTask(BaseModel):
     id: int
@@ -753,6 +886,7 @@ class BoardTaskRead(BaseModel):
     tags: list[str] = []
     sprint_id: int | None = None
     story_points: float | None = None
+    duration: int | None = None  # working days — the estimate of teams sized in days
 
 
 class BoardLaneRead(BaseModel):
@@ -763,9 +897,13 @@ class BoardLaneRead(BaseModel):
     category: str | None = None
     position: int = 0
     wip_limit: int | None = None
+    # Measured against `scope_wip` when set — the same count the move check enforces.
     over_limit: bool = False
     # False = a status found on a card that the workflow does not name (e.g. a mirrored status).
     in_workflow: bool = True
+    # Open cards in this column across the WIP scope (every project sharing these columns —
+    # e.g. the team's), which can exceed `wip` when the board shows only part of the scope.
+    scope_wip: int | None = None
 
 
 class BoardViewer(BaseModel):
@@ -1523,6 +1661,10 @@ class DraftTaskRead(BaseModel):
     sort_order: int
     jira_issue_id: str | None
     jira_key: str | None
+    external_provider: str | None = None
+    external_id: str | None = None
+    external_key: str | None = None
+    task_id: int | None = None
 
 
 class DraftPlanDetail(DraftPlanRead):
@@ -1540,6 +1682,25 @@ class DraftPushTaskResult(BaseModel):
     action: str  # created | updated | failed
     jira_key: str | None = None
     error: str | None = None
+    external_key: str | None = None  # the tracker item's key (any tracker)
+    task_id: int | None = None  # the canopy task (native finalise)
+
+
+class DraftFinalizeRequest(BaseModel):
+    # Push into this tracker connection. Omit to follow the project's tracking mode: a native
+    # project gets canopy tasks; a mirrored one pushes to its bound tracker.
+    connection_id: int | None = None
+
+
+class DraftFinalizeResult(BaseModel):
+    plan_id: int
+    mode: Literal["native", "tracker"]
+    provider: str | None = None
+    connection_id: int | None = None
+    created: int
+    updated: int
+    failed: int
+    results: list[DraftPushTaskResult]
 
 
 class DraftPushResult(BaseModel):
@@ -1553,24 +1714,32 @@ class DraftPushResult(BaseModel):
 
 # --- MCP-orchestrated ingest (Claude pushes external data into canopy idempotently) ---
 class IngestIssue(BaseModel):
-    """A normalized external issue (e.g. a Jira issue Claude read with its own connector)."""
+    """A normalized tracker item (e.g. a Jira/Linear issue Claude read with its own connector,
+    or a row of a generic tracker's export)."""
 
-    external_id: str  # provider issue id (opaque, stable) — the ExternalRef key
+    external_id: str  # provider item id (opaque, stable) — the ExternalRef key
     external_key: str | None = None  # human key, e.g. "PROJ-123"
     summary: str
     status: str | None = None  # mirrored read-only (the tracker stays the status owner)
     # todo | in_progress | done | cancelled, when the tracker says; else derived from the name.
-    status_category: str | None = None
+    status_category: Literal["todo", "in_progress", "done", "cancelled"] | None = None
     issue_type: str | None = None  # epic types become summary tasks
+    # epic | item | subitem — overrides `issue_type` when given (trackers without type names).
+    kind: Literal["epic", "item", "subitem"] | None = None
     parent_external_id: str | None = None
     updated: str | None = None  # remote "updated" timestamp, for staleness checks
     # Upstream assignee → canopy Engineer (matched/created); omitted = leave ownership alone.
     assignee_account_id: str | None = None
     assignee_name: str | None = None
+    assignee_email: str | None = None
+    estimate: float | None = None  # story points / estimate, when the tracker has one
+    url: str | None = None  # the item's browse URL, when known
 
 
 class IngestIssuesRequest(BaseModel):
     issues: list[IngestIssue]
+    # The bound project to ingest into, when the connection feeds several.
+    project_id: int | None = None
 
 
 class IngestPullRequest(BaseModel):
@@ -1582,6 +1751,7 @@ class IngestPullRequest(BaseModel):
     url: str | None = None
     author: str | None = None
     updated: str | None = None
+    branch: str | None = None  # head branch — its issue key (e.g. "feat/SHOP-12-x") links a task
 
 
 class IngestPullRequestsRequest(BaseModel):
@@ -1605,8 +1775,14 @@ class FileIngestResult(IngestResult):
 
 # --- Draft push write-back (write_strategy=mcp: Claude creates tickets, records ids here) ---
 class DraftPushRecord(BaseModel):
+    """One item Claude created in a tracker for a draft task (write_strategy=mcp). Either the
+    generic `external_id`/`external_key` (+ `provider`) or the legacy `jira_*` pair."""
+
     draft_task_id: int
-    jira_issue_id: str
+    external_id: str | None = None
+    external_key: str | None = None
+    provider: str | None = None
+    jira_issue_id: str | None = None
     jira_key: str | None = None
 
 
@@ -1706,11 +1882,21 @@ class JiraIssueLink(BaseModel):
     url: str | None  # browse URL, when the connection exposes a site (None for OAuth API bases)
 
 
+class TrackerItemLink(BaseModel):
+    """The tracker item behind a task (any tracker)."""
+
+    provider: str  # jira | linear | generic …
+    label: str  # the tracker's display name, e.g. "Jira"
+    key: str  # human key, e.g. "SHOP-101" / "ENG-42"
+    url: str | None  # browse URL, when the tracker exposes a site
+
+
 class TaskExternalLinksRead(BaseModel):
-    """Everything that links a task out to the systems that own the work: its Jira issue,
+    """Everything that links a task out to the systems that own the work: its tracker item,
     the GitHub PRs implementing it, and the design docs (GitHub/Drive) scoped to it."""
 
-    jira: JiraIssueLink | None
+    tracker: TrackerItemLink | None = None
+    jira: JiraIssueLink | None = None  # deprecated alias of `tracker` when it is Jira
     pull_requests: list[PullRequestRead]
     docs: list[DocReferenceRead]
 

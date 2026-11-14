@@ -621,24 +621,25 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
   confidence badge), **tags**, the task's **blockers** (raise/resolve with category + severity +
   needed-by; hidden when `tracking.blockers` is gated off §A10), and the task-scoped
   **risk register** (RAID; hidden when `governance.risk` is off). An **External links** section shows the task's links out to
-  the systems that own the work: its **Jira issue** (clickable when the connection exposes a
-  browsable site), the **GitHub PRs** implementing it (with open/closed state), and its
+  the systems that own the work: its **tracker item** (Jira, Linear… — named by the tracker's
+  label and clickable when the tracker exposes a browsable site), the **GitHub PRs** implementing it (with open/closed state), and its
   task-scoped **design docs** (GitHub / Drive / Jira / manual, badged by source). Read-only —
   canopy links, it never stores; doc CRUD lives on the project **Docs** tab (§V).
 - **API:** `PATCH /api/v1/tasks/{id}` (`tags`, `estimate_optimistic`/`estimate_likely`/
   `estimate_pessimistic`; `TaskRead` returns computed `pert_mean` + `estimate_spread`) ·
   `GET/POST /api/v1/tasks/{id}/blockers` · `GET/POST /api/v1/risks?scope_level=task&scope_id=…` ·
-  `GET /api/v1/tasks/{id}/links` (the external-links bundle: Jira issue from `ExternalRef`, PRs
-  from `PullRequest.task_id`, task-scoped `DocReference`s — pure URL build in
-  `app/services/links.py`) · **MCP:** `set_task_estimates`, `set_tags`/`add_tags`/`remove_tags`,
+  `GET /api/v1/tasks/{id}/links` (the external-links bundle: `tracker` = `{provider, label,
+  key, url}` from the task's live `ExternalRef` — `jira` is kept as a deprecated alias for one
+  release — PRs from `PullRequest.task_id`, task-scoped `DocReference`s; the URL comes from the
+  tracker's `browse_url` over the connection the ref came from, `app/services/links.py`) · **MCP:** `set_task_estimates`, `set_tags`/`add_tags`/`remove_tags`,
   `raise_blocker`, `add_risk`.
 - **Notes:** the 3-point estimate is **advisory** — it never moves the scheduling `duration`; a wide
   optimistic→pessimistic spread instead raises the schedule-risk "estimate uncertainty" indicator
   (§Q1). There is deliberately **no** "apply estimate to duration" action. The Jira **browse URL**
   is built from the connection's `base_url`; OAuth connections store the non-browsable API base
   (`api.atlassian.com/ex/jira/{cloudId}`), so the key is shown without a link there. A PR↔task link
-  comes from `PullRequest.task_id` (a webhook would match by branch / Jira key); the demo seed wires
-  it directly. Gantt/Board still show no per-row link badge (a possible follow-up).
+  comes from `PullRequest.task_id`, matched on ingest by the issue key in the PR's title or branch
+  (§J6); the demo seed wires it directly. Gantt/Board still show no per-row link badge (a possible follow-up).
 
 ### C2. Add / remove a dependency **[updated]**
 - **UI:** Gantt tab → "Add dependency" form: pick predecessor + successor, a **type** select
@@ -739,9 +740,10 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
 
 ## C9. Kanban board & native tracking (workflow, moves, WIP, aging) **[updated]**
 Projects are tracked **natively** (canopy owns every task's status — `Project.tracking_mode =
-native`, the default) or **mirrored** from a tracker (Jira owns the tasks it knows; canopy-only
-tasks in the project stay canopy-owned). The board works the same in both; only who may move a
-card's status differs.
+native`, the default) or **mirrored** from a tracker (the tracker — Jira today, any `WorkTracker`
+§J0 — owns the tasks it knows; canopy-only tasks in the project stay canopy-owned). The board
+works the same in both; only who may move a card's status — and, for a mirrored project whose
+tracker sent its statuses, where the columns come from — differs.
 
 ### C9.1 Workflow (the board's columns)
 - **What:** an ordered list of **columns** — a status name, a **category** (`todo` |
@@ -751,7 +753,11 @@ card's status differs.
 - **Where it is defined:** a **team** workflow is shared by every project the team runs (a
   project's team = its pod's team, else its initiative's team); a project may **override** it; a
   team-less project uses the **workspace template**; with nothing saved, the built-in default
-  applies (nothing is written on read).
+  applies (nothing is written on read). A **mirrored** project whose binding holds the tracker's
+  **status map** (refreshed on each full sync, §J0) shows **the tracker's statuses** instead —
+  `scope: "tracker"`, e.g. "Jira workflow", in the tracker's order and categories, enforcement
+  `off`; editing it is refused (`409 workflow_externally_owned` — change it in the tracker), and
+  team/template edits skip such projects.
 - **API:** `GET/PUT /api/v1/teams/{id}/workflow` (the team's directors/managers or an admin),
   `GET/PUT/DELETE /api/v1/projects/{id}/workflow` (an override; planners who may edit the
   project), `GET/PUT /api/v1/workflows/template` (admin) · **MCP:** `get_workflow`, `set_workflow`.
@@ -771,11 +777,16 @@ card's status differs.
   **ranked** within a column; each shows its key, name, **age in status** (amber "aging" beyond
   the team's **cycle-time P85**), blocked / critical-path flags, deadline, tags, the owner's
   initials chip and, for a mirrored card, a lock + its tracker with a link out. Column headers
-  show WIP vs the limit (red when over). **Toolbar:** owner / tag / blocked / aging filters,
+  show WIP vs the limit (red when over) — counted over the **WIP scope**: every project
+  sharing these columns (the team's projects on the team's or template's columns; just this
+  project when it has its own override or its tracker's statuses), so a project's board shows
+  the same count the move check enforces even when the team's other projects hold cards
+  (`scope_wip`). **Toolbar:** owner / tag / blocked / aging filters,
   **swimlanes** (none · owner · parent), the cycle-time P85, and — for planners — **Edit
   columns**. A mirrored project says so above the board.
-- **API:** `GET /api/v1/projects/{id}/board` — lanes (`status`, `category`, `position`, `wip`,
-  `wip_limit`, `over_limit`, `in_workflow`) with cards (`key`, `status_owner`, `movable`,
+- **API:** `GET /api/v1/projects/{id}/board` — lanes (`status`, `category`, `position`, `wip`
+  (cards on this board), `scope_wip` (open cards across the WIP scope), `wip_limit`,
+  `over_limit` (against `scope_wip`), `in_workflow`) with cards (`key`, `status_owner`, `movable`,
   `external_url`, `rank`, `blocked`, `is_critical`, `deadline`, `tags`, `age_days`, `aging`), plus
   `mode`, `wip_enforcement`, `cycle_time_p85_days`, `aging_count` and a `viewer` block (may plan?
   which engineer? is native tracking on?) · **MCP:** `get_board`. Pure logic in
@@ -801,14 +812,17 @@ card's status differs.
   the one write path (`workflow.record_transition`): it stamps the category, appends a
   `TaskStatusHistory` row (author = the mover, `source = canopy`) and reconciles progress
   (entering done → 100%; leaving done → 0; other manual progress kept).
-- **Who:** a planner moves any card in projects they may edit (§R6); an **engineer** moves their
-  own cards, or **pulls** an unassigned one (which assigns it to them); viewers read. An agent
+- **Who:** a planner moves any card in projects they may edit (§R6); anyone else who contributes
+  — an **engineer**, or a planner outside the project — moves their own cards, or **pulls** an
+  unassigned one by moving it to another column (which assigns it to them; reordering it alone
+  is `403`); viewers read. The board's `viewer` block reports exactly these rules (`can_plan`,
+  and `engineer_id` — null for a viewer). An agent
   token acts as its issuer — a move is a two-way door; a status an agent merely *inferred* goes
   through a proposal (§AA).
 - **Refusals:** `409 status_externally_owned` (a mirrored task — the body names the `provider`
   and the item's `url`), `409 wip_limit_reached` (enforcement `block` and the column is full;
   `warn` succeeds with `warnings: ["wip_limit_exceeded"]`), `409 stale` (`expected_status` no
-  longer matches), `422 unknown_status`, `403 native_tracking_disabled` (feature
+  longer matches; the board's "(no status)" label counts as an empty status), `422 unknown_status`, `403 native_tracking_disabled` (feature
   **`tracking.native`** off — every status must then come from a tracker).
 - **Ranks:** integers with gaps of 1024; a drop takes the midpoint of its neighbours, and when no
   gap is left the team's cards are renumbered once (relative order everywhere is kept). A card
@@ -937,13 +951,62 @@ underneath (tasks, statuses, history) is the same.
 
 ---
 
-## C10. Draft plans → create/update Jira tickets **[new]**
+## C12. Project tracking — native, mirrored, and switching **[new]**
+A project is tracked **natively** (canopy owns every status; the board is the source of truth)
+or **mirrored** from a bound tracker (§J0) — and can move between the two, or to another
+tracker, without losing work or history.
 
-The architect's "plan first, then make the tickets" flow. A **draft plan** is a staging area
+### C12.1 Read and adjust a project's tracking
+- **API:** `GET /api/v1/projects/{id}/tracking` — `mode`, the active **binding** (connection,
+  provider + label, `scope`, `mapping`, the tracker's `status_map`, `sync_iterations`,
+  `last_synced_at`), `legacy_connection_id` (bound only through a pre-binding connection's
+  `config.project_id`), `history` (trackers it used before, detached), the bound tracker's
+  `capabilities`, how many tasks canopy vs the tracker owns, `can_edit`, `trackers_enabled`.
+  Core (ungated). `PUT .../tracking` adjusts the active binding **in place** (scope — validated
+  against the tracker's `scope_schema`; a new scope resets the watermark and status map so the
+  next sync is a full one — the type/field mapping, sprint mirroring); `409 not_bound` without
+  one. `POST .../tracking/sync?full=` pulls the project's binding now (the caller's own
+  credential when connected, §J2a); `409 not_directly_readable` when its reads come by MCP/file.
+- **New projects** start in `TRACKING_DEFAULT_MODE` (`native` unless set; `POST /projects`
+  takes an explicit `tracking_mode`).
+
+### C12.2 Switch (native ⇄ mirrored, or to another tracker)
+- **API:** `POST /api/v1/projects/{id}/tracking/switch` `{to_mode, connection_id?, scope?,
+  mapping?, sync_iterations?, strategy, dry_run}` — **previews by default** (`dry_run: true`,
+  open to agent tokens): the plan lists what happens to **every task** — `keep`, `adopt`
+  (matched to a tracker item), `publish` (created in the tracker), `release` (leaves the old
+  tracker; canopy owns its status) or `remap` (released, and its status moved to the native
+  column of the same category because the native columns lack it) — with counts and warnings.
+  With `dry_run: false` (**human-only**, planner who may edit the project) it applies **exactly
+  that plan**: the old binding is detached and its refs kept (`detached_at` — the task still
+  links "formerly SHOP-101"), released tasks become canopy-owned (remaps recorded through the
+  one status writer, author "tracking switch"), the new binding is created, matched tasks
+  adopted, the mode flipped — one transaction — then open tasks are published (strategy
+  `publish`) and a first full sync runs. `tests/test_tracking_switch.py` pins preview == apply.
+- **Strategies** (for the work the project already has): `keep_separate` (it stays canopy-only
+  work in the mirrored project), `match` (a task whose key — else unique title — matches a
+  tracker item is adopted by it), `publish` (open tasks are created as tracker items — content
+  only; they start in the tracker's first status, so started work is warned about —
+  done/cancelled work stays canopy-owned history). `POST .../tracking/publish` re-runs
+  publishing (idempotent; human-only).
+- **Refusals (400):** already tracked this way; the same connection with another scope (use
+  `PUT`); not a tracker / not enabled; `match` without direct reads; `publish` without item
+  creation or write access. A detached connection never re-binds through its legacy
+  `config.project_id`.
+- **MCP:** `get_project_tracking`, `set_project_tracking`, `switch_project_tracking` (previews
+  by default; applying 403s on an agent token), `sync_project_tracking`, `publish_project_tasks`
+  (skill: `syncing-trackers`). **UI:** not yet — see Known UI gaps.
+
+---
+
+## C10. Draft plans → tickets or tasks **[updated]**
+
+The architect's "plan first, then make the work" flow. A **draft plan** is a staging area
 (its own tables — kept out of the live Gantt/CPM/board) where the architect proposes phases,
-tasks, estimates, and story points, reviews them, then **creates the Jira tickets** from the
-draft. This is the only place canopy writes *to* Jira, and it writes **content only** — status
-stays Jira-owned (§Source-of-truth boundaries).
+tasks, estimates, and story points, reviews them, then **finalises** the draft — into canopy
+tasks for a **native** project, or into **tickets in the project's tracker** for a mirrored one.
+Writing to a tracker is **content only** — status stays the tracker's (§Source-of-truth
+boundaries).
 
 ### C10.1 Create & review a draft plan
 - **UI:** project → **Plan → Jira** tab → "New draft plan" (title + optional **source** note, e.g.
@@ -956,21 +1019,31 @@ stays Jira-owned (§Source-of-truth boundaries).
   `list_draft_plans`, `create_draft_plan`, `get_draft_plan`, `add_draft_task`,
   `update_draft_task`, `delete_draft_task`.
 
-### C10.2 Push the draft to Jira (create / update tickets)
+### C10.2 Finalise the draft (canopy tasks, or create / update tickets)
+- **Finalise (any tracking mode):** `POST /api/v1/draft-plans/{plan_id}/finalize`
+  (`{connection_id?}`; planner + **human-only**) follows the project's mode: **native** → canopy
+  tasks (keys, first statuses, parents, then a replan; each draft task is stamped with its
+  `task_id`, so a re-finalise updates rather than duplicates); **mirrored** → the plan's items
+  are created/updated in the bound tracker via `WorkTracker.create_item`/`update_item` (epics
+  first; each stamped with `external_provider/_id/_key`), then the next sync pulls them back. The
+  result says `mode` (native | tracker) with per-task created/updated/failed · **MCP:**
+  `finalize_draft_plan` (skill `drafting-tickets`). The UI's push button below still calls the
+  Jira alias (Known UI gaps).
 - **UI:** expand a draft → **Create Jira tickets** (becomes **Update Jira tickets** once synced).
   A **pre-flight confirm** states the split before the outbound write — "create N new ticket(s),
   update M existing" (M = draft tasks already stamped with a `jira_key`) — since this is the one
   place canopy writes *to* Jira and it's irreversible. Picks the project's Jira connection
   automatically (or choose one when several match). Reports per-task created/updated/failed with the
   new Jira keys; a partial failure doesn't abort the rest.
-- **API:** `POST /api/v1/draft-plans/{plan_id}/push-to-jira` (optional `connection_id`) · **MCP:**
-  `push_draft_to_jira`. Logic is in `app/services/draft_sync.py`; the Jira write methods are
-  `JiraConnector.create_issue` / `update_issue` (`POST/PUT /rest/api/3/issue`, description as ADF).
+- **API (deprecated alias, one release):** `POST /api/v1/draft-plans/{plan_id}/push-to-jira`
+  (optional `connection_id`) · **MCP:** `push_draft_to_jira`. Logic is in
+  `app/services/draft_sync.py`; for Jira the writes are `JiraConnector.create_issue` /
+  `update_issue` (`POST/PUT /rest/api/3/issue`, description as ADF).
   Epics (summary tasks) are created before their stories so the parent link resolves; each pushed
   draft task is stamped with its Jira id/key, so a **re-push updates** rather than duplicates.
-- **Then sync back:** canopy does **not** create local tasks on push — run a Jira sync (§J3) to
-  pull the new issues in as canopy tasks (then `replan_schedule`). This keeps Jira the source of
-  truth for the materialized tickets.
+- **Then sync back (mirrored):** canopy does **not** create local tasks on a tracker push — run a
+  sync (§J3, `sync_project_tracking`) to pull the new items in as canopy tasks (then
+  `replan_schedule`). This keeps the tracker the source of truth for the materialized tickets.
 - **Jira config (per connection, §J1):** `story_point_field` (e.g. `customfield_10016`; without it
   points are skipped), and optional `epic_issue_type` / `story_issue_type` (default `Epic` / `Story`).
 
@@ -1354,6 +1427,38 @@ component map + ADRs and maintains the queue.
 
 ## J. Connectors & integrations (Connectors page)
 
+### J0. Work trackers — the pluggable layer **[new]**
+Execution works **with or without** a tracker, and Jira is one tracker among several.
+- **Three layers:** a `Connector` (credentials, HTTP, OAuth refresh, the demo mock) → a
+  **`WorkTracker`** (`app/connectors/tracker.py`: declares `capabilities`, a connection
+  `config_schema` and a binding `scope_schema`; only **fetches and normalizes** into
+  `app/services/tracker_types.py` and writes item **content** — there is deliberately no status
+  write, so canopy cannot transition an item back) → the **sync engine**
+  (`app/services/tracker_sync.py`, the only caller: upsert, parents, epic → project, watermarks,
+  status history, sprint/cycle mirroring, auto-replan — written once for every tracker). A new
+  tracker is one module + `@register_tracker`; no migration, engine or UI change (provider
+  columns are VARCHAR).
+- **Bindings (`TrackerBinding`):** what a connection feeds — a canopy project (or initiative)
+  bound to a scope in the tracker: a whole tracker project (`scope_kind=project`, e.g. a Jira
+  project key / board / JQL), one item and its descendants (`subtree` — a tracker link, §J9) or
+  a query. A binding owns its watermark, type/field mapping (epic types, estimate field), the
+  tracker's **status map** (statuses + categories + order: a mirrored project's columns, §C9.1)
+  and the nightly backfill cursor. A connection still carrying the pre-binding
+  `config.project_id` keeps working (an in-memory binding); the migration turned existing ones
+  into rows. **Identities (`EngineerIdentity`)** map an account in any tracker onto one
+  engineer (matched by account id, then email, then exact name; else auto-created).
+- **Config:** `TRACKERS_ENABLED` (comma-separated provider keys, default `jira`; empty = native
+  only), `TRACKING_DEFAULT_MODE` (`native`, reported for new projects),
+  `TRACKER_POLL_MINUTES` (falls back to `JIRA_POLL_MINUTES`), `<PROVIDER>_WEBHOOK_SECRET`.
+- **Discover:** `GET /api/v1/meta/trackers` (**MCP:** `list_trackers`; `get_workspace_context`
+  lists the enabled ones and each project's `tracking_mode`) — each registered tracker with its
+  label, whether it is `enabled`, its `capabilities`, the JSON Schemas of its connection and scope forms, and
+  its webhook path + secret setting; plus `default_tracking_mode`. (Rendering the Connectors form
+  and a project Tracking panel from it is Phase 4 — see Known UI gaps.)
+- **Contract:** `tests/test_tracker_layer.py` runs the same checks over every registered tracker
+  (implements what it declares, no status write, webhook verification fails closed) and pins the
+  import boundary (the engine never imports a concrete tracker).
+
 ### J1. Add a connection **[updated — typed fields + project picker]**
 - **UI:** `/connectors` → choose provider (Jira / GitHub / Google Drive), name it, optionally paste an
   API token, then fill **typed config fields** instead of hand-writing JSON — Jira: **Site URL**,
@@ -1401,13 +1506,17 @@ attach their **own** OAuth credential to it — canopy then reads/writes **as th
   upsert-only and each `UserConnection` keeps its own watermark, so it can't remove what the service
   token populated or disturb the service cursor (`app/services/integration_policy.py`).
 
-### J3. Sync from Jira
-- **UI:** on a Jira connection → **Sync now** (full sync). Imports epics→summary tasks and
-  stories→leaf tasks (idempotently, via `ExternalRef`), tags tasks with their active sprint, and
-  **auto-replans** the project when new tasks are created. The result shows created/updated/skipped.
-- **Ownership (assignee → Engineer):** each issue's Jira **assignee** is mapped onto a canopy
-  **Engineer** — matched by `jira_account_id`, then by exact name (case-insensitive, which
-  back-fills the account id), else **auto-created** — and set as the task's owner, so synced work
+### J3. Sync from Jira (any tracker)
+- **UI:** on a Jira connection → **Sync now** (full sync). Every binding the connection feeds
+  (§J0) is pulled through the shared engine: epics→summary tasks and stories→leaf tasks
+  (idempotently, via `ExternalRef` — now scoped to the connection, since two sites can share
+  ids), the tracker's status map refreshed on the binding, sprints mirrored when the binding
+  syncs iterations, and the project **auto-replanned** when new tasks are created. The result
+  shows created/updated/skipped.
+- **Ownership (assignee → Engineer):** each issue's **assignee** is mapped onto a canopy
+  **Engineer** — matched by the tracker identity (`EngineerIdentity`; for Jira also the legacy
+  `jira_account_id`), then by email, then by exact name (case-insensitive, which records the
+  identity), else **auto-created** — and set as the task's owner, so synced work
   arrives with clear individual ownership on the Gantt/Board/workspace (§C6a, §M). An issue that is
   **unassigned in Jira leaves a locally-set owner untouched** (local assignment stays usable);
   a set Jira assignee wins over a local one. Synced tasks are **Jira-owned** (`status_owner =
@@ -1430,10 +1539,15 @@ attach their **own** OAuth credential to it — canopy then reads/writes **as th
   view reads.
   Completion is counted **once per task** (last done transition) — a reopened-then-redone task no
   longer double-counts (which had inflated throughput and could drive burndown remaining negative).
-- **API:** `POST /api/v1/connectors/connections/{id}/sync` (full) and `.../sync/incremental` ·
-  **MCP:** `trigger_jira_sync`.
-- **Background:** an arq worker runs an incremental reconciliation poll on a cron as the correctness
-  backstop behind webhooks.
+- **API:** `POST /api/v1/connectors/connections/{id}/sync` (full) and `.../sync/incremental`
+  (every binding of the connection), or one project's binding with
+  `POST /api/v1/projects/{id}/tracking/sync` (§C12) · **MCP:** `sync_tracker`,
+  `sync_project_tracking` (`trigger_jira_sync` is the deprecated alias).
+- **Background:** an arq worker runs `tracker_incremental_sync` (every enabled tracker canopy
+  reads directly; `jira_incremental_sync` is the old job name, kept one release) every
+  `TRACKER_POLL_MINUTES` as the correctness backstop behind webhooks — one failing connection is
+  logged and skipped — and a nightly `tracker_history_backfill` (03:30) that replays the next
+  batch of mirrored tasks' changelogs past each binding's cursor (§J5).
 - **Note:** the poll, webhooks, and "Sync now" all **stand down** when the provider's read strategy
   is `mcp`/`file` (§A8) — the data then arrives via ingest (§J3a) or a file drop (Phase 4).
 
@@ -1443,16 +1557,21 @@ doesn't call the provider API. Instead **Claude** reads the external system with
 and pushes **normalized** data into canopy idempotently — the MCP twin of the direct sync. Every
 ingest upserts via `ExternalRef` (never deletes), maps into the connection's configured project,
 and (issues) replans on new tasks; ingest does **not** advance the connection watermark.
-- **Issues → tasks:** `POST /api/v1/connectors/connections/{id}/ingest/issues`
-  (`{issues:[{external_id, external_key, summary, status, issue_type, parent_external_id,
-  updated, assignee_account_id?, assignee_name?}]}`) · **MCP:** `ingest_jira_issues`.
-  Epics→summary; re-ingest updates, never duplicates; assignees map to Engineers exactly like the
-  direct sync (§J3 — shared upsert core).
+- **Issues → tasks (any tracker):** `POST /api/v1/connectors/connections/{id}/ingest/issues`
+  (`{issues:[{external_id, external_key, summary, status, status_category?, issue_type?,
+  kind? (epic|item|subitem), parent_external_id, updated, assignee_account_id?,
+  assignee_name?, assignee_email?, estimate?, url?}], project_id?}`) · **MCP:**
+  `ingest_work_items` (`ingest_jira_issues` is the deprecated alias). The connection must be a work tracker (else `400`); items land in its
+  binding's target — pass `project_id` when it feeds several (else `400`). Epics→summary;
+  re-ingest updates, never duplicates; assignees map to Engineers exactly like the direct sync
+  (§J3 — the same engine). This is also how a tracker canopy can't read itself
+  (`direct_read: false`) is kept in sync.
 - **PRs → cache:** `POST .../ingest/pull-requests` · **MCP:** `ingest_github_pull_requests`.
-- **Draft push write-back (writes=`mcp`):** when `push_draft_to_jira` is disabled by policy, Claude
-  creates the tickets itself then `POST /api/v1/draft-plans/{id}/record-push`
-  (`{results:[{draft_task_id, jira_issue_id, jira_key}]}`) stamps each task and flips the plan to
-  `synced` (idempotent) · **MCP:** `record_draft_push`.
+- **Draft push write-back (writes=`mcp`):** when finalising can't write to the tracker by policy,
+  Claude creates the items itself then `POST /api/v1/draft-plans/{id}/record-push`
+  (`{results:[{draft_task_id, provider?, external_id, external_key}]}` — the legacy
+  `jira_issue_id`/`jira_key` pair still works) stamps each task and flips the plan to `synced`
+  (idempotent) · **MCP:** `record_draft_push`.
 - **Auth:** ingest + record-push are **planner-gated but not human-only** — internal, idempotent
   two-way-door writes, so a scheduled Claude job using an **agent-scope token** (§A6) may call them
   (the external read/write happens through Claude's own connectors, outside canopy's agency gate).
@@ -1462,9 +1581,9 @@ and (issues) replans on new tasks; ingest does **not** advance the connection wa
 
 ### J3b. File-drop ingest — import a JSON/CSV export **[new — Phase 4]**
 A second *transport* for the same ingest (§J3a): drop an export file and canopy parses + loads it
-idempotently. The entity type is inferred from the connection's provider (Jira→issues,
-GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the file). Two ways in:
-- **Upload:** `/connectors` → **Import file** on a Jira/GitHub connection (or
+idempotently. The entity type is inferred from the connection's provider (a work tracker →
+items, GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the file). Two ways in:
+- **Upload:** `/connectors` → **Import file** on a tracker/GitHub connection (or
   `POST /api/v1/connectors/connections/{id}/ingest/file`, multipart; planner-gated, agent-allowed).
   Accepts **JSON** (an array of `IngestIssue`/`IngestPullRequest` objects) or **CSV** (header row =
   field names). Returns `{provider, created, updated, skipped, parsed, errors}`.
@@ -1478,26 +1597,38 @@ GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the
   poll), reusing the §J3a idempotent ingest.
 
 ### J4. Receive provider webhooks (live updates)
-- **Flow:** Jira/GitHub POST to `/webhooks/jira` / `/webhooks/github`. The receiver verifies the HMAC
-  signature, matches the event to active connection(s), and enqueues an arq job (never processes
-  inline). Jira issue events upsert the task; GitHub `pull_request` events upsert the PR cache.
-- **Setup:** `JIRA_WEBHOOK_SECRET` / `GITHUB_WEBHOOK_SECRET` — **required**: intake fails closed, so
-  an endpoint answers `403` to every request until its secret is set, and `401` to a missing or
-  forged signature.
+- **Flow:** Jira/GitHub POST to `/webhooks/jira` / `/webhooks/github`; any other tracker with
+  the `webhooks` capability posts to **`/webhooks/{provider}`** (verified by the tracker's own
+  scheme, e.g. an HMAC header; `404` for an unknown, disabled or webhook-less provider). The
+  receiver verifies the signature over the raw body **before** parsing, matches the event to
+  the connections whose **bindings** it belongs to (the tracker's scope hint — for Jira the
+  issue's project key — against each binding's scope), and enqueues an arq job (never processes
+  inline). Tracker item events upsert the task; GitHub `pull_request` events upsert the PR cache
+  (and link it to a task by key, §J6).
+- **Setup:** `JIRA_WEBHOOK_SECRET` / `GITHUB_WEBHOOK_SECRET` / `<PROVIDER>_WEBHOOK_SECRET` (e.g.
+  `LINEAR_WEBHOOK_SECRET`) — **required**: intake fails closed, so an endpoint answers `403` to
+  every request until its secret is set, and `401` to a missing or forged signature. Intake
+  ACKs-but-ignores when `integrations.webhooks` is off or the provider's reads are MCP/file.
 
 ### J5. Jira sprints & status history
 - **API:** `GET /api/v1/connectors/jira/{id}/boards`, `.../sprints?board_id=`, and
   `POST /api/v1/connectors/jira/{id}/history?issue_key=` (pulls the issue changelog into
   `TaskStatusHistory`, `source = backfill`, categories stamped; it **replaces** the approximate
   `sync` rows recorded for that task and keeps rows canopy recorded itself).
+- **Automatic:** a sync backfills the first 50 tasks it creates; the nightly
+  `tracker_history_backfill` job tops up the rest in batches (a cursor per binding, wrapping
+  round once every task was seen) for every tracker with the `status_history` capability.
 
 ### J6. Read GitHub / Google Drive content
 - **API:** `GET /api/v1/connectors/github/{id}/file?path=`, `.../github/{id}/pulls`,
   `.../github/cached-prs`; `GET /api/v1/connectors/gdrive/{id}/docs`, `.../gdrive/{id}/docs/{file_id}`
   · **MCP:** `read_repo_file`, `list_open_prs`, `read_design_doc`.
-- **PR↔task link:** a cached `PullRequest` carries an optional `task_id` (the task it implements,
-  matched by branch / Jira key on ingest), which surfaces the PR in that task's detail panel (§C1a)
-  via `GET /api/v1/tasks/{id}/links`.
+- **PR↔task link:** a cached `PullRequest` carries an optional `task_id` (the task it
+  implements), set on ingest/webhook from the first issue key in its **title or head branch**
+  (e.g. `feat/shop-12-checkout` → `SHOP-12`): a native canopy key (`Task.key`) or the key of any
+  tracker item canopy mirrors; a PR already tied to a task keeps it. It surfaces the PR in that
+  task's detail panel (§C1a) via `GET /api/v1/tasks/{id}/links`. MCP/file PR ingest takes an
+  optional `branch`.
 - **Drive uploads (write):** the Drive connector also has `upload_file` (multipart) used by export
   snapshots (§S) to store a generated PDF/CSV in Drive — the one place canopy writes to Drive.
 - **Not built (v2 §J6):** PR **review metrics** (time-to-review, churn, test status) and commit
@@ -1514,7 +1645,7 @@ GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the
   the plugin) · **MCP:** `get_activity`, `record_activity`. Datadog / Sentry / GitHub Actions can be
   layered on this substrate.
 
-### J9. Link Jira tickets to a project / initiative **[new]**
+### J9. Link tracker items (Jira tickets) to a project / initiative **[updated]**
 - **What:** instead of mirroring a whole Jira project (§J3), the architect links one or more
   **specific** Jira tickets (initiative / epic / story) to a canopy **Project** or **Initiative**.
   canopy reads the linked ticket **plus its full descendant subtree** (BFS over Jira `parent`
@@ -1532,11 +1663,20 @@ GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the
   initiative cockpit (§R3): enter a Jira key + (if more than one) pick the Jira connection → **Link
   ticket**; each link row has **Resync** / **Unlink** (writes are planner-gated; unlink keeps the
   already-mapped canopy entities). Shows projects/tasks created/updated/skipped per run.
-- **API:** `POST /api/v1/jira-links` (`connection_id`, `jira_key`, `target_type` ∈
-  `project|initiative`, `target_id`) → maps the subtree and returns a `JiraLinkSyncResult`;
-  `GET /api/v1/jira-links?target_type=&target_id=` (list), `POST /api/v1/jira-links/{id}/resync`,
-  `DELETE /api/v1/jira-links/{id}` · **MCP:** `link_jira_ticket`, `list_jira_links`,
-  `resync_jira_link`, `unlink_jira_ticket` (skill: `syncing-jira`).
+- **API (any tracker with `hierarchy` + `direct_read`):** `POST /api/v1/tracker-links`
+  (`connection_id`, `root_key`, `target_type` ∈ `project|initiative`, `target_id`) → maps the
+  subtree and returns a `TrackerLinkSyncResult` (the link: `provider`, `root_key`, `root_type`,
+  browse `url`, …); `GET /api/v1/tracker-links?target_type=&target_id=` (list),
+  `POST /api/v1/tracker-links/{id}/resync`, `DELETE /api/v1/tracker-links/{id}` (deactivates the
+  link — what it mapped stays). A link is a subtree `TrackerBinding` (§J0); writes are
+  planner-gated and ownership-scoped (§R6). A non-tracker connection is `400`.
+- **Deprecated alias (one release):** `POST/GET /api/v1/jira-links`,
+  `POST /api/v1/jira-links/{id}/resync`, `DELETE /api/v1/jira-links/{id}` (`jira_key` instead
+  of `root_key`; returns a `JiraLinkSyncResult`) — each Jira link is mirrored as a subtree
+  binding, so `/tracker-links` lists it too.
+- **MCP:** `link_tracker_item`, `list_tracker_links`, `resync_tracker_link`,
+  `unlink_tracker_item` (skill: `syncing-trackers`); `link_jira_ticket`, `list_jira_links`,
+  `resync_jira_link`, `unlink_jira_ticket` are the deprecated aliases over `/jira-links`.
 - **Limits:** linking a bare story directly to an *initiative* (no epic in its subtree) maps nothing
   and is reported in the result — link stories to a *project*, or link an epic/initiative-level
   ticket to an initiative. Traversal follows Jira `parent` links (the same hierarchy field §J3 uses),
@@ -1757,7 +1897,7 @@ document graph (§V) or `source_url`; the governing decision links via `adr_id`.
   tasks (name/status/percent) + computed **readiness** (`criteria_met` / `criteria_total` excluding
   waived, `acceptance_ratio`). Readiness is pure in `app/services/specs.py` · **MCP:** `get_spec`.
 - **Skill `spec-driven-development`** scripts the loop: draft the spec from a PRD/ADRs → write
-  checkable criteria → approve → plan + link the work (via `drafting-jira-tickets`) → self-audit
+  checkable criteria → approve → plan + link the work (via `drafting-tickets`) → self-audit
   each criterion against the implementation → mark `verified` when all are met.
 
 ### W4. Not built (deliberate limits)
@@ -2108,12 +2248,16 @@ pentest out a week"*, *"drop the vendor risk"*, *"add a go/no-go review after th
   `preview_proposal` and reports what the batch does to the plan (finish date, knock-on
   shifts), the same current ⇄ proposed picture the review page opens on.
 
-### L3. Sync from Jira (skill + subagent)
-- Ask Claude to "sync Jira". The **`syncing-jira`** skill / **`jira-sync`** subagent find the Jira
-  connection, run an incremental (or full) sync, then reconcile the plan (`replan_schedule`). The
-  skill also covers **linking a specific Jira ticket** (initiative/epic/story) into a project or
-  initiative via `link_jira_ticket` / `list_jira_links` / `resync_jira_link` / `unlink_jira_ticket`
-  (§J9) — for pulling in just a chosen ticket tree instead of the whole project.
+### L3. Sync from the tracker (skill + subagent) **[updated]**
+- Ask Claude to "sync Jira" / "sync the tracker". The **`syncing-trackers`** skill /
+  **`tracker-sync`** subagent orient with `get_workspace_context` + `get_project_tracking`, sync
+  each bound project (`sync_project_tracking`, or a connection with `sync_tracker`), then
+  reconcile the plan (`replan_schedule`); a tracker canopy can't read directly is routed to
+  `mcp-ingest`. The skill also covers **linking a specific item** (initiative/epic/story) via
+  `link_tracker_item` / `list_tracker_links` / `resync_tracker_link` / `unlink_tracker_item`
+  (§J9), and **binding, unbinding or switching** a project's tracker with
+  `switch_project_tracking` — preview, then a human applies (§C12). `syncing-jira` (skill) is
+  kept one release as a pointer; the `jira-sync` subagent is now `tracker-sync`.
 
 ### L4. Write, propose & shepherd decisions (skill)
 - The **`writing-adrs`** skill drafts an ADR with a consistent template and records it (`create_adr`),
@@ -2153,13 +2297,14 @@ pentest out a week"*, *"drop the vendor risk"*, *"add a go/no-go review after th
   finds the ADRs governing them (`adr_impact`), and judges whether the PR implements / contradicts /
   is unrelated to each — building implementation traceability.
 
-### L11. Draft a plan → create Jira tickets (skill) **[new]**
-- The **`drafting-jira-tickets`** skill turns inputs (a codebase via `read_repo_file`, a design
-  doc/PRD via `read_design_doc`, existing epics via `trigger_jira_sync`) into a reviewable **draft
-  plan** (`create_draft_plan` + `add_draft_task` with estimates + story points), refines it with the
-  architect (`get_draft_plan` / `update_draft_task` / `delete_draft_task`), then **creates the Jira
-  tickets** from it (`push_draft_to_jira`) and syncs them back (`trigger_jira_sync`). Content only —
-  status is never written (§C10).
+### L11. Draft a plan → tickets or tasks (skill) **[updated]**
+- The **`drafting-tickets`** skill turns inputs (a codebase via `read_repo_file`, a design
+  doc/PRD via `read_design_doc`, what's already planned) into a reviewable **draft plan**
+  (`create_draft_plan` + `add_draft_task` with estimates + story points), refines it with the
+  architect (`get_draft_plan` / `update_draft_task` / `delete_draft_task`), then has the human
+  **finalise** it (`finalize_draft_plan` — native tasks, or tickets in the project's tracker that a
+  `sync_project_tracking` pulls back). Content only — status is never written (§C10).
+  `drafting-jira-tickets` is kept one release as a pointer.
 
 ### L12. Explore a what-if scenario (subagent) **[new]**
 - The **`scenario-architect`** subagent answers what-if questions on an initiative without touching
@@ -2194,7 +2339,7 @@ pentest out a week"*, *"drop the vendor risk"*, *"add a go/no-go review after th
 - The **`spec-driven-development`** skill runs the spec loop (§W): draft a `Spec` from a PRD/design
   (doc graph §V) + ADRs (`create_spec`), write explicit checkable acceptance criteria
   (`add_spec_criterion`), approve it, plan + link the implementing work (`link_task_to_spec`, with
-  `drafting-jira-tickets`), then **self-audit** each criterion against the implementation
+  `drafting-tickets`), then **self-audit** each criterion against the implementation
   (`get_spec` → `update_spec_criterion` met/unmet) and mark the spec `verified` when all are met.
 
 ### L16. Daily standup / health digest (skill) **[new]**
@@ -2241,6 +2386,13 @@ pentest out a week"*, *"drop the vendor risk"*, *"add a go/no-go review after th
   skills/agents to chain — so the same plugin serves the architect re-planning a WBS, the PM
   recording outcomes from an inbox sweep, the EM clearing blockers after standup, and the
   exec who only reads digests.
+
+### L20. Work the board (skill) **[new]**
+- The **`working-the-board`** skill moves work the right way: read the board and its WIP scope
+  (`get_board`, `get_workflow`), move or reorder canopy-owned cards with `move_task` (with
+  `expected_status`), pull unassigned work, read each refusal (`status_externally_owned`,
+  `wip_limit_reached`, `unknown_status`, `native_tracking_disabled`) and route an *inferred*
+  status through a proposal instead (§C9, §AA).
 
 ---
 
@@ -2370,6 +2522,12 @@ markdown ADR) and a Drive folder of checkout and payments docs.
 ## Known UI gaps (currently API/MCP-only)
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
+- **Tracker-neutral surfaces** (§J0/§J9/§C12): the project's **Jira Links** tab still calls the
+  `/jira-links` alias (fine for Jira; `/tracker-links` is API-only until the Phase 4 rename),
+  the Connectors form doesn't render from `GET /meta/trackers` yet, and there is no project
+  **Tracking** panel yet — reading, adjusting, syncing and switching a project's tracking
+  (`/projects/{id}/tracking*`) is API/MCP-only until it lands; the draft plan view's push button
+  still calls `push-to-jira` (`/finalize` — native tasks or any tracker — is API/MCP-only).
 - The **epic doc-field mapping / harvest** setup (§V2/§V3) stays conversational (AI-driven via the
   plugin) — no React wizard (deliberate); the Docs **tab** itself is built (read + add links).
 - Project rename/archive/date edits (B4) — the header has the weekend toggle + health/status/tags

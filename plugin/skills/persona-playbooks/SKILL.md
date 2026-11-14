@@ -29,8 +29,8 @@ what differs per persona is *what you read and stage*, not the review rules.
   `list_milestones` + roadmap horizon, `get_forecast` (P50/P85 vs the date they promised),
   `get_doc_coverage` (missing PRDs/designs).
 - **Core verbs:** `add_outcome`/`update_outcome`, `create_milestone`,
-  `add_doc_reference`, `set_project_health` (narrative), draft plans → Jira
-  (`drafting-jira-tickets`), specs (`spec-driven-development`).
+  `add_doc_reference`, `set_project_health` (narrative), draft plans → tickets or tasks
+  (`drafting-tickets`), specs (`spec-driven-development`).
 - **Stage vs direct:** metric movements, scope adds, milestone moves, and anything from
   customer/stakeholder email → proposal; recording the current_value they just read out
   → direct. PMs are often not planners — staging is also how their judgment lands

@@ -1,8 +1,10 @@
-"""Draft plans: stage a proposed plan, review it, then create/update Jira tickets from it.
+"""Draft plans: stage a proposed plan, review it, then finalise it into real work.
 
-Drafts live apart from the live schedule (the Gantt/CPM/board never see them). Pushing a
-plan writes ticket **content** to Jira (summary/description/story points) — never status;
-the next Jira sync pulls the new issues back as canopy tasks. Writes are planner-gated.
+Drafts live apart from the live schedule (the Gantt/CPM/board never see them). Finalising
+(`/finalize`) creates canopy tasks in a native project, or writes ticket **content** to the
+project's tracker (summary/description/story points) — never status — in a mirrored one; the
+next sync pulls the new items back as canopy tasks. `/push-to-jira` is the pre-tracker alias.
+Writes are planner-gated; finalising is human-only.
 """
 
 from fastapi import APIRouter, HTTPException, status
@@ -16,6 +18,8 @@ from app.models.base import Provider
 from app.models.draft import DraftPlan, DraftTask
 from app.models.project import Project
 from app.schemas.entities import (
+    DraftFinalizeRequest,
+    DraftFinalizeResult,
     DraftPlanCreate,
     DraftPlanDetail,
     DraftPlanRead,
@@ -163,7 +167,7 @@ async def delete_draft_task(session: SessionDep, user: PlannerWriter, task_id: i
 
 
 @router.post("/draft-plans/{plan_id}/push-to-jira", response_model=DraftPushResult)
-async def push_draft_to_jira(
+async def push_draft_to_jira(  # deprecated alias of /finalize for Jira-bound projects
     session: SessionDep,
     user: PlannerWriter,
     __: HumanOnly,
@@ -179,6 +183,34 @@ async def push_draft_to_jira(
     try:
         return await draft_sync.push_plan_to_jira(
             session, plan_id, payload.connection_id, user.id
+        )
+    except draft_sync.DraftPushError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/draft-plans/{plan_id}/finalize", response_model=DraftFinalizeResult)
+async def finalize_draft_plan(
+    session: SessionDep,
+    user: PlannerWriter,
+    __: HumanOnly,
+    plan_id: int,
+    payload: DraftFinalizeRequest,
+) -> DraftFinalizeResult:
+    """Turn a reviewed plan into real work, following the project's tracking mode: a native
+    project gets canopy tasks (keys, first statuses, parents, then a replan); a mirrored project
+    pushes the content to its bound tracker (never status — the next sync brings the items
+    back). Human-only in every mode: a draft plan exists so a person reviews work before it
+    becomes real."""
+    existing = await session.get(DraftPlan, plan_id)  # a missing plan is draft_sync's 400
+    if existing is not None:
+        await ensure_project_editable(session, user, existing.project_id)
+    try:
+        return await draft_sync.finalize_plan(
+            session,
+            plan_id,
+            connection_id=payload.connection_id,
+            user_id=user.id,
+            author=user.full_name or user.email,
         )
     except draft_sync.DraftPushError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

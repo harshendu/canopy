@@ -133,7 +133,7 @@ async def test_task_links_empty_and_404(client, db_session) -> None:
     resp = await client.get(f"/api/v1/tasks/{task_id}/links", headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body == {"jira": None, "pull_requests": [], "docs": []}
+    assert body == {"tracker": None, "jira": None, "pull_requests": [], "docs": []}
 
     missing = await client.get("/api/v1/tasks/999999/links", headers=headers)
     assert missing.status_code == 404

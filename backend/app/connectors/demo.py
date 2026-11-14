@@ -101,6 +101,16 @@ _JIRA_CHANGELOG = {
 
 _jira_created_seq = [930300]
 
+# The demo Jira project's workflow: (name, canopy category) in Jira's order — served as
+# `GET /rest/api/3/project/SHOP/statuses` and seeded as the flagship binding's status map.
+DEMO_JIRA_STATUSES: tuple[tuple[str, str], ...] = (
+    ("To Do", "todo"),
+    ("In Progress", "in_progress"),
+    ("In Review", "in_progress"),
+    ("Done", "done"),
+)
+_JIRA_STATUS_KEY = {"todo": "new", "in_progress": "indeterminate", "done": "done"}
+
 
 def _handle_jira(request: httpx.Request) -> httpx.Response:
     path = request.url.path
@@ -135,6 +145,14 @@ def _handle_jira(request: httpx.Request) -> httpx.Response:
             return httpx.Response(404, json={"errorMessages": ["Issue does not exist"]},
                                   request=request)
         return httpx.Response(200, json=issue, request=request)
+    if method == "GET" and path == f"/rest/api/3/project/{_JIRA_PROJECT_KEY}/statuses":
+        statuses = [
+            {"name": name, "statusCategory": {"key": _JIRA_STATUS_KEY[category]}}
+            for name, category in DEMO_JIRA_STATUSES
+        ]
+        return httpx.Response(
+            200, json=[{"name": "Story", "statuses": statuses}], request=request
+        )
     if method == "GET" and path == "/rest/agile/1.0/board":
         return httpx.Response(
             200, json={"values": [{"id": 1, "name": "SHOP board"}]}, request=request

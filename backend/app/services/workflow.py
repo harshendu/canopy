@@ -29,6 +29,7 @@ from app.models.base import (
     StatusCategory,
     StatusSource,
     TaskType,
+    TrackingMode,
     WipEnforcement,
     utcnow,
 )
@@ -293,9 +294,49 @@ async def team_workflow(session: AsyncSession, team_id: int) -> WorkflowView:
     return view
 
 
-async def resolve_workflow(session: AsyncSession, project: Project) -> WorkflowView:
-    """The workflow a project's board uses: its own override, else its team's, else the
-    workspace template, else the built-in default."""
+async def tracker_view(session: AsyncSession, project: Project) -> WorkflowView | None:
+    """A mirrored project's columns: the bound tracker's statuses, in the tracker's order and
+    categories (refreshed on each full sync). None when the project isn't mirrored or the
+    tracker sent no status map yet (its board then uses the normal resolution)."""
+    if project.id is None or project.tracking_mode != TrackingMode.mirrored.value:
+        return None
+    from app.services.tracker_sync import binding_for_project, board_columns_for
+
+    binding = await binding_for_project(session, project.id)
+    if binding is None:
+        return None
+    columns = await board_columns_for(session, binding)
+    if not columns:
+        return None
+    from app.connectors.tracker import tracker_class
+
+    cls = tracker_class(binding.provider)
+    label = cls.label if cls is not None and cls.label else binding.provider.value
+    return WorkflowView(
+        id=None,
+        scope="tracker",
+        team_id=None,
+        project_id=project.id,
+        name=f"{label} workflow",
+        # The tracker owns this workflow (and its limits); canopy only shows WIP.
+        wip_enforcement=WipEnforcement.off.value,
+        columns=[
+            flow.ColumnDef(name=c.name, category=c.category, position=i)
+            for i, c in enumerate(sorted(columns, key=lambda c: c.position))
+        ],
+        inherited=False,
+    )
+
+
+async def resolve_workflow(
+    session: AsyncSession, project: Project, *, ignore_tracker: bool = False
+) -> WorkflowView:
+    """The workflow a project's board uses: a mirrored project's tracker statuses, else its own
+    override, else its team's, else the workspace template, else the built-in default.
+    `ignore_tracker` skips the tracker's statuses (what the project would use natively)."""
+    mirrored = None if ignore_tracker else await tracker_view(session, project)
+    if mirrored is not None:
+        return mirrored
     if project.id is not None:
         row = await _find(session, team_id=None, project_id=project.id)
         if row is not None:
@@ -321,6 +362,60 @@ async def workflow_scope_project_ids(session: AsyncSession, project: Project) ->
     return ids if project.id in ids else sorted({*ids, project.id})
 
 
+async def wip_scope_project_ids(
+    session: AsyncSession, project: Project, view: WorkflowView | None = None
+) -> list[int]:
+    """The projects whose open cards count against this project's WIP limits: just this one
+    when its columns are its own (an override, or its tracker's statuses), else every project
+    of its team that shares the team's (or the template's) columns."""
+    assert project.id is not None
+    view = view or await resolve_workflow(session, project)
+    if view.scope in ("project", "tracker"):
+        return [project.id]
+    team_id = await project_team_id(session, project)
+    if team_id is None:
+        return [project.id]
+    return sorted({project.id, *await shared_column_project_ids(session, team_id)})
+
+
+async def shared_column_project_ids(session: AsyncSession, team_id: int) -> list[int]:
+    """The team's projects on the team's (or the template's) columns — not those with their
+    own override or a tracker's statuses. They share one WIP count per column."""
+    overridden = {
+        w.project_id
+        for w in (
+            await session.execute(select(Workflow).where(col(Workflow.project_id).is_not(None)))
+        ).scalars().all()
+    }
+    out: list[int] = []
+    for pid in await team_project_ids(session, team_id):
+        if pid in overridden:
+            continue
+        project = await session.get(Project, pid)
+        if project is None or await tracker_view(session, project) is not None:
+            continue
+        out.append(pid)
+    return out
+
+
+def open_status_counts(tasks: list[Task]) -> dict[str, int]:
+    """Open (not done/cancelled) cards per status, keyed case-insensitively — what a column's
+    WIP limit counts."""
+    counts: dict[str, int] = {}
+    for task in tasks:
+        if task.type == TaskType.summary or not task.status:
+            continue
+        if category_of_task(task) in (StatusCategory.done, StatusCategory.cancelled):
+            continue
+        key = task.status.casefold()
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+async def wip_counts(session: AsyncSession, project_ids: list[int]) -> dict[str, int]:
+    return open_status_counts(await _scope_leaves(session, project_ids))
+
+
 async def _projects_using(
     session: AsyncSession, *, team_id: int | None, project_id: int | None
 ) -> list[Project]:
@@ -337,7 +432,10 @@ async def _projects_using(
     projects = [
         p
         for p in (await session.execute(select(Project))).scalars().all()
-        if p.id is not None and p.id not in overridden
+        if p.id is not None
+        and p.id not in overridden
+        # A mirrored project's board shows its tracker's columns, not a team/template's.
+        and await tracker_view(session, p) is None
     ]
     if team_id is not None:
         ids = set(await team_project_ids(session, team_id))
@@ -804,7 +902,9 @@ async def move_task(
     """Move a card: change its status (canopy-owned tasks only) and/or its place in the
     column. Raises TrackingError (stale | status_externally_owned | native_tracking_disabled |
     unknown_status | wip_limit_reached). Does not commit."""
-    if expected_status is not None and (task.status or "") != expected_status:
+    # The board labels a status-less card "(no status)"; a client may echo either form.
+    expected = "" if expected_status == flow.NO_STATUS else expected_status
+    if expected is not None and (task.status or "") != expected:
         raise TrackingError(
             "stale",
             "The card was moved by someone else — refresh the board",
@@ -847,9 +947,15 @@ async def move_task(
             )
         if column.wip_limit is not None and workflow.wip_enforcement != WipEnforcement.off:
             key = column.name.casefold()
+            wip_ids = await wip_scope_project_ids(session, project, workflow)
+            counted = (
+                scope
+                if set(wip_ids) == set(scope_ids)
+                else await _scope_leaves(session, wip_ids)
+            )
             in_column = sum(
                 1
-                for t in scope
+                for t in counted
                 if t.id != task.id
                 and (t.status or "").casefold() == key
                 and category_of_task(t) not in (StatusCategory.done, StatusCategory.cancelled)

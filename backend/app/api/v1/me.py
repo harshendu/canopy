@@ -26,6 +26,7 @@ from app.schemas.entities import (
     MyWorkspaceResponse,
     TaskRead,
 )
+from app.services.features import feature_enabled
 
 router = APIRouter()
 
@@ -102,7 +103,8 @@ async def my_workspace(session: SessionDep, user: CurrentUser) -> MyWorkspaceRes
             stakeholder = [await to_read(a) for a in stake_adrs if a.id is not None]
 
     my_sprints: list[MySprintRead] = []
-    if engineer is not None and engineer.id is not None:
+    sprints_on = await feature_enabled(session, "tracking.sprints")
+    if sprints_on and engineer is not None and engineer.id is not None:
         mine = (
             await session.execute(
                 select(Task).where(

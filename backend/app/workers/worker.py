@@ -1,36 +1,91 @@
-"""arq worker: webhook processing + the Jira reconciliation poll (cron)."""
+"""arq worker: webhook processing, the tracker reconciliation poll and nightly jobs (cron)."""
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from arq import cron
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors import get_connector
+from app.connectors.tracker import WorkTracker, enabled_tracker_keys, tracker_class
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.startup_checks import ensure_secure_secret_key
 from app.models.base import Provider
 from app.models.integration import Connection
-from app.services import integration_policy
+from app.services import integration_policy, tracker_sync
+from app.services.tracker_types import TrackerCapabilities
 from app.workers.queue import redis_settings
+
+logger = logging.getLogger(__name__)
+
+
+async def _direct_tracker_connections(
+    session: AsyncSession, *, needs: Callable[[TrackerCapabilities], bool] | None = None
+) -> list[Connection]:
+    """Usable connections of every enabled tracker canopy reads directly (policy permitting)."""
+    out: list[Connection] = []
+    for key in enabled_tracker_keys():
+        provider = Provider(key)
+        cls = tracker_class(provider)
+        if cls is None or not cls.capabilities.direct_read:
+            continue
+        if needs is not None and not needs(cls.capabilities):
+            continue
+        if not integration_policy.reads_direct(
+            await integration_policy.get_setting(session, provider)
+        ):
+            # This tracker's reads are sourced via MCP/file by policy — canopy stands down.
+            continue
+        out.extend(await integration_policy.usable_direct_connections(session, provider))
+    return out
+
+
+async def tracker_incremental_sync(ctx: dict[str, Any]) -> dict[int, dict[str, int]]:
+    """Reconciliation poll over every bound tracker — the correctness backstop behind webhooks.
+    One failing connection is logged and skipped; it never stops the others."""
+    summary: dict[int, dict[str, int]] = {}
+    async with async_session_factory() as session:
+        for connection in await _direct_tracker_connections(session):
+            if connection.id is None:
+                continue
+            try:
+                result = await get_connector(connection, session).incremental_sync()
+            except Exception:  # keep polling the rest
+                logger.exception("Tracker poll failed for connection %s", connection.id)
+                await session.rollback()
+                continue
+            summary[connection.id] = {"created": result.created, "updated": result.updated}
+    return summary
 
 
 async def jira_incremental_sync(ctx: dict[str, Any]) -> dict[int, dict[str, int]]:
-    """Reconciliation poll — the correctness backstop behind webhooks."""
-    summary: dict[int, dict[str, int]] = {}
+    """Pre-tracker name of the poll, kept one release for jobs queued by name."""
+    return await tracker_incremental_sync(ctx)
+
+
+async def tracker_history_backfill(ctx: dict[str, Any]) -> dict[int, int]:
+    """Nightly: top up exact status history from each tracker's changelog, bounded per binding."""
+    summary: dict[int, int] = {}
     async with async_session_factory() as session:
-        setting = await integration_policy.get_setting(session, Provider.jira)
-        if not integration_policy.reads_direct(setting):
-            # Jira reads are sourced via MCP/file by policy — canopy's poll stands down.
-            return summary
-        connections = await integration_policy.usable_direct_connections(session, Provider.jira)
-        for connection in connections:
+        for connection in await _direct_tracker_connections(
+            session, needs=lambda caps: caps.status_history
+        ):
             if connection.id is None:
                 continue
             connector = get_connector(connection, session)
-            result = await connector.incremental_sync()
-            summary[connection.id] = {"created": result.created, "updated": result.updated}
+            if not isinstance(connector, WorkTracker):
+                continue
+            try:
+                for binding in await tracker_sync.bindings_for_connection(session, connection):
+                    added = await tracker_sync.backfill_pending(connector, binding)
+                    summary[connection.id] = summary.get(connection.id, 0) + added
+            except Exception:  # keep backfilling the rest
+                logger.exception("History backfill failed for connection %s", connection.id)
+                await session.rollback()
     return summary
 
 
@@ -67,21 +122,25 @@ async def startup(ctx: dict[str, Any]) -> None:
     ensure_secure_secret_key()
 
 
-_poll_minutes = set(range(0, 60, max(1, min(settings.JIRA_POLL_MINUTES, 30))))
+_poll_minutes = set(range(0, 60, max(1, min(settings.tracker_poll_minutes, 30))))
 _drop_minutes = set(range(0, 60, max(1, min(settings.FILE_DROP_POLL_MINUTES, 30))))
 
 
 class WorkerSettings:
     functions: ClassVar = [
+        tracker_incremental_sync,
         jira_incremental_sync,
+        tracker_history_backfill,
         process_webhook,
         capture_risk_snapshots,
         poll_file_drops,
     ]
     cron_jobs: ClassVar = [
-        cron(jira_incremental_sync, minute=_poll_minutes, run_at_startup=False),
+        cron(tracker_incremental_sync, minute=_poll_minutes, run_at_startup=False),
         # Nightly risk snapshot (03:00) — the trend matters more than any single value.
         cron(capture_risk_snapshots, hour={3}, minute={0}, run_at_startup=False),
+        # Nightly changelog top-up (03:30), after the snapshot.
+        cron(tracker_history_backfill, hour={3}, minute={30}, run_at_startup=False),
         cron(poll_file_drops, minute=_drop_minutes, run_at_startup=False),
     ]
     on_startup = startup

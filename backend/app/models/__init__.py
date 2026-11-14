@@ -21,10 +21,12 @@ from app.models.draft import DraftPlan, DraftTask
 from app.models.feature import FeatureFlag
 from app.models.integration import (
     Connection,
+    EngineerIdentity,
     ExternalRef,
     IntegrationSetting,
     JiraLink,
     PullRequest,
+    TrackerBinding,
     UserConnection,
 )
 from app.models.leadership import InitiativeLead, LeadershipNote
@@ -85,6 +87,7 @@ __all__ = [
     "DriftSuppression",
     "Engineer",
     "EngineerAvailability",
+    "EngineerIdentity",
     "ExternalRef",
     "FeatureFlag",
     "Holiday",
@@ -121,6 +124,7 @@ __all__ = [
     "TaskStatusHistory",
     "Team",
     "TeamMember",
+    "TrackerBinding",
     "User",
     "UserConnection",
     "Workflow",

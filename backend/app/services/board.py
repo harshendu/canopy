@@ -33,7 +33,10 @@ from app.services.workflow import (
     category_of_task,
     history_point,
     resolve_workflow,
+    shared_column_project_ids,
     team_workflow,
+    wip_counts,
+    wip_scope_project_ids,
 )
 
 
@@ -117,7 +120,11 @@ async def build_board_response(
     team_id: int | None = None,
     sprint_id: int | None = None,
     delivery_method: str = "kanban",
+    scope_counts: dict[str, int] | None = None,
 ) -> BoardResponse:
+    """`scope_counts`: open cards per status across the WIP scope (`wip_counts`) — a column's
+    limit counts the whole scope, which can be wider than this board (a team's other projects,
+    a sprint filter), so `over_limit` follows the same count the move check enforces."""
     today = date.today()
     leaves = leaves_of(tasks)
     ids = [t.id for t in leaves if t.id is not None]
@@ -170,8 +177,20 @@ async def build_board_response(
                     tags=list(t.tags or []),
                     sprint_id=t.sprint_id,
                     story_points=t.story_points,
+                    duration=t.duration,
                 )
             )
+        scope_wip = (
+            scope_counts.get(lane.status.casefold(), 0)
+            if scope_counts is not None and lane.in_workflow
+            else None
+        )
+        closed = lane.category in (StatusCategory.done.value, StatusCategory.cancelled.value)
+        over_limit = (
+            lane.wip_limit is not None and not closed and scope_wip > lane.wip_limit
+            if scope_wip is not None
+            else lane.over_limit
+        )
         lanes.append(
             BoardLaneRead(
                 status=lane.status,
@@ -181,8 +200,9 @@ async def build_board_response(
                 category=lane.category,
                 position=lane.position,
                 wip_limit=lane.wip_limit,
-                over_limit=lane.over_limit,
+                over_limit=over_limit,
                 in_workflow=lane.in_workflow,
+                scope_wip=scope_wip,
             )
         )
     return BoardResponse(
@@ -255,6 +275,9 @@ async def project_board(
         viewer=viewer,
         sprint_id=sprint_id,
         delivery_method=delivery.effective_method,
+        scope_counts=await wip_counts(
+            session, await wip_scope_project_ids(session, project, workflow)
+        ),
     )
 
 
@@ -309,4 +332,5 @@ async def team_board(
         team_id=team_id,
         sprint_id=sprint_id,
         delivery_method=delivery.effective_method if delivery is not None else "kanban",
+        scope_counts=await wip_counts(session, await shared_column_project_ids(session, team_id)),
     )

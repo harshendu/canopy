@@ -10,6 +10,7 @@ from app.api.deps import (
     PlannerWriter,
     SessionDep,
     current_engineer,
+    is_contributor,
     is_planner,
 )
 from app.core.events import publish
@@ -323,8 +324,11 @@ async def board(
 
 
 async def board_viewer(session: AsyncSession, user: User, project: Project) -> BoardViewer:
-    """What the caller may do on this project's board (shared with the team board)."""
-    engineer = await current_engineer(session, user)
+    """What the caller may do on this project's board (shared with the team board) — the same
+    rules `POST /tasks/{id}/move` enforces: a planner who may edit the project moves any
+    canopy-owned card; anyone else who contributes (a planner outside this project included)
+    moves their own cards or pulls an unassigned one; a viewer moves nothing."""
+    engineer = await current_engineer(session, user) if is_contributor(user) else None
     return BoardViewer(
         can_plan=is_planner(user) and await project_can_edit(session, user, project),
         engineer_id=engineer.id if engineer is not None else None,

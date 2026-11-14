@@ -106,6 +106,19 @@ async def _team(session: AsyncSession, team_id: int) -> Team:
     return team
 
 
+async def _refuse_tracker_owned(session: SessionDep, project: Project) -> None:
+    view = await workflow_service.tracker_view(session, project)
+    if view is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "workflow_externally_owned",
+                "message": f"This project's columns come from its tracker ({view.name}); "
+                "change them there — canopy picks them up on the next full sync.",
+            },
+        )
+
+
 @router.get("/projects/{project_id}/workflow", response_model=WorkflowRead)
 async def get_project_workflow(
     session: SessionDep, _: CurrentUser, project_id: int
@@ -120,9 +133,11 @@ async def put_project_workflow(
     session: SessionDep, user: PlannerWriter, project_id: int, payload: WorkflowUpdate
 ) -> WorkflowRead:
     """Give this project its own columns, overriding its team's (use only when it must
-    differ). Removing a column that holds tasks needs `move_tasks_to`."""
-    await _project(session, project_id)
+    differ). Removing a column that holds tasks needs `move_tasks_to`. A mirrored project's
+    columns are its tracker's statuses — edit those in the tracker (409)."""
+    project = await _project(session, project_id)
     await ensure_project_editable(session, user, project_id)
+    await _refuse_tracker_owned(session, project)
     return await _save(
         session, team_id=None, project_id=project_id, payload=payload, actor=actor_name(user)
     )

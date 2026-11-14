@@ -2,7 +2,8 @@
 ingest rows, then reuse the Phase-3 ingest service to upsert them idempotently. This is just a
 different *transport* for the same ingest — the file is the alternative to a Claude MCP push.
 
-Entity type is inferred from the connection's provider: Jira → issues, GitHub → pull requests.
+Entity type is inferred from the connection's provider: a work tracker (Jira, Linear, generic…) →
+items, GitHub → pull requests.
 Invalid rows are collected as errors and skipped (a bad row never aborts the whole file).
 """
 
@@ -16,6 +17,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.connectors.tracker import is_tracker
 from app.models.base import Provider
 from app.models.integration import Connection
 from app.schemas.entities import (
@@ -67,7 +69,7 @@ async def ingest_file(
     """Parse `data` (by the connection's provider) and ingest the valid rows idempotently."""
     rows = _rows_from_bytes(filename, data)
 
-    if connection.provider == Provider.jira:
+    if is_tracker(connection.provider):
         issues, errors = _validate_rows(rows, IngestIssue)
         result = await ingest.ingest_issues(session, connection, issues)
     elif connection.provider == Provider.github:

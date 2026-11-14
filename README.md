@@ -132,8 +132,10 @@ All settings are environment variables, read from `.env` at the repo root (or `b
 | `DEMO_MODE` / `DEMO_DATASET` | `false` / `ecommerce` | Unlocks the demo seed/reset endpoints and offline connector mocks. Dataset: `ecommerce` (a fictional online retailer). **Never enable in production.** |
 | `OAUTH_REDIRECT_BASE_URL` / `FRONTEND_BASE_URL` | `http://localhost:8000` / `http://localhost:5173` | Public URLs for OAuth callbacks and the post-consent redirect |
 | `JIRA_OAUTH_CLIENT_ID` / `…_SECRET`, `GITHUB_…`, `GOOGLE_…` | unset | OAuth 2.0 app credentials (only needed for the OAuth flow) |
-| `GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`, `EVENTS_WEBHOOK_SECRET` | unset | HMAC secrets for `/webhooks/*`. Each endpoint **rejects every request** (403) until its secret is set |
-| `JIRA_POLL_MINUTES` | `10` | Cadence of the worker's Jira reconciliation poll |
+| `GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`, `EVENTS_WEBHOOK_SECRET`, `<PROVIDER>_WEBHOOK_SECRET` | unset | HMAC secrets for `/webhooks/*` (other trackers post to `/webhooks/<provider>`). Each endpoint **rejects every request** (403) until its secret is set |
+| `TRACKERS_ENABLED` | `jira` | Work trackers a project can be bound to (comma-separated; empty = native tracking only) |
+| `TRACKING_DEFAULT_MODE` | `native` | Tracking mode reported for new projects (`native` — canopy owns status — or `mirrored`) |
+| `TRACKER_POLL_MINUTES` | `JIRA_POLL_MINUTES` (`10`) | Cadence of the worker's tracker reconciliation poll |
 | `FILE_DROP_BACKEND` (+ `FILE_DROP_*`) | disabled | Poll a local directory or S3 bucket for JSON/CSV exports to ingest (S3 needs the `[s3]` extra) |
 | `PLUGIN_MARKETPLACE_REF`, `PLUGIN_REPO_URL`, `PLUGIN_MCP_SERVER_PATH` | this repo | What the in-app *Agent Setup* page tells users to install — point them at your fork |
 
@@ -165,11 +167,11 @@ keeps Jira in sync.
 ## Claude Code plugin
 
 The [`plugin/`](plugin) directory is a [Claude Code](https://claude.com/claude-code) plugin: an MCP
-server with **120+ curated tools** (one per architect intent, not a mirror of the REST API), **14
-skills** (runbooks such as `planning-roadmaps`, `writing-adrs`, `syncing-jira`,
-`spec-driven-development` and `updating-canopy`, the session operating guide) and **7 subagents**
-(`gantt-planner`, `jira-sync`, `risk-analyst`, `drift-sentinel`, `scenario-architect`,
-`delivery-enricher`, `signal-harvester`).
+server with **140+ curated tools** (one per architect intent, not a mirror of the REST API), **16
+skills** (runbooks such as `planning-roadmaps`, `writing-adrs`, `syncing-trackers`,
+`working-the-board`, `spec-driven-development` and `updating-canopy`, the session operating
+guide) and **7 subagents** (`gantt-planner`, `tracker-sync`, `risk-analyst`, `drift-sentinel`,
+`scenario-architect`, `delivery-enricher`, `signal-harvester`).
 
 **1. Mint a token.** In the dashboard, open **Agent Setup** (`/agent-setup`) and generate an *agent
 token*. It acts with your permissions, minus one-way-door actions, and can be revoked at any time.

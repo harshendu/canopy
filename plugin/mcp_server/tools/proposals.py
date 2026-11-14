@@ -270,10 +270,14 @@ def register(mcp, client) -> None:
           `role` (what they may write).
         - `token_scope`: "agent" means this session runs on a bounded token — it can stage
           proposals and do reversible work, but one-way-door/external-write actions
-          (applying proposals, accepting one-way-door ADRs, push-to-Jira, applying
-          scenarios) will 403; route them through the human in the UI.
+          (applying proposals, accepting one-way-door ADRs, finalising draft plans /
+          push-to-Jira, applying a tracking switch, applying scenarios) will 403; route them
+          through the human in the UI.
         - `features`: the admin's feature-gate map (skip surfaces that are off).
-        - `initiatives` + `projects`: the portfolio to anchor ids against.
+        - `initiatives` + `projects`: the portfolio to anchor ids against; each project's
+          `tracking_mode` says who owns its statuses (native: canopy — `move_task`;
+          mirrored: its tracker — read-only here).
+        - `trackers`: the work trackers enabled here and what each supports.
         - `open_proposals`: staged changes already awaiting review (don't duplicate them —
           `revise_proposal` an open one instead of staging a near-copy).
         - `dashboard_url` / `reviews_url`: where to send the user to look and to commit.
@@ -295,9 +299,22 @@ def register(mcp, client) -> None:
                 "initiative_id": p.get("initiative_id"),
                 "health": p.get("health"),
                 "target_date": p.get("target_date"),
+                # native = canopy owns every status (move cards with move_task); mirrored = a
+                # tracker owns its tasks' status (read-only here — see get_project_tracking).
+                "tracking_mode": p.get("tracking_mode", "native"),
             }
             for p in await client.get("/projects")
         ]
+        try:
+            trackers = await client.get("/meta/trackers")
+            context["trackers"] = [
+                {"provider": t.get("provider"), "label": t.get("label"),
+                 "capabilities": t.get("capabilities")}
+                for t in trackers.get("trackers", [])
+                if t.get("enabled")
+            ]
+        except Exception:  # an older backend without the tracker catalog
+            context["trackers"] = []
         try:
             context["initiatives"] = [
                 {

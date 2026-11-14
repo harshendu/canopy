@@ -11,6 +11,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from app.api.deps import PlannerWriter, SessionDep
 from app.api.v1.connectors._shared import get_connection
 from app.connectors.base import SyncResult
+from app.connectors.tracker import is_tracker
 from app.models.base import Provider
 from app.schemas.entities import (
     FileIngestResult,
@@ -49,12 +50,14 @@ async def ingest_issues(
     session: SessionDep, _: PlannerWriter, connection_id: int, payload: IngestIssuesRequest
 ) -> SyncResult:
     connection = await get_connection(session, connection_id)
-    if connection.provider != Provider.jira:
+    if not is_tracker(connection.provider):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Not a Jira connection"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Not a work-tracker connection"
         )
     try:
-        return await ingest.ingest_issues(session, connection, payload.issues)
+        return await ingest.ingest_issues(
+            session, connection, payload.issues, project_id=payload.project_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

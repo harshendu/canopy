@@ -2,7 +2,7 @@
   "name": "canopy",
   "displayName": "Canopy Architecture Manager",
   "version": "0.2.0",
-  "description": "Manage software architecture, projects, milestones, teams, Jira sync, and Gantt scheduling from Claude — with review-first change proposals: stage updates from any source (Slack, email, meetings, Jira, GitHub, Drive) for the architect to review and commit in the canopy UI.",
+  "description": "Manage software architecture, projects, milestones, teams, a Kanban board and sprints, work-tracker sync (Jira and other trackers — or none), and Gantt scheduling from Claude — with review-first change proposals: stage updates from any source (Slack, email, meetings, trackers, GitHub, Drive) for the architect to review and commit in the canopy UI.",
   "author": {
     "name": "Canopy"
   },
@@ -14,6 +14,7 @@
     "project-management",
     "gantt",
     "jira",
+    "kanban",
     "adr"
   ],
   "userConfig": {

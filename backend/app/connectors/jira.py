@@ -1,67 +1,123 @@
-"""Jira Cloud connector (deep).
+"""Jira Cloud as a work tracker (USER_FLOWS §J).
 
-Jira is the source of truth for epics/stories and their status. Canopy syncs
-*from* Jira and never writes ticket **status** back. Reads use the enhanced JQL
-search endpoint (POST /rest/api/3/search/jql, cursor pagination) plus the Agile
-API for sprints. Status-transition history comes from the issue changelog.
+A `WorkTracker`: it fetches issues and normalizes them into `WorkItem`s (status + its Jira
+status category, epic/sub-task kind, assignee, story points, sprint), lists the project's
+statuses (the mirrored board's columns), replays the changelog, mirrors board sprints, and
+writes ticket **content** (summary, description, story points, epic→story parent) from a
+reviewed draft plan. Status is never written back: the interface has no transition method.
+Everything canopy does with the data — upsert, parents, watermarks, history, sprints,
+auto-replan — is the shared engine in `app/services/tracker_sync.py`.
 
-As a deliberate, scoped exception, canopy can **create and update ticket content**
-(summary, description, story points) from an architect-reviewed draft plan via
-`create_issue` / `update_issue` — but status remains Jira-owned and is never pushed.
-All requests are rate-limit-aware (Retry-After + backoff). Sync is idempotent via
-ExternalRef.
+Reads use the enhanced JQL search (POST /rest/api/3/search/jql, cursor pagination) and the
+Agile API; all requests are rate-limit-aware (Retry-After + backoff). The epic doc-field
+harvest (`list_fields`, `fetch_epics`, `fetch_remote_links`) is a Jira feature of the document
+graph, not of work tracking, and stays here unchanged.
+
+The pre-tracker methods (`_upsert_issue`, `map_subtree_into_*`, `sync_active_sprints`,
+`sync_status_history`) remain as thin wrappers over the engine for one release.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
-from sqlalchemy import delete
-from sqlmodel import col, select
+from pydantic import BaseModel
+from sqlmodel import select
 
-from app.connectors.base import Connector, SyncResult, register
+from app.connectors.base import EffectiveCredential, SyncResult
 from app.connectors.http import request_with_retry
-from app.models.base import Provider, StatusSource, TaskType
+from app.connectors.tracker import WorkTracker, register_tracker
+from app.models.base import Provider, TaskType
 from app.models.integration import ExternalRef
-from app.models.project import Project, Task, TaskStatusHistory
-from app.models.sprint import Sprint
-from app.services import ingest, mapping, sprint_service, workflow
-from app.services.org import project_team_id
+from app.services import ingest, tracker_sync, workflow
+from app.services.links import jira_browse_url
+from app.services.tracker_sync import BindingView, LinkMapResult
+from app.services.tracker_types import (
+    KIND_EPIC,
+    KIND_ITEM,
+    KIND_SUBITEM,
+    Assignee,
+    ItemDraft,
+    ItemPage,
+    ItemPatch,
+    ItemRef,
+    Iteration,
+    Scope,
+    StatusChange,
+    StatusDef,
+    TrackerCapabilities,
+    WebhookEvent,
+    WorkItem,
+)
+
+__all__ = ["JiraConnector", "LinkMapResult"]
 
 _FIELDS = ["summary", "status", "issuetype", "parent", "updated", "assignee"]
 _EPIC_TYPES = {"Epic"}
 _CHILD_BATCH = 50  # max parent keys per `parent in (...)` JQL page
+_CLOSED_SPRINTS_KEPT = 6  # completed sprints mirrored (velocity history)
+# Jira's status categories → canopy's. Jira has no "cancelled" category: a done-category status
+# whose name says it was dropped ("Won't Do", "Cancelled") maps to cancelled.
+_CATEGORY = {"new": "todo", "indeterminate": "in_progress", "done": "done"}
+_SPRINT_STATE = {"future": "planned", "active": "active", "closed": "completed"}
 
 
-@dataclass
-class LinkMapResult:
-    """Outcome of mapping a linked Jira subtree onto canopy entities (see `JiraLink`)."""
+class JiraConnectionConfig(BaseModel):
+    """A Jira site and how to authenticate (credentials are entered separately)."""
 
-    tasks_created: int = 0
-    tasks_updated: int = 0
-    projects_created: int = 0
-    projects_linked: int = 0
-    skipped: int = 0
-    created_project_ids: list[int] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)
+    base_url: str  # https://your-site.atlassian.net (OAuth sets the api.atlassian.com base)
+    email: str | None = None  # API-token auth (HTTP Basic email:token)
+    auth_type: str | None = None  # "oauth" once connected through OAuth
 
 
-@register(Provider.jira)
-class JiraConnector(Connector):
+class JiraScope(BaseModel):
+    """Where in Jira a binding points."""
+
+    project_key: str | None = None  # e.g. "SHOP"
+    board_id: int | None = None  # mirror this board's sprints
+    jql: str | None = None  # a saved query (scope_kind = query) instead of the whole project
+
+
+@register_tracker(Provider.jira)
+class JiraConnector(WorkTracker):
+    label: ClassVar[str] = "Jira"
+    capabilities: ClassVar[TrackerCapabilities] = TrackerCapabilities(
+        direct_read=True,
+        hierarchy=True,
+        status_categories=True,
+        status_history=True,
+        iterations=True,
+        webhooks=True,
+        create_items=True,
+        update_items=True,
+        estimates=True,
+        oauth=True,
+    )
+    config_schema: ClassVar[type[BaseModel]] = JiraConnectionConfig
+    scope_schema: ClassVar[type[BaseModel]] = JiraScope
+    webhook_signature_header: ClassVar[str | None] = "X-Hub-Signature"
+
     @property
     def base_url(self) -> str:
         return str(self.config["base_url"]).rstrip("/")
 
     @property
     def canopy_project_id(self) -> int:
+        """The legacy `config.project_id` binding (pre-bindings connections)."""
         return int(self.config["project_id"])
 
     @property
     def jira_project_key(self) -> str:
-        return str(self.config["jira_project_key"])
+        return str(self.config.get("jira_project_key") or self.config.get("project_key") or "")
+
+    @property
+    def connection_id(self) -> int | None:
+        if isinstance(self.connection, EffectiveCredential):
+            return self.connection._connection.id
+        return self.connection.id
 
     @property
     def _is_oauth(self) -> bool:
@@ -85,12 +141,89 @@ class JiraConnector(Connector):
             timeout=30.0,
         )
 
-    # --- issue search (enhanced JQL, cursor pagination) ---
-    async def _search(self, client: httpx.AsyncClient, jql: str) -> list[dict[str, Any]]:
+    # --------------------------------------------------------------------- #
+    # Normalization
+    # --------------------------------------------------------------------- #
+
+    def _epic_type_names(self, scope: Scope | None = None) -> set[str]:
+        """Issue-type names treated as epics: the binding's mapping, the legacy configured
+        `epic_issue_type`, plus `Epic`."""
+        names = set(_EPIC_TYPES)
+        configured = self.config.get("epic_issue_type")
+        if configured:
+            names.add(str(configured))
+        if scope is not None:
+            names.update(str(n) for n in scope.mapping.get("epic_types") or [])
+        return names
+
+    def _estimate_field(self, scope: Scope | None = None) -> str | None:
+        if scope is not None and scope.mapping.get("estimate_field"):
+            return str(scope.mapping["estimate_field"])
+        return self._story_point_field
+
+    def _fields(self, scope: Scope | None = None) -> list[str]:
+        estimate = self._estimate_field(scope)
+        return [*_FIELDS, estimate] if estimate else list(_FIELDS)
+
+    def normalize(self, issue: dict[str, Any], scope: Scope | None = None) -> WorkItem:
+        """One Jira issue as a `WorkItem`."""
+        fields = issue.get("fields") or {}
+        status = fields.get("status") or {}
+        status_name = status.get("name")
+        category = _CATEGORY.get(str((status.get("statusCategory") or {}).get("key") or ""))
+        if category == "done" and workflow.heuristic_category(status_name) == "cancelled":
+            category = "cancelled"
+        issuetype = fields.get("issuetype") or {}
+        type_name = str(issuetype.get("name") or "")
+        if type_name in self._epic_type_names(scope):
+            kind = KIND_EPIC
+        elif issuetype.get("subtask"):
+            kind = KIND_SUBITEM
+        else:
+            kind = KIND_ITEM
+        parent = fields.get("parent")
+        assignee = fields.get("assignee") or {}
+        estimate_field = self._estimate_field(scope)
+        raw_estimate = fields.get(estimate_field) if estimate_field else None
+        key = str(issue.get("key") or "") or None
+        return WorkItem(
+            external_id=str(issue["id"]),
+            key=key,
+            title=str(fields.get("summary") or key or issue["id"]),
+            status_name=status_name,
+            status_category=category,
+            kind=kind,
+            parent_external_id=str(parent["id"]) if parent and parent.get("id") else None,
+            assignee=(
+                Assignee(
+                    account_id=assignee.get("accountId"),
+                    name=assignee.get("displayName"),
+                    email=assignee.get("emailAddress"),
+                )
+                if assignee
+                else None
+            ),
+            estimate=float(raw_estimate) if isinstance(raw_estimate, int | float) else None,
+            updated=fields.get("updated"),
+            url=self.item_url(key) if key else None,
+            raw_type=type_name or None,
+        )
+
+    @classmethod
+    def browse_url(cls, config: Mapping[str, Any], key: str) -> str | None:
+        return jira_browse_url(config.get("base_url"), key)
+
+    # --------------------------------------------------------------------- #
+    # WorkTracker: reads
+    # --------------------------------------------------------------------- #
+
+    async def _search(
+        self, client: httpx.AsyncClient, jql: str, fields: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         issues: list[dict[str, Any]] = []
         next_token: str | None = None
         while True:
-            body: dict[str, Any] = {"jql": jql, "fields": _FIELDS, "maxResults": 100}
+            body: dict[str, Any] = {"jql": jql, "fields": fields or _FIELDS, "maxResults": 100}
             if next_token:
                 body["nextPageToken"] = next_token
             resp = await request_with_retry(client, "POST", "/rest/api/3/search/jql", json=body)
@@ -101,81 +234,275 @@ class JiraConnector(Connector):
                 break
         return issues
 
+    def _scope_jql(self, scope: Scope) -> str:
+        if scope.get("jql"):
+            return f"({scope.get('jql')})"
+        key = scope.get("project_key") or self.jira_project_key
+        return f'project = "{key}"'
+
+    async def fetch_items(self, scope: Scope, since: str | None) -> ItemPage:
+        jql = self._scope_jql(scope)
+        if since:
+            jql += f' AND updated >= "{since}"'
+        jql += " ORDER BY updated ASC"
+        async with await self.open_client() as client:
+            issues = await self._search(client, jql, self._fields(scope))
+        updated = [str(u) for i in issues if (u := (i.get("fields") or {}).get("updated"))]
+        watermark = self._to_jql_time(max(updated)) if updated else None
+        return ItemPage(
+            items=[self.normalize(i, scope) for i in issues], watermark=watermark or since
+        )
+
+    async def fetch_item(self, scope: Scope, key: str) -> WorkItem | None:
+        issue = await self.get_issue(key)
+        return self.normalize(issue, scope) if issue is not None else None
+
+    async def fetch_subtree(self, scope: Scope, root_key: str) -> list[WorkItem]:
+        return [self.normalize(i, scope) for i in await self.fetch_descendant_tree(root_key)]
+
+    async def list_statuses(self, scope: Scope) -> list[StatusDef]:
+        """The project's statuses across its issue types, ordered by category then Jira's
+        order (GET /rest/api/3/project/{key}/statuses)."""
+        key = scope.get("project_key") or self.jira_project_key
+        if not key:
+            return []
+        async with await self.open_client() as client:
+            try:
+                resp = await request_with_retry(
+                    client, "GET", f"/rest/api/3/project/{key}/statuses"
+                )
+            except httpx.HTTPStatusError:
+                return []
+        data = resp.json()
+        if not isinstance(data, list):
+            return []
+        seen: dict[str, StatusDef] = {}
+        for issue_type in data:
+            for status in (issue_type or {}).get("statuses") or []:
+                name = status.get("name")
+                if not name or name.casefold() in seen:
+                    continue
+                category = _CATEGORY.get(str((status.get("statusCategory") or {}).get("key")))
+                if category is None:
+                    continue
+                if category == "done" and workflow.heuristic_category(name) == "cancelled":
+                    category = "cancelled"
+                seen[name.casefold()] = StatusDef(name=str(name), category=category)
+        order = {"todo": 0, "in_progress": 1, "done": 2, "cancelled": 3}
+        ranked = sorted(
+            enumerate(seen.values()), key=lambda pair: (order.get(pair[1].category, 9), pair[0])
+        )
+        return [
+            StatusDef(name=s.name, category=s.category, position=i)
+            for i, (_, s) in enumerate(ranked)
+        ]
+
+    async def fetch_status_changes(self, scope: Scope, ref: ItemRef) -> list[StatusChange]:
+        histories: list[dict[str, Any]] = []
+        start_at = 0
+        key = ref.key or ref.external_id
+        async with await self.open_client() as client:
+            while True:
+                resp = await request_with_retry(
+                    client,
+                    "GET",
+                    f"/rest/api/3/issue/{key}/changelog",
+                    params={"startAt": start_at, "maxResults": 100},
+                )
+                data: dict[str, Any] = resp.json()
+                page = data.get("values", [])
+                histories.extend(page)
+                start_at += len(page)
+                if data.get("isLast", True) or not page:
+                    break
+        out: list[StatusChange] = []
+        for transition in self._parse_status_history(histories):
+            at = workflow.parse_remote_time(transition["changed_at"])
+            if at is None:
+                continue
+            out.append(
+                StatusChange(
+                    to_status=transition["to_status"],
+                    from_status=transition["from_status"],
+                    at=at,
+                    author=transition["author"],
+                )
+            )
+        return out
+
+    async def fetch_iterations(self, scope: Scope) -> list[Iteration]:
+        """The board's active and future sprints plus its most recent closed ones."""
+        board_id = scope.get("board_id") or self.config.get("board_id")
+        if not board_id:
+            return []
+        sprints = await self.list_sprints(int(board_id), state="active,future,closed")
+        by_id: dict[str, dict[str, Any]] = {}
+        for sprint in sprints:
+            by_id.setdefault(str(sprint["id"]), sprint)
+        closed = sorted(
+            (s for s in by_id.values() if s.get("state") == "closed"),
+            key=lambda s: str(s.get("endDate") or ""),
+        )[-_CLOSED_SPRINTS_KEPT:]
+        keep = [s for s in by_id.values() if s.get("state") != "closed"] + closed
+        out: list[Iteration] = []
+        async with await self.open_client() as client:
+            for sprint in keep:
+                issues = await self._sprint_issues(client, int(sprint["id"]))
+                start = workflow.parse_remote_time(sprint.get("startDate"))
+                end = workflow.parse_remote_time(sprint.get("endDate"))
+                out.append(
+                    Iteration(
+                        external_id=str(sprint["id"]),
+                        name=str(sprint.get("name") or sprint["id"]),
+                        state=_SPRINT_STATE.get(str(sprint.get("state")), "active"),
+                        start=start.date() if start else None,
+                        end=end.date() if end else None,
+                        goal=sprint.get("goal") or None,
+                        item_external_ids=tuple(str(i["id"]) for i in issues),
+                    )
+                )
+        return out
+
+    # --------------------------------------------------------------------- #
+    # WorkTracker: content writes (never status)
+    # --------------------------------------------------------------------- #
+
+    async def create_item(self, scope: Scope, draft: ItemDraft) -> ItemRef:
+        # A binding may point at another Jira project than the connection's default one; only
+        # then is the project passed (keeping the pre-tracker call shape otherwise).
+        extra: dict[str, str] = {}
+        scope_key = str(scope.get("project_key") or "")
+        if scope_key and scope_key != self.jira_project_key:
+            extra["project_key"] = scope_key
+        issue = await self.create_issue(
+            summary=draft.title,
+            issue_type=self.issue_type_for(
+                TaskType.summary if draft.kind == KIND_EPIC else TaskType.task
+            ),
+            description=draft.description,
+            story_points=draft.estimate,
+            parent_key=draft.parent.key if draft.parent is not None else None,
+            **extra,
+        )
+        return ItemRef(external_id=issue["id"], key=issue["key"])
+
+    async def update_item(self, scope: Scope, ref: ItemRef, patch: ItemPatch) -> None:
+        await self.update_issue(
+            ref.external_id,
+            summary=patch.title,
+            description=patch.description,
+            story_points=patch.estimate,
+        )
+
+    # --------------------------------------------------------------------- #
+    # Webhooks
+    # --------------------------------------------------------------------- #
+
+    @classmethod
+    def webhook_scope_hint(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        key = str((payload.get("issue") or {}).get("key") or "")
+        return {"project_key": key.split("-")[0]} if "-" in key else {}
+
+    def parse_webhook(self, payload: dict[str, Any]) -> WebhookEvent | None:
+        issue = payload.get("issue")
+        if not issue or not issue.get("id"):
+            return None
+        return WebhookEvent(item=self.normalize(issue), scope_hint=self.webhook_scope_hint(payload))
+
+    # --------------------------------------------------------------------- #
+    # Pre-tracker entry points (thin wrappers over the engine, one release)
+    # --------------------------------------------------------------------- #
+
+    def _legacy_view(self, project_id: int | None = None) -> BindingView:
+        connection = (
+            self.connection._connection
+            if isinstance(self.connection, EffectiveCredential)
+            else self.connection
+        )
+        view = tracker_sync.legacy_binding(connection)
+        scope = (
+            view.scope
+            if view is not None
+            else Scope(kind="project", values={"project_key": self.jira_project_key})
+        )
+        return BindingView(
+            connection_id=self.connection_id or 0,
+            provider=Provider.jira,
+            target_type="project",
+            target_id=project_id if project_id is not None else self.canopy_project_id,
+            scope=scope,
+            sync_iterations=bool(self.config.get("board_id")),
+        )
+
     async def _upsert_issue(
         self, issue: dict[str, Any], *, project_id: int | None = None, force_leaf: bool = False
     ) -> tuple[str, str | None, str]:
-        """Upsert one Jira issue as a canopy Task. Returns (action, parent_external_id, ext_id).
-
-        `project_id` overrides the connection's configured project (used when linking a ticket
-        into a specific target project). `force_leaf` keeps the task a leaf even for an epic
-        issue type (used when an epic is mapped to a Project elsewhere, not a summary task).
-        """
-        pid = project_id if project_id is not None else self.canopy_project_id
-        ext_id = issue["id"]
-        key = issue["key"]
-        fields = issue.get("fields", {})
-        summary = fields.get("summary") or key
-        status = (fields.get("status") or {}).get("name")
-        issuetype = (fields.get("issuetype") or {}).get("name", "")
-        updated = fields.get("updated")
-        parent = fields.get("parent")
-        parent_ext_id = parent.get("id") if parent else None
-        assignee = fields.get("assignee") or {}
-
-        # Shared upsert core (also used by MCP ingest) keeps the two paths from drifting.
-        action, _ = await ingest.upsert_task_from_external(
+        """Upsert one raw Jira issue as a canopy task. Returns (action, parent_id, ext_id)."""
+        item = self.normalize(issue)
+        action, _ = await tracker_sync.upsert_item(
             self.session,
-            project_id=pid,
             provider=Provider.jira,
-            external_id=ext_id,
-            external_key=key,
-            summary=summary,
-            status=status,
-            is_epic=issuetype in self._epic_type_names(),
-            updated=updated,
+            connection_id=self.connection_id,
+            project_id=project_id if project_id is not None else self.canopy_project_id,
+            item=item,
             force_leaf=force_leaf,
-            assignee_account_id=assignee.get("accountId"),
-            assignee_name=assignee.get("displayName"),
         )
-        return action, parent_ext_id, ext_id
+        return action, item.parent_external_id, item.external_id
 
     async def _wire_parents(self, parent_links: list[tuple[str, str]]) -> None:
-        """Second pass: set Task.parent_id once every epic has an ExternalRef."""
-        await ingest.wire_parents(self.session, Provider.jira, parent_links)
+        await ingest.wire_parents(
+            self.session, Provider.jira, parent_links, connection_id=self.connection_id
+        )
 
-    async def _run(self, jql: str) -> SyncResult:
-        result = SyncResult(provider="jira")
-        max_updated: str | None = self.connection.watermark
-        parent_links: list[tuple[str, str]] = []
-        async with await self.open_client() as client:
-            issues = await self._search(client, jql)
-        for issue in issues:
-            action, parent_ext_id, ext_id = await self._upsert_issue(issue)
-            setattr(result, action, getattr(result, action) + 1)
-            if parent_ext_id:
-                parent_links.append((ext_id, parent_ext_id))
-            updated = issue.get("fields", {}).get("updated")
-            if updated and (max_updated is None or updated > max_updated):
-                max_updated = updated
-        await self._wire_parents(parent_links)
-        result.watermark = self._to_jql_time(max_updated)
-        self.connection.watermark = result.watermark
-        await self.session.commit()
-        if result.created:
-            await self._auto_replan()
-        return result
+    async def map_subtree_into_project(
+        self, issues: list[dict[str, Any]], project_id: int
+    ) -> LinkMapResult:
+        return await tracker_sync.map_subtree(
+            self.session,
+            provider=Provider.jira,
+            connection_id=self.connection_id,
+            items=[self.normalize(i) for i in issues],
+            target_type="project",
+            target_id=project_id,
+        )
 
-    async def _auto_replan(self, project_id: int | None = None) -> None:
-        """Reschedule a canopy project after new tasks were imported (best-effort)."""
-        import contextlib
+    async def map_subtree_into_initiative(
+        self, issues: list[dict[str, Any]], initiative_id: int
+    ) -> LinkMapResult:
+        return await tracker_sync.map_subtree(
+            self.session,
+            provider=Provider.jira,
+            connection_id=self.connection_id,
+            items=[self.normalize(i) for i in issues],
+            target_type="initiative",
+            target_id=initiative_id,
+        )
 
-        from app.services.planner import reschedule_project
-        from app.services.scheduling import CycleError
+    async def sync_active_sprints(self) -> SyncResult:
+        """Mirror the board's sprints (no-op without a `board_id` config)."""
+        if not self.config.get("board_id"):
+            return SyncResult(provider="jira")
+        return await tracker_sync.sync_iterations(self, self._legacy_view())
 
-        pid = project_id if project_id is not None else self.canopy_project_id
-        # Leave dates as-is if the imported graph happens to contain a cycle.
-        with contextlib.suppress(CycleError):
-            await reschedule_project(self.session, pid)
+    async def sync_status_history(self, issue_key: str) -> int:
+        """Replay one issue's changelog into its task's history (replacing approximate rows)."""
+        ref = (
+            await self.session.execute(
+                select(ExternalRef).where(
+                    ExternalRef.provider == Provider.jira,
+                    ExternalRef.external_key == issue_key,
+                    ExternalRef.entity_type == "task",
+                )
+            )
+        ).scalars().first()
+        if ref is None:
+            return 0
+        view = self._legacy_view(project_id=0)
+        return await tracker_sync.backfill_task_history(self, view, ref.entity_id)
+
+    # --------------------------------------------------------------------- #
+    # Helpers
+    # --------------------------------------------------------------------- #
 
     @staticmethod
     def _to_jql_time(iso_ts: str | None) -> str | None:
@@ -189,70 +516,9 @@ class JiraConnector(Connector):
         except ValueError:
             return None
 
-    @staticmethod
-    def _parse_dt(iso_ts: str | None) -> datetime | None:
-        if not iso_ts:
-            return None
-        try:
-            return datetime.strptime(iso_ts[:19], "%Y-%m-%dT%H:%M:%S")
-        except ValueError:
-            return None
-
-    async def full_sync(self) -> SyncResult:
-        result = await self._run(f'project = "{self.jira_project_key}" ORDER BY updated ASC')
-        sprint_result = await self.sync_active_sprints()
-        return result.merge(sprint_result)
-
-    async def incremental_sync(self, since: str | None = None) -> SyncResult:
-        watermark = since or self.connection.watermark
-        jql = f'project = "{self.jira_project_key}"'
-        if watermark:
-            jql += f' AND updated >= "{watermark}"'
-        jql += " ORDER BY updated ASC"
-        result = await self._run(jql)
-        sprint_result = await self.sync_active_sprints()
-        return result.merge(sprint_result)
-
-    async def handle_webhook(self, payload: dict[str, Any]) -> SyncResult:
-        issue = payload.get("issue")
-        result = SyncResult(provider="jira")
-        if not issue:
-            return result
-        action, parent_ext_id, ext_id = await self._upsert_issue(issue)
-        setattr(result, action, getattr(result, action) + 1)
-        if parent_ext_id:
-            await self._wire_parents([(ext_id, parent_ext_id)])
-        await self.session.commit()
-        return result
-
-    # --- ticket linking: map a chosen ticket + its descendant subtree into canopy ---
-    def _epic_type_names(self) -> set[str]:
-        """Issue-type names treated as epics (the configured `epic_issue_type`, plus `Epic`)."""
-        names = set(_EPIC_TYPES)
-        configured = self.config.get("epic_issue_type")
-        if configured:
-            names.add(str(configured))
-        return names
-
     def _is_epic_issue(self, issue: dict[str, Any]) -> bool:
         name = (issue.get("fields", {}).get("issuetype") or {}).get("name", "")
         return name in self._epic_type_names()
-
-    def _nearest_epic_ancestor(
-        self, issue: dict[str, Any], by_id: dict[str, dict[str, Any]]
-    ) -> str | None:
-        """Walk up the parent chain (within the imported set) to the closest epic, if any."""
-        seen: set[str] = set()
-        parent = issue.get("fields", {}).get("parent")
-        cur: str | None = str(parent["id"]) if parent else None
-        while cur is not None and cur in by_id and cur not in seen:
-            seen.add(cur)
-            node = by_id[cur]
-            if self._is_epic_issue(node):
-                return cur
-            parent = node.get("fields", {}).get("parent")
-            cur = str(parent["id"]) if parent else None
-        return None
 
     async def get_issue(self, key_or_id: str) -> dict[str, Any] | None:
         """Fetch a single issue (the link root). Returns None if it doesn't exist (404)."""
@@ -262,7 +528,7 @@ class JiraConnector(Connector):
                     client,
                     "GET",
                     f"/rest/api/3/issue/{key_or_id}",
-                    params={"fields": ",".join(_FIELDS)},
+                    params={"fields": ",".join(self._fields())},
                 )
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == httpx.codes.NOT_FOUND:
@@ -284,135 +550,15 @@ class JiraConnector(Connector):
                 for start in range(0, len(frontier), _CHILD_BATCH):
                     batch = frontier[start : start + _CHILD_BATCH]
                     keys = ", ".join(f'"{k}"' for k in batch)
-                    for child in await self._search(client, f"parent in ({keys})"):
+                    for child in await self._search(
+                        client, f"parent in ({keys})", self._fields()
+                    ):
                         cid = str(child["id"])
                         if cid not in issues:
                             issues[cid] = child
                             next_frontier.append(str(child["key"]))
                 frontier = next_frontier
         return list(issues.values())
-
-    async def _unique_project_key(self, base: str) -> str:
-        """A project `key` (unique slug) derived from a Jira key, disambiguated on collision."""
-        candidate, n = base, 1
-        while True:
-            existing = (
-                await self.session.execute(select(Project).where(Project.key == candidate))
-            ).scalar_one_or_none()
-            if existing is None:
-                return candidate
-            n += 1
-            candidate = f"{base}-{n}"
-
-    async def _upsert_epic_project(
-        self, issue: dict[str, Any], initiative_id: int
-    ) -> tuple[int, str]:
-        """Map a Jira epic onto a canopy Project under the initiative. Returns (id, action)."""
-        ext_id = str(issue["id"])
-        key = str(issue["key"])
-        summary = issue.get("fields", {}).get("summary") or key
-        updated = issue.get("fields", {}).get("updated")
-
-        ref = await mapping.get_ref(self.session, Provider.jira, ext_id, "project")
-        project: Project | None = None
-        if ref is not None:
-            project = await self.session.get(Project, ref.entity_id)
-        if project is None:  # new epic, or dangling ref — create the project
-            project = Project(
-                key=await self._unique_project_key(key), name=summary, initiative_id=initiative_id
-            )
-            self.session.add(project)
-            action = "created"
-        else:
-            project.name = summary
-            if project.initiative_id is None:
-                project.initiative_id = initiative_id
-            action = "linked"
-        await self.session.flush()
-        assert project.id is not None
-        await mapping.upsert_ref(
-            self.session,
-            provider=Provider.jira,
-            external_id=ext_id,
-            entity_type="project",
-            entity_id=project.id,
-            external_key=key,
-            remote_updated=updated,
-        )
-        return project.id, action
-
-    async def map_subtree_into_project(
-        self, issues: list[dict[str, Any]], project_id: int
-    ) -> LinkMapResult:
-        """Map every issue in the subtree onto a Task in `project_id` (epics → summary tasks)."""
-        result = LinkMapResult()
-        imported = {str(i["id"]) for i in issues}
-        parent_links: list[tuple[str, str]] = []
-        for issue in issues:
-            action, parent_ext_id, ext_id = await self._upsert_issue(issue, project_id=project_id)
-            if action == "created":
-                result.tasks_created += 1
-            elif action == "updated":
-                result.tasks_updated += 1
-            else:
-                result.skipped += 1
-            if parent_ext_id and parent_ext_id in imported:
-                parent_links.append((ext_id, parent_ext_id))
-        await self._wire_parents(parent_links)
-        await self.session.commit()
-        if result.tasks_created:
-            await self._auto_replan(project_id)
-        return result
-
-    async def map_subtree_into_initiative(
-        self, issues: list[dict[str, Any]], initiative_id: int
-    ) -> LinkMapResult:
-        """Map epics → Projects under the initiative; each non-epic → a Task in its epic project."""
-        result = LinkMapResult()
-        by_id = {str(i["id"]): i for i in issues}
-
-        epic_project: dict[str, int] = {}
-        for issue in issues:
-            if self._is_epic_issue(issue):
-                project_id, action = await self._upsert_epic_project(issue, initiative_id)
-                epic_project[str(issue["id"])] = project_id
-                if action == "created":
-                    result.projects_created += 1
-                    result.created_project_ids.append(project_id)
-                else:
-                    result.projects_linked += 1
-
-        parent_links: list[tuple[str, str]] = []
-        for issue in issues:
-            if self._is_epic_issue(issue):
-                continue
-            epic_id = self._nearest_epic_ancestor(issue, by_id)
-            if epic_id is None:  # the initiative-level anchor, or a story with no epic ancestor
-                result.skipped += 1
-                result.notes.append(f"{issue['key']}: no epic ancestor — not mapped")
-                continue
-            project_id = epic_project[epic_id]
-            action, parent_ext_id, ext_id = await self._upsert_issue(
-                issue, project_id=project_id, force_leaf=True
-            )
-            if action == "created":
-                result.tasks_created += 1
-            elif action == "updated":
-                result.tasks_updated += 1
-            else:
-                result.skipped += 1
-            # Wire a parent only when it's a non-epic in the same project (e.g. sub-task → story);
-            # a task whose parent is the epic stays top-level (the epic is the project itself).
-            if parent_ext_id and parent_ext_id in by_id and not self._is_epic_issue(
-                by_id[parent_ext_id]
-            ):
-                parent_links.append((ext_id, parent_ext_id))
-        await self._wire_parents(parent_links)
-        await self.session.commit()
-        if result.tasks_created:
-            for pid in set(epic_project.values()):
-                await self._auto_replan(pid)
-        return result
 
     # --- writing issues (content only — status stays Jira-owned, never pushed) ---
     @staticmethod
@@ -444,9 +590,10 @@ class JiraConnector(Connector):
         issue_type: str,
         story_points: float | None,
         parent_key: str | None,
+        project_key: str | None = None,
     ) -> dict[str, Any]:
         fields: dict[str, Any] = {
-            "project": {"key": self.jira_project_key},
+            "project": {"key": project_key or self.jira_project_key},
             "summary": summary,
             "issuetype": {"name": issue_type},
         }
@@ -467,6 +614,7 @@ class JiraConnector(Connector):
         description: str | None = None,
         story_points: float | None = None,
         parent_key: str | None = None,
+        project_key: str | None = None,
     ) -> dict[str, str]:
         """Create a Jira issue from plan content. Returns {'id', 'key'}. Never sets status."""
         fields = self._build_create_fields(
@@ -475,6 +623,7 @@ class JiraConnector(Connector):
             issue_type=issue_type,
             story_points=story_points,
             parent_key=parent_key,
+            project_key=project_key,
         )
         async with await self.open_client() as client:
             resp = await request_with_retry(
@@ -611,69 +760,6 @@ class JiraConnector(Connector):
                 break
         return issues
 
-    async def sync_active_sprints(self) -> SyncResult:
-        """Mirror the board's active sprints (no-op without a `board_id` config). When the
-        canopy project belongs to a team, each Jira sprint becomes a Jira-owned `Sprint` of that
-        team and its issues' tasks join it (recorded in `TaskSprintHistory`); a team-less
-        project only gets the legacy sprint name on its tasks."""
-        result = SyncResult(provider="jira")
-        board_id = self.config.get("board_id")
-        if not board_id:
-            return result
-        sprints = await self.list_sprints(int(board_id), state="active")
-        project = await self.session.get(Project, self.canopy_project_id)
-        team_id = await project_team_id(self.session, project) if project is not None else None
-        async with await self.open_client() as client:
-            for sprint in sprints:
-                sprint_name = sprint.get("name")
-                row = await self._upsert_sprint(sprint, team_id) if team_id is not None else None
-                for issue in await self._sprint_issues(client, int(sprint["id"])):
-                    ref = await mapping.get_ref(self.session, Provider.jira, issue["id"], "task")
-                    if ref is None:
-                        continue
-                    task = await self.session.get(Task, ref.entity_id)
-                    if task is None:
-                        continue
-                    if row is not None:
-                        moved = sprint_service.record_membership(
-                            self.session, task, row, source=StatusSource.sync
-                        )
-                        if moved is not None:
-                            result.updated += 1
-                    elif task.sprint != sprint_name:
-                        task.sprint = sprint_name
-                        result.updated += 1
-        await self.session.commit()
-        return result
-
-    async def _upsert_sprint(self, sprint: dict[str, Any], team_id: int) -> Sprint:
-        """A Jira sprint as a Jira-owned canopy `Sprint` (idempotent via `ExternalRef`)."""
-        ext_id = str(sprint["id"])
-        ref = await mapping.get_ref(self.session, Provider.jira, ext_id, "sprint")
-        row = await self.session.get(Sprint, ref.entity_id) if ref is not None else None
-        if row is None:
-            row = Sprint(team_id=team_id, name=str(sprint.get("name") or ext_id), owner="jira")
-            self.session.add(row)
-        row.name = str(sprint.get("name") or row.name)
-        row.goal = sprint.get("goal") or row.goal
-        start = workflow.parse_remote_time(sprint.get("startDate"))
-        end = workflow.parse_remote_time(sprint.get("endDate"))
-        row.start_date = start.date() if start is not None else row.start_date
-        row.end_date = end.date() if end is not None else row.end_date
-        state = str(sprint.get("state") or "active")
-        row.state = {"future": "planned", "closed": "completed"}.get(state, "active")
-        await self.session.flush()
-        assert row.id is not None
-        await mapping.upsert_ref(
-            self.session,
-            provider=Provider.jira,
-            external_id=ext_id,
-            entity_type="sprint",
-            entity_id=row.id,
-            external_key=row.name,
-        )
-        return row
-
     # --- status history (issue changelog) ---
     @staticmethod
     def _parse_status_history(histories: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -693,75 +779,3 @@ class JiraConnector(Connector):
                         }
                     )
         return transitions
-
-    async def sync_status_history(self, issue_key: str) -> int:
-        """Pull the issue changelog and persist new status transitions. Returns count added."""
-        ref = await self._ref_by_key(issue_key)
-        if ref is None:
-            return 0
-        histories: list[dict[str, Any]] = []
-        start_at = 0
-        async with await self.open_client() as client:
-            while True:
-                resp = await request_with_retry(
-                    client,
-                    "GET",
-                    f"/rest/api/3/issue/{issue_key}/changelog",
-                    params={"startAt": start_at, "maxResults": 100},
-                )
-                data: dict[str, Any] = resp.json()
-                page = data.get("values", [])
-                histories.extend(page)
-                start_at += len(page)
-                if data.get("isLast", True) or not page:
-                    break
-
-        transitions = self._parse_status_history(histories)
-        if transitions:
-            # The changelog is exact: it replaces the approximate rows sync recorded (dated by the
-            # item's `updated`). Rows canopy itself recorded (a native period) are kept.
-            await self.session.execute(
-                delete(TaskStatusHistory).where(
-                    col(TaskStatusHistory.task_id) == ref.entity_id,
-                    col(TaskStatusHistory.source) == StatusSource.sync.value,
-                )
-            )
-        added = 0
-        for transition in transitions:
-            changed_at = workflow.parse_remote_time(transition["changed_at"])
-            if changed_at is None:
-                continue
-            if await self._has_history(ref.entity_id, changed_at, transition["to_status"]):
-                continue
-            self.session.add(
-                TaskStatusHistory(
-                    task_id=ref.entity_id,
-                    from_status=transition["from_status"],
-                    to_status=transition["to_status"],
-                    to_category=workflow.resolve_category(transition["to_status"]),
-                    changed_at=changed_at,
-                    author=transition["author"],
-                    source=StatusSource.backfill.value,
-                )
-            )
-            added += 1
-        await self.session.commit()
-        return added
-
-    async def _ref_by_key(self, issue_key: str) -> ExternalRef | None:
-        result = await self.session.execute(
-            select(ExternalRef).where(
-                ExternalRef.provider == Provider.jira, ExternalRef.external_key == issue_key
-            )
-        )
-        return result.scalar_one_or_none()
-
-    async def _has_history(self, task_id: int, changed_at: datetime, to_status: str | None) -> bool:
-        result = await self.session.execute(
-            select(TaskStatusHistory).where(
-                TaskStatusHistory.task_id == task_id,
-                TaskStatusHistory.changed_at == changed_at,
-                TaskStatusHistory.to_status == to_status,
-            )
-        )
-        return result.scalar_one_or_none() is not None

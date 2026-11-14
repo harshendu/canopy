@@ -52,6 +52,7 @@ from tools import (  # noqa: E402
     specs,
     sprints,
     team,
+    tracking,
 )
 
 mcp = FastMCP("canopy")
@@ -71,6 +72,7 @@ specs.register(mcp, client)
 delivery.register(mcp, client)
 outcomes.register(mcp, client)
 sprints.register(mcp, client)
+tracking.register(mcp, client)
 
 
 class BearerGuard:

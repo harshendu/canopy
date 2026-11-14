@@ -1,12 +1,14 @@
-"""A task's external resource links: its Jira issue, the GitHub PRs implementing it, and the
-design docs (GitHub/Drive) scoped to it. Canopy links out to the systems that own the work — it
-does not store the resources themselves (same boundary as the document graph)."""
+"""A task's external resource links: the tracker item behind it (Jira, Linear…), the GitHub PRs
+implementing it, and the design docs (GitHub/Drive) scoped to it. Canopy links out to the systems
+that own the work — it does not store the resources themselves (same boundary as the document
+graph)."""
 
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from app.connectors.tracker import registered_trackers, tracker_class
 from app.models.base import DocScope, Provider
 from app.models.doc import DocReference
 from app.models.integration import Connection, ExternalRef, PullRequest
@@ -15,6 +17,7 @@ from app.schemas.entities import (
     JiraIssueLink,
     PullRequestRead,
     TaskExternalLinksRead,
+    TrackerItemLink,
 )
 
 
@@ -27,57 +30,117 @@ def jira_browse_url(base_url: str | None, key: str) -> str | None:
     return f"{base_url.rstrip('/')}/browse/{key}"
 
 
-async def _jira_base_url(session: AsyncSession) -> str | None:
-    result = await session.execute(
-        select(Connection).where(
-            Connection.provider == Provider.jira, col(Connection.active).is_(True)
-        )
-    )
-    conn = result.scalars().first()
-    if conn is None:
+def tracker_item_url(
+    connection: Connection | None, provider: Provider | str, key: str
+) -> str | None:
+    """The browse URL of a tracker item through the connection it was synced from (None when the
+    tracker exposes no browsable site)."""
+    cls = tracker_class(provider)
+    if cls is None or connection is None:
         return None
-    base = conn.config.get("base_url")
-    return str(base) if base else None
+    return cls.browse_url(connection.config or {}, key)
+
+
+async def _task_refs(session: AsyncSession, task_ids: list[int]) -> dict[int, ExternalRef]:
+    """The live tracker ref behind each task (a detached ref — from a tracker the project no
+    longer uses — only when nothing newer exists)."""
+    providers = list(registered_trackers())
+    if not task_ids or not providers:
+        return {}
+    refs = (
+        await session.execute(
+            select(ExternalRef)
+            .where(
+                ExternalRef.entity_type == "task",
+                col(ExternalRef.entity_id).in_(task_ids),
+                col(ExternalRef.provider).in_(providers),
+            )
+            .order_by(col(ExternalRef.id))
+        )
+    ).scalars().all()
+    out: dict[int, ExternalRef] = {}
+    for ref in refs:
+        current = out.get(ref.entity_id)
+        if current is None or current.detached_at is not None or ref.detached_at is None:
+            out[ref.entity_id] = ref
+    return out
+
+
+async def _connections_for(
+    session: AsyncSession, refs: list[ExternalRef]
+) -> tuple[dict[int, Connection], dict[str, Connection]]:
+    """Connections by id (refs that name theirs) and the first active one per provider (legacy
+    refs synced before refs carried a connection)."""
+    ids = {r.connection_id for r in refs if r.connection_id is not None}
+    by_id: dict[int, Connection] = {}
+    if ids:
+        for conn in (
+            await session.execute(select(Connection).where(col(Connection.id).in_(ids)))
+        ).scalars().all():
+            assert conn.id is not None
+            by_id[conn.id] = conn
+    by_provider: dict[str, Connection] = {}
+    if any(r.connection_id is None for r in refs):
+        for conn in (
+            await session.execute(
+                select(Connection)
+                .where(col(Connection.active).is_(True))
+                .order_by(col(Connection.id))
+            )
+        ).scalars().all():
+            by_provider.setdefault(str(conn.provider), conn)
+    return by_id, by_provider
+
+
+def _connection(
+    ref: ExternalRef, by_id: dict[int, Connection], by_provider: dict[str, Connection]
+) -> Connection | None:
+    if ref.connection_id is not None and ref.connection_id in by_id:
+        return by_id[ref.connection_id]
+    return by_provider.get(str(ref.provider))
 
 
 async def external_urls(session: AsyncSession, task_ids: list[int]) -> dict[int, str]:
     """Browse URLs of the tracker items behind mirrored tasks, keyed by task id (tasks whose
     tracker exposes no browsable site are left out)."""
-    if not task_ids:
-        return {}
-    refs = (
-        await session.execute(
-            select(ExternalRef).where(
-                ExternalRef.provider == Provider.jira,
-                ExternalRef.entity_type == "task",
-                col(ExternalRef.entity_id).in_(task_ids),
-            )
-        )
-    ).scalars().all()
+    refs = await _task_refs(session, task_ids)
     if not refs:
         return {}
-    base = await _jira_base_url(session)
+    by_id, by_provider = await _connections_for(session, list(refs.values()))
     out: dict[int, str] = {}
-    for ref in refs:
-        url = jira_browse_url(base, ref.external_key or ref.external_id)
+    for task_id, ref in refs.items():
+        url = tracker_item_url(
+            _connection(ref, by_id, by_provider), ref.provider, ref.external_key or ref.external_id
+        )
         if url:
-            out[ref.entity_id] = url
+            out[task_id] = url
     return out
 
 
-async def collect_task_links(session: AsyncSession, task_id: int) -> TaskExternalLinksRead:
-    ref_result = await session.execute(
-        select(ExternalRef).where(
-            ExternalRef.provider == Provider.jira,
-            ExternalRef.entity_type == "task",
-            ExternalRef.entity_id == task_id,
-        )
+async def tracker_link(session: AsyncSession, task_id: int) -> TrackerItemLink | None:
+    """The tracker item a task mirrors (or was pushed to), with its browse URL."""
+    ref = (await _task_refs(session, [task_id])).get(task_id)
+    if ref is None:
+        return None
+    by_id, by_provider = await _connections_for(session, [ref])
+    key = ref.external_key or ref.external_id
+    cls = tracker_class(ref.provider)
+    return TrackerItemLink(
+        provider=str(ref.provider),
+        label=cls.label if cls is not None and cls.label else str(ref.provider),
+        key=key,
+        url=tracker_item_url(_connection(ref, by_id, by_provider), ref.provider, key),
     )
-    ref = ref_result.scalars().first()
-    jira: JiraIssueLink | None = None
-    if ref is not None:
-        key = ref.external_key or ref.external_id
-        jira = JiraIssueLink(key=key, url=jira_browse_url(await _jira_base_url(session), key))
+
+
+async def collect_task_links(session: AsyncSession, task_id: int) -> TaskExternalLinksRead:
+    tracker = await tracker_link(session, task_id)
+    # `jira` is the pre-tracker field, kept for one release (same item when Jira owns it).
+    jira = (
+        JiraIssueLink(key=tracker.key, url=tracker.url)
+        if tracker is not None and tracker.provider == Provider.jira.value
+        else None
+    )
 
     pr_result = await session.execute(
         select(PullRequest)
@@ -96,4 +159,4 @@ async def collect_task_links(session: AsyncSession, task_id: int) -> TaskExterna
     )
     docs = [DocReferenceRead.model_validate(d) for d in doc_result.scalars().all()]
 
-    return TaskExternalLinksRead(jira=jira, pull_requests=prs, docs=docs)
+    return TaskExternalLinksRead(tracker=tracker, jira=jira, pull_requests=prs, docs=docs)

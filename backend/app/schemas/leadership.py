@@ -93,7 +93,11 @@ class ProjectAccess(BaseModel):
     leads: list[InitiativeLeadRead] = []  # the initiative's owners
     owner_name: str | None = None  # the project's single owner
     pod_name: str | None = None
-    team_name: str | None = None
+    team_name: str | None = None  # the initiative's team (who leads it)
+    # The team that runs the project — its pod's team, else its initiative's — the one whose
+    # board, workflow and sprints the project uses (§C11).
+    team_id: int | None = None
+    running_team_name: str | None = None
 
 
 # --- leadership notes ------------------------------------------------------------------------

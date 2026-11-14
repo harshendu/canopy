@@ -21,7 +21,8 @@ Call `canopy:get_workspace_context` before anything else. It tells you:
   leadership reads digests and rarely writes.
 - **`token_scope`** — `"agent"` means this session holds a bounded token (USER_FLOWS §A6):
   staging, reading, and reversible writes work; one-way-door / external-write actions
-  (applying proposals, accepting a one-way-door ADR, push-to-Jira, applying a scenario)
+  (applying proposals, accepting a one-way-door ADR, finalising a draft plan / push-to-Jira,
+  applying a tracking switch, applying a scenario)
   will 403. Don't fight the 403 — it is the design. Route those through the human in the UI.
 - **`features`** — the admin's gate map. A 403 with `feature_disabled` means the surface is
   off; say so instead of retrying.
@@ -84,14 +85,14 @@ provenance is your own inference — say so in its `reason`.
   or another tracker) never write its status anywhere — not via `move_task` (it refuses
   and tells you the owner), not via a proposal (refused), not via your own Jira tools *for
   tasks canopy mirrors*. `update_task` never sets status. Plan→Jira ticket creation goes
-  through the reviewed **draft plan** flow (`drafting-jira-tickets`), content only.
+  through the reviewed **draft plan** flow (`drafting-tickets`), content only.
 - **GitHub owns code; Drive owns design docs.** Canopy links, it never copies
   (`add_doc_reference`); the only canopy→Drive write is an export snapshot.
 - **Canopy owns the plan** (tasks/dependencies/milestones), decisions, risks, outcomes —
   that's what proposals and the direct tools edit.
 - **Structured mirror-sync is not a proposal.** Syncing Jira issues into canopy verbatim
-  (`trigger_jira_sync`, `ingest_jira_issues`, `link_jira_ticket`) is judgment-free
-  mirroring — use the `syncing-jira` / `mcp-ingest` skills. Proposals are for changes
+  (`sync_tracker`, `sync_project_tracking`, `ingest_work_items`, `link_tracker_item`) is
+  judgment-free mirroring — use the `syncing-trackers` / `mcp-ingest` skills. Proposals are for changes
   that carry *your judgment*.
 
 ## 5. Review etiquette (the loop after staging)

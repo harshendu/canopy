@@ -20,6 +20,7 @@ from sqlalchemy import delete, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, col, select
 
+from app.connectors.demo import DEMO_JIRA_STATUSES
 from app.core.crypto import encrypt_token
 from app.core.security import hash_password
 from app.models.activity import ActivityEvent
@@ -74,7 +75,13 @@ from app.models.base import (
 )
 from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
-from app.models.integration import Connection, ExternalRef, JiraLink, PullRequest
+from app.models.integration import (
+    Connection,
+    ExternalRef,
+    JiraLink,
+    PullRequest,
+    TrackerBinding,
+)
 from app.models.leadership import InitiativeLead, LeadershipNote
 from app.models.org import Pod, Team, TeamMember
 from app.models.outcome import Outcome
@@ -108,7 +115,7 @@ from app.models.sprint import Sprint
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
 from app.services import proposals as proposal_svc
-from app.services import sprint_service, workflow
+from app.services import sprint_service, tracker_links, tracker_sync, workflow
 from app.services import sprints as sprint_metrics
 from app.services.org import team_project_ids
 from app.services.planner import reschedule_project
@@ -542,8 +549,8 @@ async def _apply_lifecycle(session: AsyncSession, refs: _Refs, spec: ProjectSpec
     columns = workflow.default_view().columns
     for phase in spec.phases:
         for ts in phase.tasks:
-            if ts.milestone:
-                continue
+            # Milestones are leaves too: they get a status (and history) so they sit on the
+            # board like any card instead of in the "(no status)" inbox.
             task = refs.tasks[spec.key][ts.name]
             created_days, transitions = _lifecycle(ts.status, ts.entered_days_ago)
             task.created_at = base - timedelta(days=created_days)
@@ -845,10 +852,22 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
             url=f"https://github.com/{repo}/pull/{pr.number}", author=pr.author,
             task_id=pr_task.id if pr_task is not None else None))
 
+    jira = conns["jira"]
+    jira_id = _req(jira.id)
+    # The flagship is bound to the Jira project (what "Sync now" pulls), with the tracker's
+    # statuses as its board columns — what a full sync stores from Jira.
+    await _add(session, TrackerBinding(
+        connection_id=jira_id, provider=Provider.jira, target_type="project", target_id=fid,
+        scope_kind="project", scope=tracker_sync.legacy_scope(jira.config),
+        mapping=tracker_sync.legacy_mapping(jira.config),
+        status_map=[{"name": n, "category": c, "position": i}
+                    for i, (n, c) in enumerate(DEMO_JIRA_STATUSES)],
+        sync_iterations=bool(jira.config.get("board_id"))))
     epic_id, epic_key = refs.ds.jira_epic
-    await _add(session, JiraLink(
-        connection_id=_req(conns["jira"].id), jira_issue_id=epic_id, jira_key=epic_key,
+    link = await _add(session, JiraLink(
+        connection_id=jira_id, jira_issue_id=epic_id, jira_key=epic_key,
         jira_issue_type="Epic", target_type="project", target_id=fid))
+    await tracker_links.mirror_jira_link(session, link)
     # The flagship is mirrored from Jira: the tasks Jira knows are Jira-owned (status locked to
     # the tracker on the board, each with its clickable <KEY>-… link); the rest of its tasks —
     # canopy-only work such as milestones and spikes — stay canopy-owned.
@@ -861,7 +880,7 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
             task.key = key
             await _add(session, ExternalRef(
                 provider=Provider.jira, external_id=ext_id, external_key=key,
-                entity_type="task", entity_id=task.id))
+                entity_type="task", entity_id=task.id, connection_id=jira_id))
             # Its history came from Jira, observed by sync.
             await session.execute(
                 update(TaskStatusHistory)

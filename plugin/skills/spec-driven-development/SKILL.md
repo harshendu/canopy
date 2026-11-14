@@ -32,7 +32,7 @@ Refine with the architect/PM. When the spec is ready to build, `set_spec_status(
 "approved")`.
 
 ### 4. Plan and link the work
-Generate the tickets from the spec using the **`drafting-jira-tickets`** skill (create a draft
+Generate the tickets from the spec using the **`drafting-tickets`** skill (create a draft
 plan whose `source` references this spec, push to Jira, sync back), then link the resulting tasks
 to the spec with `link_task_to_spec(task_id, spec_id)`. Move the spec to `in_progress`. Keep
 batches small — a criterion that needs a 2,000-line change is a criterion that needs splitting.

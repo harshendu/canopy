@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
+import sqlalchemy as sa
 from sqlmodel import Field, SQLModel
 
 
@@ -131,6 +132,11 @@ class Provider(StrEnum):
     jira = "jira"
     github = "github"
     gdrive = "gdrive"
+
+
+# `provider` columns are VARCHAR (not a native DB enum), so adding a tracker is one enum member
+# + one module — no dialect-branched enum migration (USER_FLOWS §J0).
+ProviderType = sa.Enum(Provider, native_enum=False, create_constraint=False, length=32)
 
 
 class ReadStrategy(StrEnum):

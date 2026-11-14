@@ -38,6 +38,8 @@ from app.api.v1 import (
     tasks,
     team,
     teams,
+    tracker_links,
+    tracking,
     workflows,
 )
 
@@ -60,6 +62,8 @@ api_router.include_router(team.router, prefix="/team", tags=["team"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 # Board workflows are core (every native project has one; status changes are gated per move).
 api_router.include_router(workflows.router, tags=["workflows"])
+# A project's tracking mode is core to read; changing it (and syncing) is gated per endpoint.
+api_router.include_router(tracking.router, tags=["tracking"])
 # A team's delivery settings are core; its board is gated per endpoint (tracking.board).
 api_router.include_router(sprints.delivery_router, tags=["sprints"])
 api_router.include_router(
@@ -83,6 +87,10 @@ api_router.include_router(
     tags=["connectors"],
     dependencies=[FeatureGate("integrations")],
 )
+api_router.include_router(
+    tracker_links.router, tags=["tracker-links"], dependencies=[FeatureGate("integrations")]
+)
+# Pre-tracker alias of /tracker-links, kept for one release.
 api_router.include_router(
     jira_links.router, tags=["jira-links"], dependencies=[FeatureGate("integrations")]
 )

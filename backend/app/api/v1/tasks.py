@@ -11,7 +11,7 @@ from app.api.deps import (
 )
 from app.core.events import publish
 from app.models.base import TaskType
-from app.models.project import Task, TaskStatusHistory
+from app.models.project import Project, Task, TaskStatusHistory
 from app.models.user import User
 from app.schemas.entities import (
     TaskCreate,
@@ -25,6 +25,7 @@ from app.schemas.entities import (
 from app.services.access import (
     ensure_project_editable,
     ensure_task_editable,
+    project_can_edit,
 )
 from app.services.access import (
     ensure_project_editable as ensure_initiative_editable_for_project,
@@ -144,6 +145,37 @@ async def update_task(
     return task
 
 
+async def _own_card_rules(
+    session: SessionDep, user: User, task: Task, payload: TaskMoveRequest
+) -> int | None:
+    """Without planning rights on the project, a contributor moves their own cards, or pulls an
+    unassigned one into another column (which assigns it to them — reordering it alone does
+    not). Returns the engineer to assign on a pull."""
+    engineer = await current_engineer(session, user)
+    if engineer is None or engineer.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Link your login to an engineer profile to move cards",
+        )
+    if task.assignee_engineer_id == engineer.id:
+        return None
+    if task.assignee_engineer_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Engineers may only move their own cards or pull an unassigned one",
+        )
+    changing = payload.to_status is not None and payload.to_status.strip().casefold() != (
+        task.status or ""
+    ).casefold()
+    if not changing:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pull an unassigned card by moving it to another column; reordering it "
+            "doesn't take it",
+        )
+    return engineer.id  # pulling unassigned work assigns it to you
+
+
 @router.post("/{task_id}/move", response_model=TaskMoveResponse)
 async def move_task(
     session: SessionDep, user: ContributorWriter, task_id: int, payload: TaskMoveRequest
@@ -163,22 +195,18 @@ async def move_task(
             detail={"code": "not_a_card", "message": "Summary tasks (phases) are not cards"},
         )
     pull_for: int | None = None
-    if is_planner(user):
-        await ensure_project_editable(session, user, task.project_id)
-    else:
-        engineer = await current_engineer(session, user)
-        if engineer is None or engineer.id is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Link your login to an engineer profile to move cards",
-            )
-        if task.assignee_engineer_id is None:
-            pull_for = engineer.id  # pulling unassigned work assigns it to you
-        elif task.assignee_engineer_id != engineer.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Engineers may only move their own cards or pull an unassigned one",
-            )
+    project = await session.get(Project, task.project_id)
+    planner_ok = (
+        is_planner(user) and project is not None and await project_can_edit(session, user, project)
+    )
+    if not planner_ok:
+        # Engineer rules — also for a planner outside this project (their own cards still move).
+        try:
+            pull_for = await _own_card_rules(session, user, task, payload)
+        except HTTPException:
+            if is_planner(user):
+                await ensure_project_editable(session, user, task.project_id)  # says why
+            raise
     try:
         outcome = await workflow_move(
             session,

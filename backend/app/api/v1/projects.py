@@ -34,6 +34,8 @@ from app.services.capacity import AvailabilitySpan
 from app.services.cascade import delete_project_cascade
 from app.services.drift import level as drift_level
 from app.services.metadata import normalize_tags
+from app.services.org import project_team_id
+from app.services.tracking import default_tracking_mode
 
 router = APIRouter()
 
@@ -205,6 +207,7 @@ async def create_project(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project key exists")
     data = payload.model_dump()
     data["tags"] = normalize_tags(data.get("tags") or [])
+    data["tracking_mode"] = payload.tracking_mode or default_tracking_mode()
     project = Project(**data)
     session.add(project)
     await session.commit()
@@ -339,6 +342,9 @@ async def project_access(session: SessionDep, user: CurrentUser, project_id: int
         if initiative is not None and initiative.team_id is not None
         else None
     )
+    # The team that runs the project (its pod's team first) — what boards and sprints use.
+    running = await project_team_id(session, project)
+    running_team = await session.get(Team, running) if running is not None else None
     return ProjectAccess(
         project_id=project_id,
         initiative_id=project.initiative_id,
@@ -348,6 +354,8 @@ async def project_access(session: SessionDep, user: CurrentUser, project_id: int
         owner_name=owner.name if owner is not None else None,
         pod_name=pod.name if pod is not None else None,
         team_name=team.name if team is not None else None,
+        team_id=running,
+        running_team_name=running_team.name if running_team is not None else None,
     )
 
 
