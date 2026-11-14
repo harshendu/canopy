@@ -42,6 +42,7 @@ import {
   type ProjectTab,
 } from "../lib/projectNav";
 import { useCurrentUser } from "../lib/useCurrentUser";
+import { useProjectTeam } from "../lib/useProjectTeam";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
 import { leadTeamLabel } from "../lib/initiativeAccess";
 import { featureOn, useFeatures } from "../lib/useFeatures";
@@ -107,6 +108,8 @@ export default function ProjectView() {
   });
   const canEdit = access.data?.can_edit ?? true;
   const mayPlan = isPlanner(me?.role) && canEdit;
+  // The project's team (pod → team, else initiative → team): its page, and its sprints.
+  const projectTeam = useProjectTeam(id);
   const mayWriteProject = canWriteProjects(me?.role) && canEdit;
   const mayContribute = canContribute(me?.role);
 
@@ -273,9 +276,21 @@ export default function ProjectView() {
         ]}
         title={project.data ? project.data.name : "Project"}
         subtitle={
-          access.data && (access.data.owner_name || access.data.pod_name) ? (
+          access.data && (access.data.owner_name || access.data.pod_name || projectTeam.team) ? (
             <span className="text-xs">
-              {access.data.team_name && <>{access.data.team_name} team · </>}
+              {projectTeam.team ? (
+                <>
+                  <Link
+                    to={`/teams/${projectTeam.team.id}`}
+                    className="font-medium text-canopy-700 hover:underline"
+                  >
+                    {projectTeam.team.name} team
+                  </Link>{" "}
+                  ·{" "}
+                </>
+              ) : (
+                access.data.team_name && <>{access.data.team_name} team · </>
+              )}
               {access.data.pod_name && <>{access.data.pod_name} pod · </>}
               {access.data.initiative_name && <>{access.data.initiative_name} · </>}
               {access.data.owner_name && (
@@ -571,6 +586,7 @@ export default function ProjectView() {
             source={{ kind: "project", id }}
             onTaskClick={setSelectedTaskId}
             onTaskCreated={replanAfterEdit}
+            teamId={projectTeam.teamId}
           />
         </Suspense>
       )}

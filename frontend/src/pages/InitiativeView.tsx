@@ -146,7 +146,14 @@ export default function InitiativeView() {
       )}
       {(r.team_name || r.pods.length > 0 || leadTeam) && (
         <p className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-          {r.team_name && <span className="text-slate-700">{r.team_name} team</span>}
+          {r.team_name &&
+            (r.team_id != null ? (
+              <Link to={`/teams/${r.team_id}`} className="font-medium text-canopy-700 hover:underline">
+                {r.team_name} team
+              </Link>
+            ) : (
+              <span className="text-slate-700">{r.team_name} team</span>
+            ))}
           {r.pods.map((p) => (
             <span key={p} className="rounded bg-canopy-50 px-1.5 py-0.5 text-canopy-700">
               {p} pod

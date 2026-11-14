@@ -87,14 +87,18 @@ export function removedColumns(saved: readonly WorkflowColumn[], draft: Workflow
 }
 
 /** canopy-owned cards per column (folded name) — what a removed column must rehome. Mirrored
- *  cards keep their tracker's status, so they never block a removal. */
+ *  cards keep their tracker's status, so they never block a removal; nor does a card the team
+ *  board merely shows in a column (its own status has another name). */
 export function occupiedColumns(
-  lanes: readonly { status: string; tasks: readonly { status_owner: string }[] }[],
+  lanes: readonly { status: string; tasks: readonly { status: string; status_owner: string }[] }[],
 ): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const lane of lanes) {
-    const n = lane.tasks.filter((t) => t.status_owner === CANOPY_OWNER).length;
-    if (n > 0) counts[fold(lane.status)] = (counts[fold(lane.status)] ?? 0) + n;
+    const key = fold(lane.status);
+    const n = lane.tasks.filter(
+      (t) => t.status_owner === CANOPY_OWNER && fold(t.status) === key,
+    ).length;
+    if (n > 0) counts[key] = (counts[key] ?? 0) + n;
   }
   return counts;
 }
@@ -196,5 +200,12 @@ export function workflowSourceLabel(workflow: Pick<WorkflowRead, "scope" | "inhe
         : "The workspace template that teams start from.";
     case "default":
       return "The built-in default columns — none have been saved yet.";
+    case "tracker":
+      return "Columns come from the project’s tracker — change them there.";
   }
+}
+
+/** Columns canopy can edit — not a mirrored project's tracker statuses. */
+export function workflowEditable(workflow: Pick<WorkflowRead, "scope">): boolean {
+  return workflow.scope !== "tracker";
 }

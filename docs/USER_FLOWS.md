@@ -844,12 +844,24 @@ underneath (tasks, statuses, history) is the same.
   admin — `can_manage` in the GET) · **MCP:** `get_team_delivery`, `set_team_delivery`. New teams
   start on `DELIVERY_DEFAULT_METHOD` (env, default `kanban`). Switching to `kanban` needs the
   active sprint completed (409 `active_sprint`); nothing is deleted — past sprints stay history.
+- **UI:** team page (`/teams/:teamId` — linked from the project header's team name, the
+  Initiatives team headings, the initiative cockpit and the **Teams** list on `/team`) →
+  **Settings**: the method (with a one-line explanation of each), sprint length and estimate
+  unit; read-only without `can_manage`; the `409 active_sprint` refusal shows inline.
 - **Gate:** **`tracking.sprints`** — off means every team works as Kanban
   (`effective_method = kanban`) and the sprint endpoints 403. The delivery settings are core.
 - **Upgrade:** teams whose projects synced Jira sprints start on `both`; every other team on
   `kanban`.
 
 ### C11.2 The team board
+- **UI:** team page → **Board** — the Kanban board (§C9) over every project the team runs: cards
+  carry a project chip (and story points); extra **project** / **pod** filters and **By
+  project** swimlanes; quick-add asks which project. **Edit columns** edits the team's workflow
+  (shown to the team's directors/managers). When the team runs sprints a **sprint selector**
+  (active sprint · backlog · all work · any sprint) sits in the toolbar — on project boards of
+  sprint teams too — showing the selected sprint's dates, time left and goal; it opens on the
+  active sprint when there is one. A move validates against the card's own project workflow, so
+  a team column its project's override lacks is refused (`422`, rolled back with the message).
 - **API:** `GET /api/v1/teams/{id}/board?pod_id=&project_id=&sprint=` (gate `tracking.board`) —
   the project board's shape (§C9.2) over **every project the team runs**, on the **team's
   workflow** (one set of columns and WIP limits: the team's work in progress). A card whose status
@@ -874,6 +886,14 @@ underneath (tasks, statuses, history) is the same.
   next_sprint_id?}` (captures what was completed; each unfinished task moves on, recorded),
   `POST .../reopen` · **MCP:** `list_sprints`, `get_sprint`, `plan_sprint`, `start_sprint`,
   `complete_sprint`; skill **`planning-sprints`**.
+- **UI:** team page → **Sprints** (sprint or both): the sprint list and **New sprint**, then a
+  **planning view** with the backlog beside the sprint — move tasks by mouse, touch, keyboard
+  (left/right jumps lists) or Add/Remove, optimistically; a capacity bar (over capacity warns)
+  with person-days per engineer; **Start**, **Complete** (asks where unfinished work goes: a
+  planned sprint or the backlog), **Reopen**, **Edit**, **Delete** (planned only). A mirrored
+  sprint shows its owner and hides lifecycle actions. The **task drawer** has a **Sprint** field
+  (live sprints + Backlog; hidden for Kanban teams or with the gate off) and a **Story points**
+  input; `/me` shows **My sprint** (dates, time left, done/total, your tasks).
 - **Planning view:** `GET /sprints/{id}` returns the tasks plus `capacity` — the open estimate vs
   the team's **person-days** over the sprint (allocations to the team's projects × working days ×
   availability/PTO) and its **mean velocity**; `over_capacity` **warns, never blocks**.
@@ -890,6 +910,10 @@ underneath (tasks, statuses, history) is the same.
   **`sprint_overrun`** for an open task whose computed end falls after its active sprint ends.
 
 ### C11.4 Measure sprints (team-level only)
+- **UI:** team page → **Sprint report**: the burndown (remaining, the ideal line to the sprint
+  end, scope added), six stats, velocity bars (committed vs completed, with the mean) and the
+  P50/P85 sprint forecast (or the server's reason when data is thin), each chart with a **Show
+  the numbers** table. While a sprint runs its unfinished work reads "Not done yet".
 - **Report:** `GET /api/v1/sprints/{id}/report` — daily **burndown** (remaining estimate vs an
   ideal line from the captured commitment; work added after the start shown separately as
   `scope_added`), `committed`, `completed`, `reliability` (completed ÷ committed),
@@ -904,11 +928,12 @@ underneath (tasks, statuses, history) is the same.
   **Never per engineer** (the §X Goodhart rule).
 
 ### C11.5 Not built yet
-- The team page (board / sprints / settings), sprint planning drag-between-lists, the sprint
-  selector on boards, the sprint report charts, the task panel's sprint field and "My sprint" in
-  `/me` are API/MCP-only until the UI lands (see Known UI gaps).
-- Native sprint *iterations* in trackers are mirrored only for Jira's **active** sprints today;
-  planned/completed tracker sprints arrive with the tracker engine.
+- **Reopen** doesn't bring back the work a completion carried over, so a reopened sprint's report
+  counts it as scope removed.
+- The planning backlog shows no day estimates for teams sized in **days** (board cards carry no
+  `duration`); sprint members do.
+- Trackers' planned/completed sprints are mirrored by the tracker engine (§J0) when a binding
+  syncs iterations; canopy still never writes sprints to a tracker.
 
 ---
 
@@ -2345,9 +2370,6 @@ markdown ADR) and a Drive folder of checkout and payments docs.
 ## Known UI gaps (currently API/MCP-only)
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
-- **Teams' delivery methods and sprints** (§C11) — the team board, sprint planning / start /
-  complete, the sprint report and velocity are API/MCP-only (`get_board(team_id)`, `plan_sprint`,
-  `get_velocity`, …) until the team page lands.
 - The **epic doc-field mapping / harvest** setup (§V2/§V3) stays conversational (AI-driven via the
   plugin) — no React wizard (deliberate); the Docs **tab** itself is built (read + add links).
 - Project rename/archive/date edits (B4) — the header has the weekend toggle + health/status/tags

@@ -16,10 +16,12 @@ import {
   containerOf,
   expectedStatusOf,
   filterCards,
+  foldedStatus,
   groupIntoSwimlanes,
   isFiltering,
   isOpenCard,
   laneCount,
+  limitWip,
   matchesFilter,
   moveTargets,
   normalizeBoard,
@@ -29,9 +31,14 @@ import {
   placementOf,
   sameOrder,
   toMoveRequest,
+  trackerItemOf,
   trackerName,
   trackingFailure,
   viewerForRole,
+  wipBeyondBoard,
+  workflowPath,
+  workflowQueryKey,
+  wouldBlockOnWip,
   type Board,
   type Card,
   type Lane,
@@ -58,6 +65,8 @@ function card(id: number, overrides: Partial<Card> = {}): Card {
     is_critical: false,
     deadline: null,
     tags: [],
+    sprint_id: null,
+    story_points: null,
     ...overrides,
   };
 }
@@ -73,6 +82,7 @@ function lane(status: string, category: Lane["category"], tasks: Card[], extra: 
     category,
     position: 0,
     wip_limit: null,
+    scope_wip: null,
     over_limit: false,
     in_workflow: true,
     ...extra,
@@ -88,6 +98,9 @@ function board(lanes: Lane[], extra: Partial<Board> = {}): Board {
     mode: "native",
     wip_enforcement: "warn",
     viewer: PLANNER,
+    team_id: null,
+    sprint_id: null,
+    delivery_method: "kanban",
     ...extra,
   };
 }
@@ -126,6 +139,7 @@ describe("normalizeBoard", () => {
     expect(b.mode).toBe("native");
     expect(b.wip_enforcement).toBe("warn");
     expect(b.viewer).toBeNull();
+    expect(b).toMatchObject({ team_id: null, sprint_id: null, delivery_method: "kanban" });
     expect(b.lanes[0]).toMatchObject({ category: null, position: 0, wip_limit: null, over_limit: false, in_workflow: true });
     expect(b.lanes[0].tasks[0]).toMatchObject({
       project_id: 9,
@@ -222,9 +236,9 @@ describe("viewerForRole", () => {
     });
   });
 
-  it("drops the engineer path for a planner-role user who may not plan this project", () => {
+  it("keeps the engineer rules for a planner who may not plan this project", () => {
     const outsider = { ...ENGINEER };
-    expect(viewerForRole(outsider, { planner: true, contributor: true })?.engineer_id).toBeNull();
+    expect(viewerForRole(outsider, { planner: true, contributor: true })).toEqual(ENGINEER);
     expect(viewerForRole(PLANNER, { planner: true, contributor: true })).toEqual(PLANNER);
   });
 
@@ -291,6 +305,17 @@ describe("applyOptimisticMove", () => {
     expect(applyOptimisticMove(b, { taskId: 1, to_status: "To Do" })).toBe(b);
   });
 
+  it("keeps a column's scope-wide WIP in step with what moved on this board", () => {
+    const b = board([
+      lane("To Do", "todo", [card(1), card(2)], { scope_wip: 6 }),
+      lane("In Progress", "in_progress", [card(3)], { wip_limit: 3, scope_wip: 3 }),
+    ]);
+    const after = applyOptimisticMove(b, { taskId: 1, to_status: "In Progress" });
+    expect(after.lanes[0]).toMatchObject({ wip: 1, scope_wip: 5 });
+    // Judged across the scope: 4 open against a limit of 3, though this board shows two.
+    expect(after.lanes[1]).toMatchObject({ wip: 2, scope_wip: 4, over_limit: true });
+  });
+
   it("does not mutate the board it was given", () => {
     const b = sample();
     const snapshot = JSON.stringify(b);
@@ -350,6 +375,17 @@ describe("filters", () => {
     expect(boardTags(lanes)).toEqual(["api", "web"]);
     expect(boardOwners(lanes)).toEqual([7]);
   });
+
+  it("narrows a team board to a project, or to a pod through each card's project", () => {
+    const team = [
+      lane("To Do", "todo", [card(1, { project_id: 5 }), card(2, { project_id: 6 }), card(3, { project_id: 7 })]),
+    ];
+    const podOf = new Map<number, number | null>([[5, 50], [6, 50], [7, null]]);
+    expect(ids(filterCards(team, { ...NO_FILTER, project: 6 }, podOf)[0])).toEqual([2]);
+    expect(ids(filterCards(team, { ...NO_FILTER, pod: 50 }, podOf)[0])).toEqual([1, 2]);
+    expect(ids(filterCards(team, { ...NO_FILTER, pod: 50 })[0])).toEqual([]);
+    expect(isFiltering({ ...NO_FILTER, pod: 50 })).toBe(true);
+  });
 });
 
 describe("groupIntoSwimlanes", () => {
@@ -383,6 +419,15 @@ describe("groupIntoSwimlanes", () => {
     expect(rows.map((r) => r.label)).toEqual(["Build", "Design", "#99", "No phase"]);
     expect(rows[1].count).toBe(2);
   });
+
+  it("groups a team board by project, alphabetically", () => {
+    const team = [lane("To Do", "todo", [card(1, { project_id: 2 }), card(2, { project_id: 1 })])];
+    const rows = groupIntoSwimlanes(team, "project", new Map([[1, "Search"], [2, "Payments"]]));
+    expect(rows.map((r) => [r.key, r.label])).toEqual([
+      ["project:2", "Payments"],
+      ["project:1", "Search"],
+    ]);
+  });
 });
 
 describe("WIP and labels", () => {
@@ -397,6 +442,45 @@ describe("WIP and labels", () => {
     expect(laneCount(b.lanes[0])).toBe("3");
     expect(laneCount(b.lanes[1])).toBe("2/2");
     expect(laneCount(b.lanes[2])).toBe("1");
+  });
+
+  it("judges the limit on the scope-wide WIP when the server sends it", () => {
+    const shared = { wip: 2, scope_wip: 5, wip_limit: 4 };
+    expect(overLimit(shared)).toBe(true);
+    expect(overLimit({ ...shared, scope_wip: null })).toBe(false);
+    expect(limitWip(shared)).toBe(5);
+    expect(wipBeyondBoard(shared)).toBe(true);
+    expect(wipBeyondBoard({ wip: 2, scope_wip: 2 })).toBe(false);
+    const column = lane("Doing", "in_progress", [card(1)], { wip_limit: 4, scope_wip: 5 });
+    expect(laneCount(column)).toBe("5/4");
+    expect(laneCount({ ...column, wip_limit: null })).toBe("1");
+  });
+
+  it("predicts a refusal for a full column only under block enforcement", () => {
+    const full = board(
+      [
+        lane("To Do", "todo", [card(1)]),
+        lane("Doing", "in_progress", [card(2)], { wip_limit: 2, scope_wip: 2 }),
+        lane("Done", "done", [], { wip_limit: 1 }),
+      ],
+      { wip_enforcement: "block" },
+    );
+    expect(wouldBlockOnWip(full, { taskId: 1, to_status: "doing" })).toBe(true);
+    expect(wouldBlockOnWip({ ...full, wip_enforcement: "warn" }, { taskId: 1, to_status: "Doing" })).toBe(false);
+    // Reordering inside the column, closed columns and room to spare never block.
+    expect(wouldBlockOnWip(full, { taskId: 2, to_status: "Doing", before_task_id: 2 })).toBe(false);
+    expect(wouldBlockOnWip(full, { taskId: 1, to_status: "Done" })).toBe(false);
+    const roomy = { ...full, lanes: full.lanes.map((l) => ({ ...l, scope_wip: l.scope_wip && 1 })) };
+    expect(wouldBlockOnWip(roomy, { taskId: 1, to_status: "Doing" })).toBe(false);
+    expect(wouldBlockOnWip(full, { taskId: 1, after_task_id: 1 })).toBe(false);
+  });
+
+  it("names a task's tracker item, preferring the neutral link", () => {
+    const jira = { key: "SHOP-1", url: "https://jira.example.com/browse/SHOP-1" };
+    expect(trackerItemOf({ jira, tracker: null })).toEqual({ provider: "jira", label: "Jira", ...jira });
+    const linear = { provider: "linear", label: "Linear", key: "ENG-7", url: null };
+    expect(trackerItemOf({ jira, tracker: linear })).toEqual(linear);
+    expect(trackerItemOf({ jira: null })).toBeNull();
   });
 
   it("names trackers and cards", () => {
@@ -421,12 +505,26 @@ describe("WIP and labels", () => {
     expect(expectedStatusOf({ status: NO_STATUS })).toBe("");
     expect(expectedStatusOf({ status: "To Do" })).toBe("To Do");
   });
+
+  it("names a card's own status when the team board shows it in another column", () => {
+    expect(foldedStatus({ status: "Code Review" }, { status: "In Progress" })).toBe("Code Review");
+    expect(foldedStatus({ status: "in progress" }, { status: "In Progress" })).toBeNull();
+    expect(foldedStatus({ status: NO_STATUS }, { status: NO_STATUS })).toBeNull();
+  });
 });
 
 describe("source, cells and requests", () => {
   it("keys a project board where the task drawer invalidates it", () => {
     expect(boardQueryKey({ kind: "project", id: 4 })).toEqual(["board", 4]);
     expect(boardPath({ kind: "project", id: 4 })).toBe("/projects/4/board");
+  });
+
+  it("extends the key and path with a sprint filter, and serves team boards", () => {
+    expect(boardQueryKey({ kind: "project", id: 4 }, "active")).toEqual(["board", 4, "active"]);
+    expect(boardQueryKey({ kind: "team", id: 2 })).toEqual(["team-board", 2]);
+    expect(boardPath({ kind: "team", id: 2 }, "12")).toBe("/teams/2/board?sprint=12");
+    expect(workflowPath({ kind: "team", id: 2 })).toBe("/teams/2/workflow");
+    expect(workflowQueryKey({ kind: "team", id: 2 })).toEqual(["workflow", "team", 2]);
   });
 
   it("round-trips any status name through a cell id", () => {

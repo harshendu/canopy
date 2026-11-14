@@ -7,6 +7,8 @@ import {
   NO_STATUS,
   isClosedCategory,
   laneCount,
+  limitWip,
+  wipBeyondBoard,
   type Lane,
 } from "../../lib/board";
 import { Icon } from "../icons";
@@ -16,7 +18,9 @@ function columnHint(lane: Lane): string {
   if (lane.status === NO_STATUS) return "no status yet";
   const category = lane.category ? CATEGORY_LABELS[lane.category] : null;
   if (!lane.in_workflow) return category ? `${category} · not in workflow` : "not in workflow";
-  return category ?? "";
+  // The limit counts cards this board doesn't show (other projects, sprints or pods).
+  const shared = lane.wip_limit != null && wipBeyondBoard(lane) ? " · WIP counts the team" : "";
+  return `${category ?? ""}${shared}`;
 }
 
 function countTitle(lane: Lane): string {
@@ -24,7 +28,12 @@ function countTitle(lane: Lane): string {
     return `${lane.tasks.length} card${lane.tasks.length === 1 ? "" : "s"}`;
   }
   if (lane.wip_limit == null) return `${lane.wip} open, no WIP limit`;
-  return `${lane.wip} open of a WIP limit of ${lane.wip_limit}${lane.over_limit ? " — over the limit" : ""}`;
+  const scope = wipBeyondBoard(lane)
+    ? ` across the team’s projects (${lane.wip} on this board)`
+    : "";
+  return `${limitWip(lane)} open${scope} of a WIP limit of ${lane.wip_limit}${
+    lane.over_limit ? " — over the limit" : ""
+  }`;
 }
 
 /** A column's header: name, category hint, WIP against its limit (red when over) or the card

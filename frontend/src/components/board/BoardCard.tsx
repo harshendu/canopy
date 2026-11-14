@@ -22,6 +22,10 @@ function formatDay(iso: string): string {
 export interface BoardCardProps {
   card: Card;
   ownerName?: string;
+  /** Team board: the card's project (shown unless its key already names it). */
+  projectLabel?: string;
+  /** The card's own status when the board shows it in a column of another name. */
+  statusNote?: string | null;
   /** Today as `YYYY-MM-DD`, to flag an overdue deadline. */
   today: string;
   /** The columns the "Move to…" menu offers (empty = no menu). */
@@ -35,6 +39,8 @@ export interface BoardCardProps {
 export function BoardCardView({
   card,
   ownerName,
+  projectLabel,
+  statusNote,
   today,
   moveTargets = [],
   onMoveTo,
@@ -47,6 +53,8 @@ export function BoardCardView({
   const overdue =
     card.deadline !== null && card.deadline < today && !isClosedCategory(card.status_category);
   const label = cardLabel(card);
+  const showProject =
+    projectLabel !== undefined && !(card.key ?? "").toUpperCase().startsWith(`${projectLabel.toUpperCase()}-`);
 
   return (
     <div
@@ -60,6 +68,11 @@ export function BoardCardView({
         {handle}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1 text-[11px] leading-4">
+            {showProject && (
+              <span title="Project" className="rounded bg-slate-100 px-1 font-mono text-slate-500">
+                {projectLabel}
+              </span>
+            )}
             {card.key && <span className="font-mono text-slate-500">{card.key}</span>}
             {mirrored &&
               (card.external_url ? (
@@ -123,10 +136,26 @@ export function BoardCardView({
             </div>
           )}
 
+          {statusNote && (
+            <div className="mt-1 text-[11px] text-slate-500">
+              <span title="The card's own status — this column is the closest the board's columns have">
+                status: {statusNote}
+              </span>
+            </div>
+          )}
+
           <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-slate-400">
             <span title="Days in this status" className="tabular-nums">
               {card.age_days}d
             </span>
+            {card.story_points != null && (
+              <span
+                title="Story points"
+                className="rounded bg-slate-100 px-1 tabular-nums text-slate-600"
+              >
+                {card.story_points} pt{card.story_points === 1 ? "" : "s"}
+              </span>
+            )}
             {card.aging && (
               <span
                 title="In this status longer than the team’s cycle-time P85"

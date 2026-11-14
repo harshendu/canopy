@@ -1,19 +1,10 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
   MeasuringStrategy,
-  PointerSensor,
   TouchSensor,
   closestCenter,
   getFirstCollision,
@@ -28,13 +19,12 @@ import {
   type DragOverEvent,
   type DragStartEvent,
   type Over,
-  type PointerSensorOptions,
   type UniqueIdentifier,
 } from "@dnd-kit/core";
 import { arrayMove, hasSortableData, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 
 import { api } from "../../api/client";
-import type { BoardResponse, Engineer, Task } from "../../api/types";
+import type { BoardResponse, Engineer, Sprint, Task, TeamDelivery } from "../../api/types";
 import {
   NO_FILTER,
   boardOwners,
@@ -49,6 +39,7 @@ import {
   expectedStatusOf,
   filterCards,
   fold,
+  foldedStatus,
   groupIntoSwimlanes,
   isFiltering,
   moveTargets,
@@ -58,6 +49,7 @@ import {
   trackerName,
   trackingFailure,
   viewerForRole,
+  wouldBlockOnWip,
   type Board,
   type BoardSource,
   type Card,
@@ -70,32 +62,24 @@ import {
   type SwimlaneMode,
 } from "../../lib/board";
 import { canContribute, isPlanner } from "../../lib/permissions";
+import {
+  defaultSprintSelection,
+  localToday,
+  shownSprint,
+  sprintParam,
+  usesSprints,
+  type SprintSelection,
+} from "../../lib/sprints";
 import { useCurrentUser } from "../../lib/useCurrentUser";
+import { featureOn, useFeatures } from "../../lib/useFeatures";
 import { useMoveCard } from "../../lib/useMoveCard";
 import { QueryError } from "../QueryError";
 import { BoardCardView, SortableBoardCard } from "./BoardCard";
 import { BoardColumnCell, BoardColumnHeader } from "./BoardColumn";
 import BoardToolbar from "./BoardToolbar";
-import QuickAdd, { type QuickAddDefaults } from "./QuickAdd";
+import QuickAdd, { type QuickAddDefaults, type QuickAddProject } from "./QuickAdd";
+import { MOUSE_ACTIVATION, MouseAndPenSensor, TOUCH_ACTIVATION } from "./sensors";
 import WorkflowEditor from "./WorkflowEditor";
-
-/** The pointer sensor for mouse and pen. Touch is left to the TouchSensor's press-and-hold,
- *  so a swipe across the board still scrolls it (a pointer sensor would claim every touch). */
-class MouseAndPenSensor extends PointerSensor {
-  static activators = [
-    {
-      eventName: "onPointerDown" as const,
-      handler: (
-        { nativeEvent: event }: ReactPointerEvent,
-        { onActivation }: PointerSensorOptions,
-      ): boolean => {
-        if (event.pointerType === "touch" || !event.isPrimary || event.button !== 0) return false;
-        onActivation?.({ event });
-        return true;
-      },
-    },
-  ];
-}
 
 const SCREEN_READER_INSTRUCTIONS = {
   draggable:
@@ -108,6 +92,17 @@ const SCREEN_READER_INSTRUCTIONS = {
 const COLUMN_WIDTH = "16rem";
 const COLLAPSED_WIDTH = "2.75rem";
 
+/** A project on a team board. */
+export interface BoardProject {
+  id: number;
+  key: string;
+  name: string;
+  pod_id: number | null;
+}
+
+const NO_PROJECTS: BoardProject[] = [];
+const NO_PODS: { id: number; name: string }[] = [];
+
 interface CellInfo {
   swimlane: Swimlane;
   lane: Lane;
@@ -116,6 +111,9 @@ interface CellInfo {
 
 interface DragState {
   activeId: number;
+  /** The column the card was picked up from (a team board may show a card in a column that
+   *  isn't its own status, so a move is a change of column, not of status name). */
+  originLane: string;
   /** The layout when the card was picked up, and as the drag reshapes it. */
   start: Layout;
   items: Layout;
@@ -137,41 +135,75 @@ interface Notice {
   link?: { href: string; label: string };
 }
 
-/** Today in the viewer's time zone, as `YYYY-MM-DD` (deadlines are calendar days). */
-function localToday(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 function cellName(info: CellInfo | undefined): string {
   if (!info) return "a column";
   return info.swimlane.label ? `${info.lane.status} — ${info.swimlane.label}` : info.lane.status;
 }
 
 /**
- * The Kanban board (USER_FLOWS §C9): the workflow's columns in order with their WIP limits,
- * ranked cards, filters and swimlanes. Cards move by drag and drop (mouse, touch, keyboard), by
- * their "Move to…" menu, or from the task drawer — all through `POST /tasks/{id}/move`, shown
- * optimistically. A mirrored card's status belongs to its tracker: it can be reordered in its
- * column but not moved out of it. `source` says whose board this is, so a team board can reuse it.
+ * The Kanban board (USER_FLOWS §C9, §C11.2): the workflow's columns in order with their WIP
+ * limits, ranked cards, filters and swimlanes — for one project or for every project a team
+ * runs (`source`). Cards move by drag and drop (mouse, touch, keyboard), by their "Move to…"
+ * menu, or from the task drawer — all through `POST /tasks/{id}/move`, shown optimistically. A
+ * mirrored card's status belongs to its tracker: it can be reordered in its column but not
+ * moved out of it. For a team that runs sprints, a sprint selector narrows the board.
  */
 export default function KanbanBoard({
   source,
   onTaskClick,
   onTaskCreated,
+  teamId: projectTeamId,
+  projects = NO_PROJECTS,
+  pods = NO_PODS,
+  canEditColumns,
 }: {
   source: BoardSource;
-  onTaskClick?: (taskId: number) => void;
+  onTaskClick?: (taskId: number, projectId: number) => void;
   /** After a card is added (the project view re-plans so the new task gets dates). */
   onTaskCreated?: () => void;
+  /** Project board: the project's team — its delivery method decides the sprint selector
+   *  (undefined while it is being worked out, null = no team). A team board is its own team. */
+  teamId?: number | null;
+  /** Team board: the team's projects (card labels, the project filter, quick add) and pods. */
+  projects?: BoardProject[];
+  pods?: { id: number; name: string }[];
+  /** Who may edit the columns, when it isn't the board's planners (a team's columns belong to
+   *  its directors and managers). */
+  canEditColumns?: boolean;
 }) {
   const qc = useQueryClient();
-  const boardKey = boardQueryKey(source);
+  const features = useFeatures();
+  const teamId = source.kind === "team" ? source.id : projectTeamId;
   const projectId = source.kind === "project" ? source.id : null;
+
+  // A team that runs sprints gets a sprint selector; the board waits for the team's method so
+  // it opens on the active sprint rather than flashing all work first.
+  const delivery = useQuery({
+    queryKey: ["team-delivery", teamId],
+    queryFn: () => api.get<TeamDelivery>(`/teams/${teamId}/delivery`),
+    enabled: teamId != null,
+  });
+  const sprinting =
+    teamId != null &&
+    featureOn(features, "tracking.sprints") &&
+    usesSprints(delivery.data?.effective_method);
+  const sprintList = useQuery({
+    queryKey: ["sprints", teamId],
+    queryFn: () => api.get<Sprint[]>(`/teams/${teamId}/sprints`),
+    enabled: sprinting,
+  });
+  const [sprintChoice, setSprintChoice] = useState<SprintSelection | null>(null);
+  const selection = sprintChoice ?? defaultSprintSelection(delivery.data?.active_sprint_id);
+  const param = sprinting ? sprintParam(selection) : null;
+  const ready = teamId === null || (teamId !== undefined && !delivery.isPending);
+
+  const boardKey = boardQueryKey(source, param);
   const boardQuery = useQuery({
     queryKey: boardKey,
-    queryFn: async () => normalizeBoard(await api.get<BoardResponse>(boardPath(source))),
+    queryFn: async () => normalizeBoard(await api.get<BoardResponse>(boardPath(source, param))),
+    enabled: ready,
+    // Switching sprints keeps the last board on screen (dimmed, inert) until the next arrives.
+    placeholderData: keepPreviousData,
   });
   const engineers = useQuery({
     queryKey: ["engineers"],
@@ -201,6 +233,7 @@ export default function KanbanBoard({
     enabled: swimlaneMode === "parent" && projectId !== null,
   });
 
+  const placeholder = boardQuery.isPlaceholderData;
   const board = boardQuery.data;
   // The optimistic move reached the cache (or a refetch replaced it): stop holding the drop.
   if (held && held.base !== board) setHeld(null);
@@ -214,25 +247,37 @@ export default function KanbanBoard({
       ),
     [board?.viewer, me],
   );
+  // While the next sprint's board loads, the last one shows but nothing on it moves.
+  const actor = placeholder ? null : viewer;
   const names = useMemo(
     () => new Map((engineers.data ?? []).map((e) => [e.id, e.name] as const)),
     [engineers.data],
   );
-  const phaseNames = useMemo(
-    () =>
-      new Map(
-        (phases.data ?? []).filter((t) => t.type === "summary").map((t) => [t.id, t.name] as const),
-      ),
-    [phases.data],
+  const projectsById = useMemo(() => new Map(projects.map((p) => [p.id, p] as const)), [projects]);
+  const podOf = useMemo(
+    () => new Map(projects.map((p) => [p.id, p.pod_id] as const)),
+    [projects],
   );
+  const swimlaneLabels = useMemo(() => {
+    if (swimlaneMode === "owner") return names;
+    if (swimlaneMode === "project") {
+      return new Map(projects.map((p) => [p.id, `${p.key} · ${p.name}`] as const));
+    }
+    return new Map(
+      (phases.data ?? []).filter((t) => t.type === "summary").map((t) => [t.id, t.name] as const),
+    );
+  }, [swimlaneMode, names, projects, phases.data]);
   const cardsById = useMemo(
     () => new Map((board?.lanes ?? []).flatMap((l) => l.tasks.map((t) => [t.id, t] as const))),
     [board],
   );
-  const visibleLanes = useMemo(() => (board ? filterCards(board.lanes, filter) : []), [board, filter]);
+  const visibleLanes = useMemo(
+    () => (board ? filterCards(board.lanes, filter, podOf) : []),
+    [board, filter, podOf],
+  );
   const swimlanes = useMemo(
-    () => groupIntoSwimlanes(visibleLanes, swimlaneMode, swimlaneMode === "owner" ? names : phaseNames),
-    [visibleLanes, swimlaneMode, names, phaseNames],
+    () => groupIntoSwimlanes(visibleLanes, swimlaneMode, swimlaneLabels),
+    [visibleLanes, swimlaneMode, swimlaneLabels],
   );
   const isCollapsed = useCallback(
     (lane: Lane) => collapsedOverrides[lane.status] ?? lane.category === "cancelled",
@@ -255,7 +300,8 @@ export default function KanbanBoard({
   const closeEditor = useCallback(() => setEditingColumns(false), []);
 
   // --- moves ------------------------------------------------------------------
-  const move = useMoveCard(boardKey, {
+  // Every sprint variant of this board is updated at once (they share the key prefix).
+  const move = useMoveCard(boardQueryKey(source), {
     onSuccess: (res, m) => {
       if (m.to_status !== undefined && res.warnings.includes("wip_limit_exceeded")) {
         const limit = board?.lanes.find((l) => fold(l.status) === fold(m.to_status ?? ""))?.wip_limit;
@@ -280,20 +326,30 @@ export default function KanbanBoard({
     onSettled: (m) => setHeld((h) => (h && h.taskId === m.taskId ? null : h)),
   });
 
-  const commitMove = (card: Card, toStatus: string | undefined, placement: Placement) => {
+  /** Send a move. `dropped` is the layout a drag left: held on screen until the optimistic
+   *  move lands — unless the column is full under `block`, when the card stays put. */
+  const commitMove = (
+    card: Card,
+    toStatus: string | undefined,
+    placement: Placement,
+    dropped?: Layout,
+  ) => {
     const pulling =
       toStatus !== undefined &&
-      viewer !== null &&
-      !viewer.can_plan &&
+      actor !== null &&
+      !actor.can_plan &&
       card.assignee_engineer_id === null;
     const request: CardMove = {
       taskId: card.id,
       projectId: card.project_id,
       to_status: toStatus,
       expected_status: expectedStatusOf(card),
-      assignTo: pulling ? viewer.engineer_id : null,
+      assignTo: pulling ? actor.engineer_id : null,
       ...placement,
     };
+    if (dropped && board && !wouldBlockOnWip(board, request)) {
+      setHeld({ taskId: card.id, items: dropped, base: board });
+    }
     setNotice(null);
     move.mutate(request);
   };
@@ -302,8 +358,8 @@ export default function KanbanBoard({
 
   // --- drag and drop -----------------------------------------------------------
   const sensors = useSensors(
-    useSensor(MouseAndPenSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 6 } }),
+    useSensor(MouseAndPenSensor, { activationConstraint: MOUSE_ACTIVATION }),
+    useSensor(TouchSensor, { activationConstraint: TOUCH_ACTIVATION }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -352,12 +408,12 @@ export default function KanbanBoard({
     const originInfo = origin ? cells.get(origin) : undefined;
     if (!card || !origin || !originInfo) return;
     const allowed = new Set<string>([origin]);
-    if (canMove(card, viewer, { changesStatus: true })) {
+    if (canMove(card, actor, { changesStatus: true })) {
       for (const [cell, info] of cells) {
         if (
           info.swimlane.key === originInfo.swimlane.key &&
           info.lane.in_workflow &&
-          fold(info.lane.status) !== fold(card.status)
+          fold(info.lane.status) !== fold(originInfo.lane.status)
         ) {
           allowed.add(cell);
         }
@@ -365,7 +421,7 @@ export default function KanbanBoard({
     }
     lastOverId.current = null;
     setNotice(null);
-    updateDrag({ activeId: id, start: items, items, allowed });
+    updateDrag({ activeId: id, originLane: originInfo.lane.status, start: items, items, allowed });
   };
 
   // Crossing into another cell moves the card there in the working layout (within a cell,
@@ -427,9 +483,9 @@ export default function KanbanBoard({
 
     const info = cells.get(target);
     if (!info) return;
-    const changesStatus = fold(info.lane.status) !== fold(card.status);
+    const changesStatus = fold(info.lane.status) !== fold(current.originLane);
     if (!changesStatus && sameOrder(layout[target], current.start[target])) return;
-    if (!canMove(card, viewer, { changesStatus })) {
+    if (!canMove(card, actor, { changesStatus })) {
       setNotice({
         tone: "warn",
         text: changesStatus
@@ -438,8 +494,7 @@ export default function KanbanBoard({
       });
       return;
     }
-    setHeld({ taskId: id, items: layout, base: board });
-    commitMove(card, changesStatus ? info.lane.status : undefined, placement);
+    commitMove(card, changesStatus ? info.lane.status : undefined, placement, layout);
   };
 
   // Screen-reader narration of a drag, in the board's own words.
@@ -488,10 +543,19 @@ export default function KanbanBoard({
     .map((id) => [id, names.get(id) ?? `#${id}`] as [number, string])
     .sort((a, b) => a[1].localeCompare(b[1]));
   const today = localToday();
-  const canAdd = projectId !== null && viewer !== null && viewer.can_plan && viewer.native_enabled;
+  const addTargets: QuickAddProject[] =
+    projectId !== null
+      ? [{ id: projectId, label: "This project" }]
+      : projects
+          .map((p) => ({ id: p.id, label: `${p.key} · ${p.name}` }))
+          .sort((a, b) => a.label.localeCompare(b.label));
+  const canAdd =
+    actor !== null && actor.can_plan && actor.native_enabled && addTargets.length > 0;
   const activeCard = drag ? cardsById.get(drag.activeId) : undefined;
   const reducedMotion =
     typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const sprints = sprintList.data ?? [];
+  const mayEditColumns = canEditColumns ?? viewer?.can_plan ?? false;
 
   const quickAddDefaults = (swimlane: Swimlane): QuickAddDefaults => {
     if (swimlane.groupId === null) return {};
@@ -499,14 +563,20 @@ export default function KanbanBoard({
     if (swimlaneMode === "parent") return { parent_id: swimlane.groupId };
     return {};
   };
-  const afterCreate = () => {
-    void qc.invalidateQueries({ queryKey: boardKey });
-    if (projectId !== null) {
-      void qc.invalidateQueries({ queryKey: ["tasks", projectId] });
-      void qc.invalidateQueries({ queryKey: ["gantt", projectId] });
-    }
+  const quickAddProject = (swimlane: Swimlane): number | undefined =>
+    swimlaneMode === "project" && swimlane.groupId !== null
+      ? swimlane.groupId
+      : (filter.project ?? undefined);
+  const afterCreate = (task: Task) => {
+    void qc.invalidateQueries({ queryKey: boardQueryKey(source) });
+    void qc.invalidateQueries({ queryKey: ["tasks", task.project_id] });
+    void qc.invalidateQueries({ queryKey: ["gantt", task.project_id] });
     onTaskCreated?.();
   };
+  const projectLabel = (card: Card): string | undefined =>
+    source.kind === "team" && card.project_id !== null
+      ? projectsById.get(card.project_id)?.key
+      : undefined;
 
   return (
     <div className="space-y-3">
@@ -517,12 +587,33 @@ export default function KanbanBoard({
         onFilterChange={setFilter}
         swimlanes={swimlaneMode}
         onSwimlanesChange={setSwimlaneMode}
-        swimlaneModes={projectId !== null ? ["none", "owner", "parent"] : ["none", "owner"]}
+        swimlaneModes={
+          source.kind === "project" ? ["none", "owner", "parent"] : ["none", "owner", "project"]
+        }
         owners={owners}
         tags={boardTags(board.lanes)}
+        projects={
+          source.kind === "team"
+            ? projects
+                .map((p) => [p.id, `${p.key} · ${p.name}`] as [number, string])
+                .sort((a, b) => a[1].localeCompare(b[1]))
+            : []
+        }
+        pods={pods.map((p) => [p.id, p.name] as [number, string])}
+        sprint={
+          sprinting
+            ? {
+                selection,
+                onChange: setSprintChoice,
+                sprints,
+                shown: shownSprint(selection, sprints, board.sprint_id),
+                today,
+              }
+            : undefined
+        }
         shownCount={shownCount}
         totalCount={totalCount}
-        onEditColumns={viewer?.can_plan ? () => setEditingColumns(true) : undefined}
+        onEditColumns={mayEditColumns ? () => setEditingColumns(true) : undefined}
       />
 
       {notice && (
@@ -561,12 +652,15 @@ export default function KanbanBoard({
         </div>
       )}
 
-      {totalCount === 0 && (
+      {totalCount === 0 && !placeholder && (
         <p className="text-sm text-slate-500">
-          No cards yet.{" "}
-          {canAdd
-            ? "Add one at the foot of a column."
-            : "Status comes from board moves for tasks canopy tracks, and from tracker syncs for mirrored ones."}
+          {param && param !== "all"
+            ? "No cards in this view."
+            : `No cards yet. ${
+                canAdd
+                  ? "Add one at the foot of a column."
+                  : "Status comes from board moves for tasks canopy tracks, and from tracker syncs for mirrored ones."
+              }`}
         </p>
       )}
 
@@ -583,7 +677,10 @@ export default function KanbanBoard({
           onDragEnd={handleDragEnd}
           onDragCancel={() => updateDrag(null)}
         >
-          <div className="overflow-x-auto pb-2">
+          <div
+            aria-busy={placeholder}
+            className={`overflow-x-auto pb-2 transition-opacity ${placeholder ? "opacity-60" : ""}`}
+          >
             <div
               className="grid gap-x-3 gap-y-2"
               style={{
@@ -634,9 +731,10 @@ export default function KanbanBoard({
                         emptyText={isFiltering(filter) ? "No matching cards" : "No cards"}
                         compact={swimlaneMode !== "none"}
                         footer={
-                          canAdd && projectId !== null && lane.in_workflow && !drag ? (
+                          canAdd && lane.in_workflow && !drag ? (
                             <QuickAdd
-                              projectId={projectId}
+                              projects={addTargets}
+                              defaultProjectId={quickAddProject(swimlane)}
                               status={lane.status}
                               defaults={quickAddDefaults(swimlane)}
                               onCreated={afterCreate}
@@ -646,7 +744,7 @@ export default function KanbanBoard({
                       >
                         {ids.map((cardId) => {
                           const card = cardsById.get(cardId) as Card;
-                          const statusMovable = canMove(card, viewer, { changesStatus: true });
+                          const statusMovable = canMove(card, actor, { changesStatus: true });
                           return (
                             <SortableBoardCard
                               key={cardId}
@@ -656,12 +754,18 @@ export default function KanbanBoard({
                                   ? names.get(card.assignee_engineer_id)
                                   : undefined
                               }
+                              projectLabel={projectLabel(card)}
+                              statusNote={foldedStatus(card, lane)}
                               today={today}
-                              draggable={canDrag(card, viewer)}
+                              draggable={canDrag(card, actor)}
                               droppableDisabled={blocked}
                               moveTargets={statusMovable ? moveTargets(columns, card) : []}
                               onMoveTo={(status) => moveTo(card, status)}
-                              onOpen={onTaskClick ? () => onTaskClick(cardId) : undefined}
+                              onOpen={
+                                onTaskClick
+                                  ? () => onTaskClick(cardId, card.project_id ?? board.project_id)
+                                  : undefined
+                              }
                             />
                           );
                         })}
@@ -681,6 +785,7 @@ export default function KanbanBoard({
                     ? names.get(activeCard.assignee_engineer_id)
                     : undefined
                 }
+                projectLabel={projectLabel(activeCard)}
                 today={today}
                 overlay
               />

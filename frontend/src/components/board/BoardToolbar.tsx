@@ -1,4 +1,4 @@
-import type { BoardViewer } from "../../api/types";
+import type { BoardViewer, Sprint } from "../../api/types";
 import {
   NO_FILTER,
   isFiltering,
@@ -7,12 +7,23 @@ import {
   type OwnerFilter,
   type SwimlaneMode,
 } from "../../lib/board";
+import {
+  STATE_LABELS,
+  formatSprintDates,
+  parseSprintSelection,
+  sprintParam,
+  timeLeftLabel,
+  type SprintSelection,
+} from "../../lib/sprints";
 
 const SWIMLANE_LABELS: Record<SwimlaneMode, string> = {
   none: "None",
   owner: "By owner",
   parent: "By phase",
+  project: "By project",
 };
+
+const SELECT = "rounded border border-slate-300 bg-white px-2 py-1 text-sm";
 
 function ownerValue(owner: OwnerFilter): string {
   return typeof owner === "number" ? String(owner) : owner;
@@ -22,8 +33,19 @@ function parseOwner(value: string): OwnerFilter {
   return value === "all" || value === "none" ? value : Number(value);
 }
 
-/** The board's controls: owner / tag / blocked / aging filters, swimlanes, the flow signals
- *  (cycle-time P85, aging count) and — for planners — "Edit columns". */
+/** The board's sprint selector (teams that run sprints): what the board shows. */
+export interface SprintControl {
+  selection: SprintSelection;
+  onChange: (selection: SprintSelection) => void;
+  sprints: Sprint[];
+  /** The one sprint the board shows, if any (named with its dates and goal). */
+  shown: Sprint | null;
+  today: string;
+}
+
+/** The board's controls: sprint, owner / tag / project / pod / blocked / aging filters,
+ *  swimlanes, the flow signals (cycle-time P85, aging count) and — for those who may — "Edit
+ *  columns". */
 export default function BoardToolbar({
   board,
   viewer,
@@ -34,6 +56,9 @@ export default function BoardToolbar({
   swimlaneModes,
   owners,
   tags,
+  projects = [],
+  pods = [],
+  sprint,
   shownCount,
   totalCount,
   onEditColumns,
@@ -48,6 +73,10 @@ export default function BoardToolbar({
   /** Owners present on the board, as [engineer id, name], sorted by name. */
   owners: [number, string][];
   tags: string[];
+  /** Team board: its projects and pods, as [id, label]. */
+  projects?: [number, string][];
+  pods?: [number, string][];
+  sprint?: SprintControl;
   shownCount: number;
   totalCount: number;
   onEditColumns?: () => void;
@@ -63,12 +92,35 @@ export default function BoardToolbar({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-500">
+        {sprint && (
+          <label className="flex items-center gap-1">
+            Sprint
+            <select
+              value={sprintParam(sprint.selection)}
+              onChange={(e) => sprint.onChange(parseSprintSelection(e.target.value))}
+              className={`${SELECT} font-medium text-slate-700`}
+            >
+              <option value="active">Active sprint</option>
+              <option value="backlog">Backlog</option>
+              <option value="all">All work</option>
+              {sprint.sprints.length > 0 && (
+                <optgroup label="Sprints">
+                  {sprint.sprints.map((s) => (
+                    <option key={s.id} value={String(s.id)}>
+                      {s.name} · {STATE_LABELS[s.state].toLowerCase()}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </label>
+        )}
         <label className="flex items-center gap-1">
           Owner
           <select
             value={ownerValue(filter.owner)}
             onChange={(e) => onFilterChange({ ...filter, owner: parseOwner(e.target.value) })}
-            className="rounded border border-slate-300 bg-white px-2 py-1 text-sm"
+            className={SELECT}
           >
             <option value="all">Everyone</option>
             <option value="none">Unassigned</option>
@@ -79,13 +131,51 @@ export default function BoardToolbar({
             ))}
           </select>
         </label>
+        {projects.length > 1 && (
+          <label className="flex items-center gap-1">
+            Project
+            <select
+              value={filter.project ?? ""}
+              onChange={(e) =>
+                onFilterChange({ ...filter, project: e.target.value ? Number(e.target.value) : null })
+              }
+              className={SELECT}
+            >
+              <option value="">All projects</option>
+              {projects.map(([id, label]) => (
+                <option key={id} value={String(id)}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {pods.length > 1 && (
+          <label className="flex items-center gap-1">
+            Pod
+            <select
+              value={filter.pod ?? ""}
+              onChange={(e) =>
+                onFilterChange({ ...filter, pod: e.target.value ? Number(e.target.value) : null })
+              }
+              className={SELECT}
+            >
+              <option value="">All pods</option>
+              {pods.map(([id, label]) => (
+                <option key={id} value={String(id)}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {tags.length > 0 && (
           <label className="flex items-center gap-1">
             Tag
             <select
               value={filter.tag ?? ""}
               onChange={(e) => onFilterChange({ ...filter, tag: e.target.value || null })}
-              className="rounded border border-slate-300 bg-white px-2 py-1 text-sm"
+              className={SELECT}
             >
               <option value="">Any tag</option>
               {tags.map((tag) => (
@@ -117,7 +207,7 @@ export default function BoardToolbar({
           <select
             value={swimlanes}
             onChange={(e) => onSwimlanesChange(e.target.value as SwimlaneMode)}
-            className="rounded border border-slate-300 bg-white px-2 py-1 text-sm"
+            className={SELECT}
           >
             {swimlaneModes.map((mode) => (
               <option key={mode} value={mode}>
@@ -163,13 +253,41 @@ export default function BoardToolbar({
         </span>
       </div>
 
+      {sprint && <SprintLine control={sprint} />}
+
       {(board.mode === "mirrored" || readOnlyReason) && (
         <p className="text-xs text-slate-400">
           {board.mode === "mirrored" &&
-            "Mirrored project: a locked card’s status belongs to its tracker and changes there; canopy-only cards move here. "}
+            "Mirrored work: a locked card’s status belongs to its tracker and changes there; canopy-only cards move here. "}
           {readOnlyReason}
         </p>
       )}
     </div>
   );
+}
+
+/** What the sprint selector shows, in a line: the sprint's name, dates, time left and goal. */
+function SprintLine({ control }: { control: SprintControl }) {
+  const { selection, shown, today } = control;
+  if (shown) {
+    const left = timeLeftLabel(shown, today);
+    return (
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-canopy-500/30 bg-canopy-50 px-3 py-1.5 text-sm text-slate-700">
+        <span className="font-semibold text-canopy-700">{shown.name}</span>
+        <span className="text-xs text-slate-500">
+          {STATE_LABELS[shown.state]} · {formatSprintDates(shown)}
+          {left && <> · {left}</>}
+          {shown.owner !== "canopy" && <> · mirrored from {shown.owner}</>}
+        </span>
+        {shown.goal && <span className="text-xs text-slate-600">Goal: {shown.goal}</span>}
+      </p>
+    );
+  }
+  const text =
+    selection === "active"
+      ? "No sprint is active — pick a sprint, or show the backlog or all work."
+      : selection === "backlog"
+        ? "Backlog: open work in no planned or active sprint."
+        : null;
+  return text ? <p className="text-xs text-slate-500">{text}</p> : null;
 }

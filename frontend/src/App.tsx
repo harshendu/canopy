@@ -38,6 +38,7 @@ import { GetStarted } from "./components/GetStarted";
 
 const Portfolio = lazy(() => import("./pages/Portfolio")); // Recharts — load on demand
 const BusinessReview = lazy(() => import("./pages/BusinessReview"));
+const TeamView = lazy(() => import("./pages/TeamView")); // board, sprints, charts — on demand
 
 function Loading() {
   return <div className="p-6 text-sm text-slate-400">Loading…</div>;
@@ -153,6 +154,14 @@ export default function App() {
         <Route path="/admin/integrations" element={<AdminIntegrations />} />
         <Route path="/admin/demo" element={<DemoData />} />
         <Route path="/team" element={<Team />} />
+        <Route
+          path="/teams/:teamId"
+          element={
+            <Suspense fallback={<Loading />}>
+              <TeamView />
+            </Suspense>
+          }
+        />
         <Route path="/connectors" element={<Connectors />} />
         <Route path="/agent-setup" element={<AgentSetup />} />
       </Route>

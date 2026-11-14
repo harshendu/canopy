@@ -10,7 +10,9 @@ import type {
   BoardTaskItem,
   BoardViewer,
   StatusCategory,
+  TaskExternalLinks,
   TaskMoveRequest,
+  TrackerItemLink,
 } from "../api/types";
 
 /** The column the server puts cards without a status in (always first). */
@@ -27,37 +29,34 @@ export function fold(name: string): string {
 // Data source
 // --------------------------------------------------------------------------- //
 
-/** Where a board's cards come from. A team board (`GET /teams/{id}/board`) joins this union;
- *  the switches below then say what else it needs. */
-export type BoardSource = { kind: "project"; id: number };
+/** Where a board's cards come from: one project, or every project a team runs (on the
+ *  team's columns — §C11.2). */
+export type BoardSource = { kind: "project"; id: number } | { kind: "team"; id: number };
 
-export function boardQueryKey(source: BoardSource): readonly (string | number)[] {
-  switch (source.kind) {
-    case "project":
-      // Shared with the task drawer, which invalidates it after an edit.
-      return ["board", source.id];
-  }
+/** The board's cache key. A sprint filter extends it, so `boardQueryKey(source)` is the
+ *  prefix every variant of the board shares (the task drawer invalidates by it). */
+export function boardQueryKey(
+  source: BoardSource,
+  sprint?: string | null,
+): readonly (string | number)[] {
+  const base = source.kind === "project" ? ["board", source.id] : ["team-board", source.id];
+  return sprint ? [...base, sprint] : base;
 }
 
-export function boardPath(source: BoardSource): string {
-  switch (source.kind) {
-    case "project":
-      return `/projects/${source.id}/board`;
-  }
+export function boardPath(source: BoardSource, sprint?: string | null): string {
+  const path =
+    source.kind === "project" ? `/projects/${source.id}/board` : `/teams/${source.id}/board`;
+  return sprint ? `${path}?sprint=${encodeURIComponent(sprint)}` : path;
 }
 
 export function workflowQueryKey(source: BoardSource): readonly (string | number)[] {
-  switch (source.kind) {
-    case "project":
-      return ["workflow", "project", source.id];
-  }
+  return ["workflow", source.kind, source.id];
 }
 
 export function workflowPath(source: BoardSource): string {
-  switch (source.kind) {
-    case "project":
-      return `/projects/${source.id}/workflow`;
-  }
+  return source.kind === "project"
+    ? `/projects/${source.id}/workflow`
+    : `/teams/${source.id}/workflow`;
 }
 
 // --------------------------------------------------------------------------- //
@@ -83,8 +82,12 @@ export function normalizeBoard(raw: BoardResponse): Board {
     mode: raw.mode ?? "native",
     wip_enforcement: raw.wip_enforcement ?? "warn",
     viewer: raw.viewer ?? null,
+    team_id: raw.team_id ?? null,
+    sprint_id: raw.sprint_id ?? null,
+    delivery_method: raw.delivery_method ?? "kanban",
     lanes: raw.lanes.map((lane, index) => {
       const wip_limit = lane.wip_limit ?? null;
+      const scope_wip = lane.scope_wip ?? null;
       return {
         status: lane.status,
         is_done: lane.is_done,
@@ -93,7 +96,8 @@ export function normalizeBoard(raw: BoardResponse): Board {
         category: lane.category ?? null,
         position: lane.position ?? index,
         wip_limit,
-        over_limit: lane.over_limit ?? overLimit({ wip: lane.wip, wip_limit }),
+        scope_wip,
+        over_limit: lane.over_limit ?? overLimit({ wip: lane.wip, scope_wip, wip_limit }),
         in_workflow: lane.in_workflow ?? true,
       };
     }),
@@ -122,6 +126,8 @@ function normalizeCard(t: BoardTaskItem, projectId: number): Card {
     is_critical: t.is_critical ?? false,
     deadline: t.deadline ?? null,
     tags: t.tags ?? [],
+    sprint_id: t.sprint_id ?? null,
+    story_points: t.story_points ?? null,
   };
 }
 
@@ -161,19 +167,34 @@ export function isOpenCard(card: Pick<Card, "status_category" | "is_done">): boo
   return card.status_category != null ? !CLOSED.has(card.status_category) : !card.is_done;
 }
 
-/** A column holds more open cards than its WIP limit (the server's `over_limit`). */
-export function overLimit(lane: Pick<Lane, "wip" | "wip_limit">): boolean {
-  return lane.wip_limit != null && lane.wip > lane.wip_limit;
+/** The open cards a column's WIP limit is judged on: across the WIP scope (every project
+ *  sharing the columns) when the server says, else those on this board. */
+export function limitWip(lane: Pick<Lane, "wip"> & { scope_wip?: number | null }): number {
+  return lane.scope_wip ?? lane.wip;
 }
 
-/** The column header's count: cards in a closed column, else WIP against the limit. */
+/** A column holds more open cards than its WIP limit (the server's `over_limit`). */
+export function overLimit(
+  lane: Pick<Lane, "wip" | "wip_limit"> & { scope_wip?: number | null },
+): boolean {
+  return lane.wip_limit != null && limitWip(lane) > lane.wip_limit;
+}
+
+/** The column header's count: cards in a closed column, else WIP against the limit (counted
+ *  across the WIP scope), else the open cards on this board. */
 export function laneCount(
-  lane: Pick<Lane, "wip" | "wip_limit" | "category" | "is_done" | "tasks">,
+  lane: Pick<Lane, "wip" | "wip_limit" | "scope_wip" | "category" | "is_done" | "tasks">,
 ): string {
   if (isClosedCategory(lane.category) || (lane.category == null && lane.is_done)) {
     return String(lane.tasks.length);
   }
-  return lane.wip_limit != null ? `${lane.wip}/${lane.wip_limit}` : String(lane.wip);
+  return lane.wip_limit != null ? `${limitWip(lane)}/${lane.wip_limit}` : String(lane.wip);
+}
+
+/** The column's WIP counts more open cards than this board shows (others are in projects,
+ *  sprints or pods sharing the columns but not on screen). */
+export function wipBeyondBoard(lane: Pick<Lane, "wip" | "scope_wip">): boolean {
+  return lane.scope_wip != null && lane.scope_wip !== lane.wip;
 }
 
 const TRACKER_NAMES: Record<string, string> = { jira: "Jira", github: "GitHub" };
@@ -181,6 +202,15 @@ const TRACKER_NAMES: Record<string, string> = { jira: "Jira", github: "GitHub" }
 /** Display name of the tracker that owns a mirrored card's status ("jira" → "Jira"). */
 export function trackerName(statusOwner: string): string {
   return TRACKER_NAMES[statusOwner] ?? statusOwner.charAt(0).toUpperCase() + statusOwner.slice(1);
+}
+
+/** The tracker item behind a task: the neutral `tracker` link, else the deprecated `jira`. */
+export function trackerItemOf(
+  links: Pick<TaskExternalLinks, "tracker" | "jira">,
+): TrackerItemLink | null {
+  if (links.tracker) return links.tracker;
+  if (links.jira) return { provider: "jira", label: "Jira", key: links.jira.key, url: links.jira.url };
+  return null;
 }
 
 // --------------------------------------------------------------------------- //
@@ -231,19 +261,17 @@ export interface ViewerRole {
 }
 
 /**
- * The server's `viewer` names the caller's engineer even where their role can't use it: a
- * read-only `viewer` is refused every move, and a planner-role user who may not plan this
- * project is refused too (they don't fall back to the engineer path). Narrow it to what will
- * actually succeed; an unknown role (still loading) leaves it as the server sent it.
+ * Belt and braces over the server's `viewer`: a read-only `viewer` role moves nothing (the
+ * server already sends no engineer for one). A planner who may not plan here keeps the
+ * engineer rules — their own cards, or pulling an unassigned one. An unknown role (still
+ * loading) leaves the viewer as the server sent it.
  */
 export function viewerForRole(
   viewer: BoardViewer | null | undefined,
   role: ViewerRole | null,
 ): BoardViewer | null {
   if (!viewer) return null;
-  if (!role) return viewer;
-  if (!role.contributor) return { ...viewer, can_plan: false, engineer_id: null };
-  if (role.planner && !viewer.can_plan) return { ...viewer, engineer_id: null };
+  if (role && !role.contributor) return { ...viewer, can_plan: false, engineer_id: null };
   return viewer;
 }
 
@@ -253,6 +281,14 @@ export function moveTargets(lanes: readonly Lane[], card: Pick<Card, "status">):
   return lanes
     .filter((lane) => lane.in_workflow && fold(lane.status) !== fold(card.status))
     .map((lane) => lane.status);
+}
+
+/** A card's own status when the board shows it in a column of another name — the team board
+ *  puts a status its columns don't name (a mirrored status, a project override) in the first
+ *  column of the same category (§C11.2). Null when the column is the card's status. */
+export function foldedStatus(card: Pick<Card, "status">, lane: Pick<Lane, "status">): string | null {
+  if (card.status === NO_STATUS || lane.status === NO_STATUS) return null;
+  return fold(card.status) === fold(lane.status) ? null : card.status;
 }
 
 /** What `expected_status` should say for a card: its status, or "" for a card shown in the
@@ -287,7 +323,30 @@ export function toMoveRequest(move: CardMove): TaskMoveRequest {
 
 function withTasks(lane: Lane, tasks: Card[]): Lane {
   const wip = tasks.filter(isOpenCard).length;
-  return { ...lane, tasks, wip, over_limit: overLimit({ wip, wip_limit: lane.wip_limit }) };
+  // The scope-wide count moves by what moved on this board.
+  const scope_wip = lane.scope_wip == null ? null : Math.max(0, lane.scope_wip + wip - lane.wip);
+  return {
+    ...lane,
+    tasks,
+    wip,
+    scope_wip,
+    over_limit: overLimit({ wip, scope_wip, wip_limit: lane.wip_limit }),
+  };
+}
+
+/**
+ * Whether the server will refuse `move` for a full column — enforcement `block`, and the
+ * target column (a started-work column with a limit) already holds its limit across the WIP
+ * scope. The board skips the optimistic move then, so the card doesn't hop over and back;
+ * the server still has the last word (our counts may be stale).
+ */
+export function wouldBlockOnWip(board: Board, move: CardMove): boolean {
+  const toStatus = move.to_status;
+  if (board.wip_enforcement !== "block" || toStatus === undefined) return false;
+  const target = board.lanes.find((l) => fold(l.status) === fold(toStatus));
+  if (!target || target.wip_limit == null || isClosedCategory(target.category)) return false;
+  if (target.tasks.some((t) => t.id === move.taskId)) return false; // a reorder, not an entry
+  return limitWip(target) + 1 > target.wip_limit;
 }
 
 function insertionIndex(tasks: readonly Card[], move: CardMove): number {
@@ -390,30 +449,59 @@ export interface CardFilter {
   blocked: boolean;
   /** Only cards aging past the team's cycle-time P85. */
   aging: boolean;
+  /** Team board: only this project's cards (null = every project). */
+  project: number | null;
+  /** Team board: only cards of projects in this pod (null = every pod). */
+  pod: number | null;
 }
 
-export const NO_FILTER: CardFilter = { owner: "all", tag: null, blocked: false, aging: false };
+export const NO_FILTER: CardFilter = {
+  owner: "all",
+  tag: null,
+  blocked: false,
+  aging: false,
+  project: null,
+  pod: null,
+};
 
 export function isFiltering(filter: CardFilter): boolean {
-  return filter.owner !== "all" || filter.tag !== null || filter.blocked || filter.aging;
+  return (
+    filter.owner !== "all" ||
+    filter.tag !== null ||
+    filter.blocked ||
+    filter.aging ||
+    filter.project !== null ||
+    filter.pod !== null
+  );
 }
 
-export function matchesFilter(card: Card, filter: CardFilter): boolean {
+/** `podOf` maps a project to its pod (the pod filter needs it; cards carry only a project). */
+export function matchesFilter(
+  card: Card,
+  filter: CardFilter,
+  podOf: ReadonlyMap<number, number | null> = new Map(),
+): boolean {
   if (filter.owner === "none" && card.assignee_engineer_id !== null) return false;
   if (typeof filter.owner === "number" && card.assignee_engineer_id !== filter.owner) return false;
   if (filter.tag !== null && !card.tags.includes(filter.tag)) return false;
   if (filter.blocked && !card.blocked) return false;
   if (filter.aging && !card.aging) return false;
+  if (filter.project !== null && card.project_id !== filter.project) return false;
+  if (filter.pod !== null && (podOf.get(card.project_id ?? -1) ?? null) !== filter.pod) return false;
   return true;
 }
 
 /** The lanes showing only the cards that pass the filter. A lane's `wip` stays the column's
  *  real WIP — a filter narrows what you see, not what the limit counts. */
-export function filterCards(lanes: readonly Lane[], filter: CardFilter): Lane[] {
+export function filterCards(
+  lanes: readonly Lane[],
+  filter: CardFilter,
+  podOf?: ReadonlyMap<number, number | null>,
+): Lane[] {
   if (!isFiltering(filter)) return [...lanes];
   return lanes.map((lane) => ({
     ...lane,
-    tasks: lane.tasks.filter((card) => matchesFilter(card, filter)),
+    tasks: lane.tasks.filter((card) => matchesFilter(card, filter, podOf)),
   }));
 }
 
@@ -434,24 +522,30 @@ export function boardOwners(lanes: readonly Lane[]): number[] {
 // Swimlanes
 // --------------------------------------------------------------------------- //
 
-export type SwimlaneMode = "none" | "owner" | "parent";
+export type SwimlaneMode = "none" | "owner" | "parent" | "project";
 
 export interface Swimlane {
   key: string;
   /** Empty for the single swimlane of an ungrouped board. */
   label: string;
-  /** The owner (owner mode) or phase (parent mode) this row groups; null = none. */
+  /** The owner / phase / project this row groups; null = none. */
   groupId: number | null;
   /** Every column, holding only this row's cards. */
   lanes: Lane[];
   count: number;
 }
 
+const NONE_LABELS: Record<Exclude<SwimlaneMode, "none">, string> = {
+  owner: "Unassigned",
+  parent: "No phase",
+  project: "No project",
+};
+
 /**
- * Split the board into horizontal rows: one per owner (alphabetical, "Unassigned" last) or per
- * WBS phase (in `labels` order, "No phase" last). `labels` names the owners or phases; an id it
- * doesn't know reads "#id". Only rows that hold cards appear; a board without cards is one
- * empty row, so its columns still show.
+ * Split the board into horizontal rows: one per owner or per project (alphabetical, the
+ * "none" row last) or per WBS phase (in `labels` order, "No phase" last). `labels` names the
+ * owners, phases or projects; an id it doesn't know reads "#id". Only rows that hold cards
+ * appear; a board without cards is one empty row, so its columns still show.
  */
 export function groupIntoSwimlanes(
   lanes: readonly Lane[],
@@ -463,14 +557,14 @@ export function groupIntoSwimlanes(
   if (mode === "none" || total === 0) return [all];
 
   const groupOf = (card: Card): number | null =>
-    mode === "owner" ? card.assignee_engineer_id : card.parent_id;
+    mode === "owner" ? card.assignee_engineer_id : mode === "parent" ? card.parent_id : card.project_id;
   const present = new Set<number | null>(lanes.flatMap((l) => l.tasks.map(groupOf)));
   const labelOf = (id: number): string => labels.get(id) ?? `#${id}`;
   const known = [...labels.keys()];
 
   const ids = [...present].filter((id): id is number => id !== null);
   ids.sort((a, b) => {
-    if (mode === "owner") return labelOf(a).localeCompare(labelOf(b));
+    if (mode !== "parent") return labelOf(a).localeCompare(labelOf(b));
     const ia = known.indexOf(a);
     const ib = known.indexOf(b);
     if (ia !== ib) return (ia < 0 ? Infinity : ia) - (ib < 0 ? Infinity : ib);
@@ -485,7 +579,7 @@ export function groupIntoSwimlanes(
     }));
     return {
       key: `${mode}:${id ?? "none"}`,
-      label: id === null ? (mode === "owner" ? "Unassigned" : "No phase") : labelOf(id),
+      label: id === null ? NONE_LABELS[mode] : labelOf(id),
       groupId: id,
       lanes: rowLanes,
       count: rowLanes.reduce((n, l) => n + l.tasks.length, 0),

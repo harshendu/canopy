@@ -1,11 +1,13 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { CapacityResponse, Engineer, Role, User } from "../api/types";
+import type { CapacityResponse, Engineer, Role, Team as TeamRecord, User } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
 import { countOverAllocatedWeeks } from "../lib/capacityAttention";
+import { METHOD_LABELS } from "../lib/sprints";
 import AvailabilityEditor from "../components/AvailabilityEditor";
 import BlockerQueue from "../components/BlockerQueue";
 import CapacityHeatmap from "../components/CapacityHeatmap";
@@ -44,6 +46,10 @@ export default function Team() {
     retry: false,
   });
   const overAllocated = countOverAllocatedWeeks(capacity.data);
+  const teams = useQuery({
+    queryKey: ["teams"],
+    queryFn: () => api.get<TeamRecord[]>("/teams"),
+  });
 
   const skillsToArray = (s: string) =>
     s.split(",").map((x) => x.trim()).filter(Boolean);
@@ -95,6 +101,34 @@ export default function Team() {
         title="Team"
         subtitle="Who needs you, then engineers, capacity, and the accounts linked to them."
       />
+
+      {(teams.data?.length ?? 0) > 0 && (
+        <section aria-label="Teams" className="space-y-2">
+          <h2 className="font-semibold">Teams</h2>
+          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {(teams.data ?? []).map((t) => (
+              <li key={t.id}>
+                <Link
+                  to={`/teams/${t.id}`}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 hover:border-canopy-500"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{t.name}</span>
+                    <span className="block text-xs text-slate-500">
+                      {METHOD_LABELS[t.delivery_method ?? "kanban"]} · {t.pods.length} pod
+                      {t.pods.length === 1 ? "" : "s"}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1 text-xs text-canopy-700">
+                    Board
+                    <Icon name="arrow-right" size={13} />
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Manager attention band — the exception view a team lead actually wants first, before the
           engineer/role admin forms below (§A7 persona landing). An actionable open-blocker queue

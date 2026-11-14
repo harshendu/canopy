@@ -8,8 +8,10 @@ import type {
   BlockerSeverity,
   DocSource,
   Engineer,
+  Sprint,
   Task,
   TaskExternalLinks,
+  TeamDelivery,
   WorkflowRead,
 } from "../api/types";
 import {
@@ -17,6 +19,7 @@ import {
   boardQueryKey,
   canMove,
   fold,
+  trackerItemOf,
   trackerName,
   trackingFailure,
   viewerForRole,
@@ -25,9 +28,12 @@ import {
 } from "../lib/board";
 import { spreadConfidence, spreadTone } from "../lib/estimates";
 import { canContribute, isPlanner } from "../lib/permissions";
+import { invalidateSprintData } from "../lib/sprintCache";
+import { STATE_LABELS, formatSprintDates, liveSprints, usesSprints } from "../lib/sprints";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { featureOn, useFeatures } from "../lib/useFeatures";
 import { useMoveCard } from "../lib/useMoveCard";
+import { useProjectTeam } from "../lib/useProjectTeam";
 import { Icon } from "./icons";
 import RiskRegister from "./RiskRegister";
 import TagEditor from "./TagEditor";
@@ -128,6 +134,7 @@ export default function TaskDetailPanel({
         )}
 
         <div className="space-y-6 p-4">
+          {task.data && <TaskSprintField task={task.data} projectId={projectId} mayPlan={mayPlan} />}
           {task.data && (
             <TaskFields
               task={task.data}
@@ -223,8 +230,9 @@ function TaskStatusField({
   if (task.type === "summary") return null;
 
   if (!canopyOwned) {
-    const tracker = trackerName(task.status_owner);
-    const url = links.data?.jira?.url;
+    const item = links.data ? trackerItemOf(links.data) : null;
+    const tracker = item?.label ?? trackerName(task.status_owner);
+    const url = item?.url;
     return (
       <>
         <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">
@@ -296,6 +304,94 @@ function TaskStatusField({
   );
 }
 
+/** The task's sprint, for a team that runs sprints (USER_FLOWS §C11.3). Changing it is a sprint
+ *  membership move (`POST /sprints/{id}/tasks`, `DELETE /sprints/{id}/tasks/{task}`) — never a
+ *  PATCH; a tracker that owns the membership refuses it (409), and the reason shows here. */
+function TaskSprintField({
+  task,
+  projectId,
+  mayPlan,
+}: {
+  task: Task;
+  projectId: number;
+  mayPlan: boolean;
+}) {
+  const qc = useQueryClient();
+  const features = useFeatures();
+  const { teamId } = useProjectTeam(projectId);
+  const delivery = useQuery({
+    queryKey: ["team-delivery", teamId],
+    queryFn: () => api.get<TeamDelivery>(`/teams/${teamId}/delivery`),
+    enabled: teamId != null,
+  });
+  const on =
+    teamId != null &&
+    featureOn(features, "tracking.sprints") &&
+    usesSprints(delivery.data?.effective_method);
+  const sprints = useQuery({
+    queryKey: ["sprints", teamId],
+    queryFn: () => api.get<Sprint[]>(`/teams/${teamId}/sprints`),
+    enabled: on,
+  });
+  const [error, setError] = useState<string | null>(null);
+  const change = useMutation({
+    mutationFn: async (target: number | null): Promise<void> => {
+      if (target !== null) {
+        await api.post(`/sprints/${target}/tasks`, { task_ids: [task.id] });
+      } else if (task.sprint_id != null) {
+        await api.del(`/sprints/${task.sprint_id}/tasks/${task.id}`);
+      }
+    },
+    onSuccess: () => setError(null),
+    onError: (err) => setError(trackingFailure(err).message),
+    onSettled: () => (teamId != null ? invalidateSprintData(qc, teamId) : undefined),
+  });
+
+  if (!on || task.type === "summary") return null;
+  const list = sprints.data ?? [];
+  const live = liveSprints(list);
+  const current = list.find((s) => s.id === task.sprint_id);
+  const label = (s: Sprint) =>
+    `${s.name} · ${STATE_LABELS[s.state].toLowerCase()} · ${formatSprintDates(s)}`;
+
+  return (
+    <section className="space-y-1">
+      <label className="block text-xs text-slate-500">
+        Sprint
+        {mayPlan ? (
+          <select
+            value={task.sprint_id ?? ""}
+            disabled={change.isPending || !sprints.data}
+            onChange={(e) => change.mutate(e.target.value ? Number(e.target.value) : null)}
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm disabled:bg-slate-50"
+          >
+            <option value="">Backlog (no sprint)</option>
+            {current && !live.includes(current) && (
+              <option value={current.id} disabled>
+                {label(current)}
+              </option>
+            )}
+            {live.map((s) => (
+              <option key={s.id} value={s.id}>
+                {label(s)}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="mt-1 block text-sm text-slate-700">
+            {current ? label(current) : (task.sprint ?? "Backlog (no sprint)")}
+          </span>
+        )}
+      </label>
+      {error && (
+        <p role="alert" className="text-xs text-red-700">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function TaskFields({
   task: t,
   projectId,
@@ -310,6 +406,7 @@ function TaskFields({
   const qc = useQueryClient();
   const [progress, setProgress] = useState(String(t.percent_complete));
   const [duration, setDuration] = useState(String(t.duration));
+  const [points, setPoints] = useState(t.story_points?.toString() ?? "");
   const [opt, setOpt] = useState(t.estimate_optimistic?.toString() ?? "");
   const [likely, setLikely] = useState(t.estimate_likely?.toString() ?? "");
   const [pess, setPess] = useState(t.estimate_pessimistic?.toString() ?? "");
@@ -319,6 +416,7 @@ function TaskFields({
   useEffect(() => {
     setProgress(String(t.percent_complete));
     setDuration(String(t.duration));
+    setPoints(t.story_points?.toString() ?? "");
     setOpt(t.estimate_optimistic?.toString() ?? "");
     setLikely(t.estimate_likely?.toString() ?? "");
     setPess(t.estimate_pessimistic?.toString() ?? "");
@@ -337,6 +435,8 @@ function TaskFields({
         // Clamp to the field's valid range — min/max only bind the spinner arrows, not typed input.
         percent_complete: Math.min(100, Math.max(0, Number(progress) || 0)),
         duration: Math.max(0, Number(duration) || 0),
+        // Sprint planning size (§C11) — a points team sizes its sprints with it.
+        story_points: points.trim() === "" ? null : Math.max(0, Number(points) || 0),
         estimate_optimistic: numOrNull(opt),
         estimate_likely: numOrNull(likely),
         estimate_pessimistic: numOrNull(pess),
@@ -348,6 +448,9 @@ function TaskFields({
       qc.invalidateQueries({ queryKey: ["tasks", projectId] });
       qc.invalidateQueries({ queryKey: ["gantt", projectId] });
       qc.invalidateQueries({ queryKey: ["board", projectId] });
+      qc.invalidateQueries({ queryKey: ["team-board"] });
+      // Story points size sprints: the planning view and its capacity.
+      qc.invalidateQueries({ queryKey: ["sprint"] });
       // Duration is a CPM input — let the parent re-plan so dates/critical path don't go stale.
       onStructuralChange?.();
     },
@@ -386,7 +489,7 @@ function TaskFields({
         </select>
       </label>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <label className="text-xs text-slate-500">
           Progress %
           <input
@@ -407,6 +510,19 @@ function TaskFields({
             value={duration}
             disabled={!canEdit}
             onChange={(e) => setDuration(e.target.value)}
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm disabled:bg-slate-50"
+          />
+        </label>
+        <label className="text-xs text-slate-500">
+          Story points
+          <input
+            type="number"
+            min={0}
+            step="any"
+            value={points}
+            disabled={!canEdit}
+            onChange={(e) => setPoints(e.target.value)}
+            placeholder="—"
             className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm disabled:bg-slate-50"
           />
         </label>
@@ -471,7 +587,7 @@ function TaskFields({
   );
 }
 
-/** A task's links out to the systems that own the work: its Jira issue, the GitHub PRs
+/** A task's links out to the systems that own the work: its tracker item, the GitHub PRs
  *  implementing it, and the design docs (GitHub/Drive) scoped to it. Read-only — canopy links,
  *  it never stores the resources (doc CRUD lives on the project Docs tab). */
 function ExternalLinksSection({ taskId }: { taskId: number }) {
@@ -483,29 +599,30 @@ function ExternalLinksSection({ taskId }: { taskId: number }) {
   const data = links.data;
   if (!data) return <p className="text-xs text-slate-400">Loading…</p>;
 
-  const empty = !data.jira && data.pull_requests.length === 0 && data.docs.length === 0;
+  const item = trackerItemOf(data);
+  const empty = !item && data.pull_requests.length === 0 && data.docs.length === 0;
   if (empty)
-    return <p className="text-xs text-slate-400">No linked Jira issue, pull requests, or docs.</p>;
+    return <p className="text-xs text-slate-400">No linked tracker item, pull requests, or docs.</p>;
 
   return (
     <div className="space-y-3 text-sm">
-      {data.jira && (
+      {item && (
         <div>
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Jira issue
+            Tracker item
           </div>
-          {data.jira.url ? (
+          {item.url ? (
             <a
-              href={data.jira.url}
+              href={item.url}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-0.5 font-medium text-blue-700 hover:underline"
             >
-              {data.jira.key} ↗
+              {item.label}: {item.key} ↗
             </a>
           ) : (
             <span className="rounded bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
-              {data.jira.key}
+              {item.label}: {item.key}
             </span>
           )}
         </div>

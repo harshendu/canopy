@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
@@ -135,6 +136,7 @@ export default function Initiatives() {
             <InitiativeList
               key={g.team?.id ?? "none"}
               title={g.team ? `${g.team.name} team` : "No team"}
+              titleTo={g.team ? `/teams/${g.team.id}` : undefined}
               hint={
                 g.team
                   ? [teamSeatsLabel(g.team.members), `Pods: ${g.team.pods.map((p) => p.name).join(", ")}`]
@@ -158,6 +160,7 @@ type RowMode = "owner" | "editable" | "read-only" | "none";
 
 function InitiativeList({
   title,
+  titleTo,
   hint,
   items,
   leads,
@@ -166,6 +169,8 @@ function InitiativeList({
   mode,
 }: {
   title: string;
+  /** Where the title links (a team's page). */
+  titleTo?: string;
   hint?: string;
   items: Initiative[];
   leads: InitiativeAccess["leads"] | undefined;
@@ -176,7 +181,13 @@ function InitiativeList({
   return (
     <section className="space-y-2">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-        {title}
+        {titleTo ? (
+          <Link to={titleTo} className="hover:text-canopy-700 hover:underline">
+            {title}
+          </Link>
+        ) : (
+          title
+        )}
         {hint && (
           <span className="ml-2 text-xs font-normal normal-case tracking-normal text-slate-400">
             {hint}

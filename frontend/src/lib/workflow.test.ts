@@ -9,6 +9,7 @@ import {
   occupiedColumns,
   removedColumns,
   validateDraft,
+  workflowEditable,
   workflowSourceLabel,
   type WorkflowDraft,
 } from "./workflow";
@@ -81,10 +82,30 @@ describe("occupiedColumns", () => {
   it("counts canopy-owned cards only — mirrored cards keep their tracker's status", () => {
     expect(
       occupiedColumns([
-        { status: "To Do", tasks: [{ status_owner: "canopy" }, { status_owner: "jira" }] },
-        { status: "Done", tasks: [{ status_owner: "jira" }] },
+        {
+          status: "To Do",
+          tasks: [
+            { status: "To Do", status_owner: "canopy" },
+            { status: "To Do", status_owner: "jira" },
+          ],
+        },
+        { status: "Done", tasks: [{ status: "Done", status_owner: "jira" }] },
       ]),
     ).toEqual({ "to do": 1 });
+  });
+
+  it("skips a card the team board only shows in a column (its status has another name)", () => {
+    expect(
+      occupiedColumns([
+        {
+          status: "In Progress",
+          tasks: [
+            { status: "Code Review", status_owner: "canopy" },
+            { status: "in progress", status_owner: "canopy" },
+          ],
+        },
+      ]),
+    ).toEqual({ "in progress": 1 });
   });
 });
 
@@ -167,5 +188,12 @@ describe("workflowSourceLabel", () => {
     expect(workflowSourceLabel({ scope: "team", inherited: true })).toMatch(/Inherited from the team/);
     expect(workflowSourceLabel({ scope: "template", inherited: true })).toMatch(/workspace template/);
     expect(workflowSourceLabel({ scope: "default", inherited: true })).toMatch(/built-in default/);
+    expect(workflowSourceLabel({ scope: "tracker", inherited: false })).toMatch(/project’s tracker/);
+  });
+
+  it("leaves a tracker's columns read-only", () => {
+    expect(workflowEditable({ scope: "tracker" })).toBe(false);
+    expect(workflowEditable({ scope: "project" })).toBe(true);
+    expect(workflowEditable({ scope: "team" })).toBe(true);
   });
 });

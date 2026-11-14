@@ -26,6 +26,7 @@ import {
   occupiedColumns,
   removedColumns,
   validateDraft,
+  workflowEditable,
   workflowSourceLabel,
   type ColumnDraft,
   type WorkflowDraft,
@@ -84,7 +85,7 @@ export default function WorkflowEditor({
           <div>
             <div className="text-xs uppercase tracking-wide text-slate-400">Board</div>
             <h2 id={titleId} className="text-lg font-semibold">
-              Edit columns
+              {workflow.data && !workflowEditable(workflow.data) ? "Board columns" : "Edit columns"}
             </h2>
             {workflow.data && (
               <p className="mt-1 text-sm text-slate-500">{workflowSourceLabel(workflow.data)}</p>
@@ -109,10 +110,50 @@ export default function WorkflowEditor({
           </div>
         ) : !workflow.data ? (
           <p className="p-4 text-sm text-slate-400">Loading columns…</p>
+        ) : !workflowEditable(workflow.data) ? (
+          <TrackerColumns workflow={workflow.data} onClose={onClose} />
         ) : (
           <WorkflowForm source={source} workflow={workflow.data} board={board} onDone={onClose} />
         )}
       </aside>
+    </>
+  );
+}
+
+/** A mirrored project's columns are its tracker's statuses: shown, not edited. */
+function TrackerColumns({ workflow, onClose }: { workflow: WorkflowRead; onClose: () => void }) {
+  return (
+    <>
+      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+        <p className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+          {workflow.name}: the columns come from the project’s tracker — change them there.
+        </p>
+        <ol className="space-y-1.5">
+          {[...workflow.columns]
+            .sort((a, b) => a.position - b.position)
+            .map((c) => (
+              <li
+                key={c.name}
+                className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+              >
+                <span className="font-medium text-slate-700">{c.name}</span>
+                <span className="text-xs text-slate-500">
+                  {CATEGORY_LABELS[c.category]}
+                  {c.wip_limit != null && <> · WIP limit {c.wip_limit}</>}
+                </span>
+              </li>
+            ))}
+        </ol>
+      </div>
+      <footer className="flex justify-end border-t border-slate-100 p-4">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
+        >
+          Close
+        </button>
+      </footer>
     </>
   );
 }
@@ -192,8 +233,15 @@ function WorkflowForm({
       <div className="flex-1 space-y-5 overflow-y-auto p-4">
         {workflow.inherited && (
           <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-            Saving gives this project its own columns; the shared ones stay as they are for
-            everyone else.
+            {source.kind === "team"
+              ? "Saving gives the team its own columns, shared by all its projects; the workspace template stays as it is."
+              : "Saving gives this project its own columns; the shared ones stay as they are for everyone else."}
+          </p>
+        )}
+        {source.kind === "team" && !workflow.inherited && (
+          <p className="text-xs text-slate-500">
+            Every project the team runs shares these columns and WIP limits, except a project
+            with its own override.
           </p>
         )}
 
