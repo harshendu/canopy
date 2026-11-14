@@ -171,6 +171,135 @@ def _handle_jira(request: httpx.Request) -> httpx.Response:
 
 
 # --------------------------------------------------------------------------- #
+# Linear fixtures + handler (GraphQL, one POST /graphql endpoint)
+# --------------------------------------------------------------------------- #
+_LINEAR_TEAM = {"id": "team-eng", "key": "ENG"}
+_LINEAR_STATES = [
+    {"name": "Backlog", "type": "backlog", "position": 0},
+    {"name": "Todo", "type": "unstarted", "position": 1},
+    {"name": "In Progress", "type": "started", "position": 2},
+    {"name": "In Review", "type": "started", "position": 3},
+    {"name": "Done", "type": "completed", "position": 4},
+    {"name": "Canceled", "type": "canceled", "position": 5},
+]
+_LINEAR_UPDATED = "2026-05-02T09:00:00.000Z"
+
+
+def _linear_issue(
+    n: int,
+    title: str,
+    state: int,
+    *,
+    parent: int | None = None,
+    children: tuple[int, ...] = (),
+    estimate: int | None = None,
+    assignee: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": f"lin-{n}",
+        "identifier": f"ENG-{n}",
+        "title": title,
+        "url": f"https://linear.app/example/issue/ENG-{n}",
+        "updatedAt": _LINEAR_UPDATED,
+        "estimate": estimate,
+        "state": dict(_LINEAR_STATES[state]),
+        "parent": {"id": f"lin-{parent}"} if parent else None,
+        "children": {"nodes": [{"id": f"lin-{c}"} for c in children]},
+        "assignee": {"id": f"user-{assignee.split()[0].lower()}", "name": assignee, "email": None}
+        if assignee
+        else None,
+        "labels": {"nodes": []},
+    }
+
+
+_LINEAR_ISSUES = [
+    _linear_issue(1, "Search relevance revamp", 2, children=(2, 3, 4)),
+    _linear_issue(2, "Tune ranking signals", 4, parent=1, estimate=3, assignee="Ana Lima"),
+    _linear_issue(3, "Synonym dictionary", 2, parent=1, estimate=2, assignee="Ana Lima"),
+    _linear_issue(4, "Relevance dashboard", 1, parent=1, estimate=1),
+]
+_LINEAR_BY_ID = {
+    **{i["id"]: i for i in _LINEAR_ISSUES},
+    **{i["identifier"]: i for i in _LINEAR_ISSUES},
+}
+_LINEAR_HISTORY = [
+    {
+        "createdAt": "2026-04-28T10:00:00.000Z",
+        "actor": {"name": "Ana Lima"},
+        "fromState": {"name": "Todo", "type": "unstarted"},
+        "toState": {"name": "In Progress", "type": "started"},
+    },
+]
+_linear_created_seq = [100]
+
+
+def _linear_cycles() -> list[dict[str, Any]]:
+    """An active cycle around today (dates relative, so it's always current)."""
+    from datetime import UTC, datetime, timedelta
+
+    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    iso = "%Y-%m-%dT%H:%M:%S.000Z"
+    return [
+        {
+            "id": "cyc-7",
+            "number": 7,
+            "name": "Cycle 7",
+            "startsAt": (today - timedelta(days=3)).strftime(iso),
+            "endsAt": (today + timedelta(days=11)).strftime(iso),
+            "completedAt": None,
+            "issues": {"nodes": [{"id": "lin-2"}, {"id": "lin-3"}]},
+        }
+    ]
+
+
+def _handle_linear(request: httpx.Request) -> httpx.Response:
+    body = parse_json_body(request)
+    query = str(body.get("query") or "")
+    variables = body.get("variables") or {}
+
+    def ok(data: dict[str, Any]) -> httpx.Response:
+        return httpx.Response(200, json={"data": data}, request=request)
+
+    if "issueCreate" in query:
+        _linear_created_seq[0] += 1
+        n = _linear_created_seq[0]
+        issue = {"id": f"lin-new-{n}", "identifier": f"ENG-{n}",
+                 "url": f"https://linear.app/example/issue/ENG-{n}"}
+        return ok({"issueCreate": {"success": True, "issue": issue}})
+    if "issueUpdate" in query:
+        return ok({"issueUpdate": {"success": True}})
+    if "teams(" in query:
+        return ok({"teams": {"nodes": [_LINEAR_TEAM]}})
+    if "workflowStates" in query:
+        return ok({"workflowStates": {"nodes": _LINEAR_STATES}})
+    if "cycles(" in query:
+        return ok({"cycles": {"nodes": _linear_cycles()}})
+    if "history(" in query:
+        page = {"nodes": _LINEAR_HISTORY, "pageInfo": {"hasNextPage": False, "endCursor": None}}
+        return ok({"issue": {"history": page}})
+    if "issues(" in query:
+        parents = (((variables.get("filter") or {}).get("parent") or {}).get("id") or {}).get(
+            "in"
+        )
+        nodes = (
+            [i for i in _LINEAR_ISSUES if i["parent"] and i["parent"]["id"] in parents]
+            if parents
+            else _LINEAR_ISSUES
+        )
+        page = {"nodes": nodes, "pageInfo": {"hasNextPage": False, "endCursor": None}}
+        return ok({"issues": page})
+    if "issue(" in query:
+        found = _LINEAR_BY_ID.get(str(variables.get("id")))
+        if found is None:
+            return httpx.Response(
+                200, json={"data": None, "errors": [{"message": "Entity not found"}]},
+                request=request,
+            )
+        return ok({"issue": found})
+    return ok({})
+
+
+# --------------------------------------------------------------------------- #
 # GitHub fixtures + handler
 # --------------------------------------------------------------------------- #
 _GH_ADR_MARKDOWN = """# ADR-0007: Tokenize cards through the provider vault
@@ -266,6 +395,7 @@ def _handle_gdrive(request: httpx.Request) -> httpx.Response:
 
 
 _HANDLERS: dict[str, Callable[[httpx.Request], httpx.Response]] = {
+    "linear": _handle_linear,
     "jira": _handle_jira,
     "github": _handle_github,
     "gdrive": _handle_gdrive,

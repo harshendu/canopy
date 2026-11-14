@@ -306,7 +306,11 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   feeds is a **`TrackerBinding`** (project | subtree = a tracker link | query scope, with its
   watermark, mapping, status map, backfill cursor); a connection with only the legacy
   `config.project_id` gets an in-memory binding. `EngineerIdentity` maps tracker accounts onto
-  engineers. Provider columns are VARCHAR(32), so a new tracker is an enum member + one module.
+  engineers. Provider columns are VARCHAR(32), so a new tracker is an enum member + one module
+  (CONTRIBUTING "Adding a work tracker"). Shipped: **Jira**, **Linear** (`connectors/linear.py`,
+  GraphQL; cycles → sprints; `Linear-Signature` webhooks) and a **generic** ingest/webhook-only
+  tracker (`connectors/generic.py`, `direct_read=False`); Linear/generic are opt-in via
+  `TRACKERS_ENABLED`, and the admin integration policy lists only trackers in use.
   Neutral surfaces: `/tracker-links` (`/jira-links` is the alias), ingest/file ingest for any
   tracker connection, `/webhooks/{provider}`, `GET /meta/trackers`, `TaskExternalLinksRead.tracker`,
   PR → task matching by any key (`ingest.issue_keys`). Config: `TRACKERS_ENABLED`,

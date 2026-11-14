@@ -132,6 +132,9 @@ class Provider(StrEnum):
     jira = "jira"
     github = "github"
     gdrive = "gdrive"
+    # Work trackers beyond Jira (USER_FLOWS §J0) — opt-in through TRACKERS_ENABLED.
+    linear = "linear"
+    generic = "generic"
 
 
 # `provider` columns are VARCHAR (not a native DB enum), so adding a tracker is one enum member

@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     JIRA_WEBHOOK_SECRET: str = ""
     # Other trackers verify `/webhooks/{provider}` with `<PROVIDER>_WEBHOOK_SECRET`.
     LINEAR_WEBHOOK_SECRET: str = ""
+    GENERIC_WEBHOOK_SECRET: str = ""
     EVENTS_WEBHOOK_SECRET: str = ""
 
     # Cron cadence (minutes) of the tracker reconciliation poll (every bound tracker canopy reads
@@ -93,6 +94,8 @@ class Settings(BaseSettings):
     GITHUB_OAUTH_CLIENT_SECRET: str = ""
     GOOGLE_OAUTH_CLIENT_ID: str = ""
     GOOGLE_OAUTH_CLIENT_SECRET: str = ""
+    LINEAR_OAUTH_CLIENT_ID: str = ""
+    LINEAR_OAUTH_CLIENT_SECRET: str = ""
 
     # --- Plugin / MCP setup instructions (shown on the Agent Setup page) ---
     # A deployment (or a fork) overrides these so the copy-paste snippets point at *its* repo/

@@ -1,6 +1,6 @@
 """Importing this package registers all connector implementations."""
 
-from app.connectors import gdrive, github, jira  # noqa: F401
+from app.connectors import gdrive, generic, github, jira, linear  # noqa: F401
 from app.connectors.base import (
     Connector,
     Credential,

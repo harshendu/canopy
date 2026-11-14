@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.connectors import get_connector
-from app.connectors.tracker import WorkTracker, is_tracker
+from app.connectors.tracker import WorkTracker, is_tracker, tracker_enabled
 from app.core.events import publish
 from app.models.base import Provider, utcnow
 from app.models.integration import Connection, JiraLink, TrackerBinding
@@ -35,6 +35,10 @@ async def _tracker(session: AsyncSession, connection_id: int) -> tuple[Connectio
         raise TrackerLinkError("Connection not found")
     if not is_tracker(connection.provider):
         raise TrackerLinkError(f"{connection.provider.value} is not a work tracker")
+    if not tracker_enabled(connection.provider):
+        raise TrackerLinkError(
+            f"{connection.provider.value} is not enabled on this instance (TRACKERS_ENABLED)"
+        )
     connector = get_connector(connection, session)
     assert isinstance(connector, WorkTracker)
     if not connector.capabilities.direct_read or not connector.capabilities.hierarchy:

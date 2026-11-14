@@ -25,7 +25,7 @@ database migrations are always provided.
 - [Features](#features)
 - [Quickstart](#quickstart)
 - [Configuration](#configuration)
-- [Connecting Jira, GitHub and Google Drive](#connecting-jira-github-and-google-drive)
+- [Connecting Jira, Linear, GitHub and Google Drive](#connecting-jira-linear-github-and-google-drive)
 - [Claude Code plugin](#claude-code-plugin)
 - [Production deployment](#production-deployment)
 - [Architecture](#architecture)
@@ -57,11 +57,11 @@ under the same permissions.
 | Area | What you get |
 | --- | --- |
 | **Plan & schedule** | WBS + Gantt with typed dependencies (FS/SS/FF/SF with lag); **critical path (CPM)** computed server-side on a working calendar (weekends + holidays); baselines with schedule variance; what-if duration overrides; initiative-level **scenarios** you can compare and apply; **Monte-Carlo P50/P85 forecasts** from your team's real throughput. |
-| **Execute & track** | Kanban flow board with WIP and aging; blockers; burndown; per-project and org-wide **capacity heatmaps** with engineer availability; team-level **DORA + flow delivery metrics**; a *My work* / *Today* workspace for engineers. |
+| **Execute & track** | Work tracked **natively** in canopy or **mirrored** from a tracker (Jira, Linear, or any tool via ingest), switchable per project with a previewed plan; a drag-and-drop **Kanban board** per project and per team with workflows, WIP limits and aging; **sprints** (or Kanban, or both) per team with planning, burndown and velocity; blockers; burndown; per-project and org-wide **capacity heatmaps** with engineer availability; team-level **DORA + flow delivery metrics**; a *My work* / *Today* workspace for engineers. |
 | **Architecture & decisions** | Component map; **ADRs** with a full lifecycle, reviews, alternatives and one-way/two-way-door reversibility; decision queue; blast-radius analysis; **fitness functions** on ADRs and an architecture **drift** queue; **specs** with checkable acceptance criteria; a document graph that links (never copies) docs in Jira, Drive, Figma and GitHub. |
 | **Programs & leadership** | **Initiatives** that roll up project health, a cross-project critical path with hand-offs, and a weekly digest; a 0–100 **risk score** across schedule/capacity/architecture/quality with a nightly timeline, a RAID register and alerts; **outcomes** tracked as measurable bets; teams, pods and owners with ownership-scoped editing; leadership notes and a business-review roll-up; **PDF/CSV export** snapshots (download or save to Drive). |
-| **Integrations** | **Jira** idempotent sync (epics → phases, stories → tasks, sprints, status history, assignee → owner), plus pushing an architect-reviewed draft plan as tickets; **GitHub** and **Google Drive** reads (repos, PRs, design docs, ADR import from markdown); HMAC-verified webhooks with a polling backstop; OAuth 2.0 (3LO) or API tokens, encrypted at rest. |
-| **AI-native** | A **Claude Code plugin** with 120+ curated MCP tools, 14 skills and 7 subagents; **review-first change proposals** — agents stage updates inferred from Slack, email, meetings or docs for a human to review and apply; **bounded agent tokens** that can't take one-way-door actions (accepting an irreversible ADR, pushing to Jira, applying a scenario). |
+| **Integrations** | Pluggable **work trackers** — **Jira** and **Linear** idempotent sync (epics → phases, stories → tasks, sprints/cycles, status history, assignee → owner) and a **generic** tracker fed by MCP, file or webhook — plus turning an architect-reviewed draft plan into tickets (or native tasks); **GitHub** and **Google Drive** reads (repos, PRs, design docs, ADR import from markdown); HMAC-verified webhooks with a polling backstop; OAuth 2.0 (3LO) or API tokens, encrypted at rest. |
+| **AI-native** | A **Claude Code plugin** with 140+ curated MCP tools, 16 skills and 7 subagents; **review-first change proposals** — agents stage updates inferred from Slack, email, meetings or docs for a human to review and apply; **bounded agent tokens** that can't take one-way-door actions (accepting an irreversible ADR, pushing to Jira, applying a scenario). |
 | **Admin & operations** | Roles (admin, architect, engineering manager, engineer, viewer) plus cross-functional personas that pick each user's landing page; per-feature on/off gates; per-integration read/write policy; admin impersonation; **demo mode** with a seeded dataset and offline-mocked connectors; live updates over SSE; PostgreSQL or MySQL/MariaDB in production, SQLite for local dev. |
 
 | Initiative cockpit | Gantt with critical path | Risk score |
@@ -112,7 +112,7 @@ uvicorn app.main:app --reload
 cd frontend && npm run dev
 ```
 
-The background worker (Jira polling and nightly risk snapshots) needs Redis; start it with
+The background worker (tracker polling, nightly status-history top-ups and risk snapshots) needs Redis; start it with
 `arq app.workers.worker.WorkerSettings` from `backend/` when you need it.
 
 ## Configuration
@@ -143,7 +143,7 @@ The production compose file adds `POSTGRES_PASSWORD`, `PUBLIC_BASE_URL`, `CANOPY
 (Let's Encrypt), `NGROK_AUTHTOKEN` and the MCP variables below — see
 [`docs/PRODUCTION.md`](docs/PRODUCTION.md).
 
-## Connecting Jira, GitHub and Google Drive
+## Connecting Jira, Linear, GitHub and Google Drive
 
 Add connections on the **Connectors** page (`/connectors`), then either paste an API token or click
 **Connect** to authorize with OAuth. Credentials are stored encrypted.
@@ -151,18 +151,23 @@ Add connections on the **Connectors** page (`/connectors`), then either paste an
 | Provider | Token setup | OAuth 2.0 (3LO) scopes canopy requests |
 | --- | --- | --- |
 | Jira Cloud | Site URL (`https://you.atlassian.net`), account email, [API token](https://id.atlassian.com/manage-profile/security/api-tokens), Jira project key, and the canopy project to sync into | `read:jira-work write:jira-work read:jira-user offline_access` |
+| Linear (enable with `TRACKERS_ENABLED=jira,linear`) | A [personal API key](https://linear.app/settings/api), the workspace URL key (for links), the team key | `read,write` |
+| Generic tracker (`TRACKERS_ENABLED=…,generic`) | Nothing to authenticate — items arrive by MCP ingest, a file drop, or its signed webhook | — |
 | GitHub | Owner/org, repository, a token with read access to it, and the canopy project | `repo read:org` |
 | Google Drive | Use **Connect** (OAuth) | `drive.readonly` (read design docs), `drive.file` (save exports) |
 
 For OAuth, register an app with each provider using the callback URL
 `<OAUTH_REDIRECT_BASE_URL>/api/v1/connectors/oauth/callback` and set the matching `*_OAUTH_CLIENT_ID`
-and `*_OAUTH_CLIENT_SECRET`. For push updates, point GitHub at `<public URL>/webhooks/github` and Jira
-at `<public URL>/webhooks/jira`, using the webhook secrets above. Without webhooks, the worker's poll
-keeps Jira in sync.
+and `*_OAUTH_CLIENT_SECRET`. For push updates, point GitHub at `<public URL>/webhooks/github`, Jira
+at `<public URL>/webhooks/jira` and other trackers at `<public URL>/webhooks/<provider>`, using the
+webhook secrets above. Without webhooks, the worker's poll keeps trackers in sync. A project is bound
+to a tracker from its **Tracking** tab (or by picking it when adding the connection).
 
-> **Source-of-truth boundaries.** canopy syncs *from* Jira and **never writes ticket status back**.
-> Its only Jira writes are creating and updating ticket *content* from a draft plan an architect has
-> reviewed. GitHub and Drive are read-only, except for saving export snapshots to Drive.
+> **Source-of-truth boundaries.** Every task has one status owner — canopy for native work, or the
+> tracker it is mirrored from. canopy syncs *from* a tracker and **never writes ticket status back**.
+> Its only tracker writes are ticket *content*: a draft plan an architect has reviewed, or a
+> project's open tasks published when it moves to a tracker. GitHub and Drive are read-only, except
+> for saving export snapshots to Drive.
 
 ## Claude Code plugin
 

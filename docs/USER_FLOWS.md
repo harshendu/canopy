@@ -1448,6 +1448,30 @@ Execution works **with or without** a tracker, and Jira is one tracker among sev
   `config.project_id` keeps working (an in-memory binding); the migration turned existing ones
   into rows. **Identities (`EngineerIdentity`)** map an account in any tracker onto one
   engineer (matched by account id, then email, then exact name; else auto-created).
+- **Trackers shipped:**
+  - **Jira** (`app/connectors/jira.py`) — everything: JQL reads, project statuses with their
+    categories, changelog history, board sprints, webhooks (`/webhooks/jira`), OAuth, content
+    writes.
+  - **Linear** (`app/connectors/linear.py`) — GraphQL reads of a team's issues (scope
+    `team_key`, optionally a Linear `project_id` or `label`), workflow states (their type gives
+    the category: triage/backlog/unstarted → todo, started → in progress, completed → done,
+    canceled → cancelled), issue history, **cycles → tracker-owned sprints** (the active and
+    upcoming ones plus the last three completed), signed webhooks at `/webhooks/linear`
+    (`Linear-Signature`, `LINEAR_WEBHOOK_SECRET`), OAuth (`LINEAR_OAUTH_CLIENT_ID/SECRET`) or a
+    personal API key, content writes (issue create/update — never a state change). An issue
+    with sub-issues (or a label named in the binding's `epic_labels`, default "Epic") is an
+    epic. Browse links need the connection's `workspace_url_key`.
+  - **Generic** (`app/connectors/generic.py`) — any tracker canopy has no connector for
+    (Shortcut, Asana, an in-house tool, a spreadsheet). canopy never calls it (`direct_read:
+    false`): items arrive through MCP ingest (`ingest_work_items`), a JSON/CSV file drop, or its
+    signed webhook (`/webhooks/generic`, `X-Canopy-Signature: sha256=<hex>`,
+    `GENERIC_WEBHOOK_SECRET`, body `{"item": {<an ingest item>}, "scope": {"project_key": "…"},
+    "action": "upsert"|"remove"}`). Bindings, the board, switching and history work as for any
+    tracker; browse links come from the connection's `item_url_template`
+    (`https://…/{key}`).
+  Linear and generic are opt-in (`TRACKERS_ENABLED=jira,linear,generic`); the demo mock serves
+  a Linear workspace too (an unbound "Linear — example workspace" connection is seeded when
+  Linear is enabled).
 - **Config:** `TRACKERS_ENABLED` (comma-separated provider keys, default `jira`; empty = native
   only), `TRACKING_DEFAULT_MODE` (`native`, reported for new projects),
   `TRACKER_POLL_MINUTES` (falls back to `JIRA_POLL_MINUTES`), `<PROVIDER>_WEBHOOK_SECRET`.
@@ -1491,7 +1515,8 @@ Execution works **with or without** a tracker, and Jira is one tracker among sev
 - **API:** `GET /api/v1/connectors/oauth/{connection_id}/authorize` → provider URL (CSRF `state` is a
   signed JWT); provider redirects to `GET /api/v1/connectors/oauth/callback`, which exchanges the
   code, stores encrypted access + refresh tokens, and (for Jira) resolves the cloud id.
-- **Scopes:** Jira `read:jira-work write:jira-work read:jira-user offline_access`; Google Drive
+- **Scopes:** Jira `read:jira-work write:jira-work read:jira-user offline_access`; Linear
+  `read,write`; Google Drive
   `drive.readonly` + `drive.file` (`drive.readonly` is the CASA-restricted one — an **Internal
   Workspace** app avoids Google verification); GitHub `repo read:org`.
 - **Setup:** requires registered OAuth apps + `*_OAUTH_CLIENT_ID/SECRET` env vars.
@@ -1613,8 +1638,11 @@ items, GitHub→PRs); invalid rows are reported and skipped (a bad row never abo
   issue's project key — against each binding's scope), and enqueues an arq job (never processes
   inline). Tracker item events upsert the task; GitHub `pull_request` events upsert the PR cache
   (and link it to a task by key, §J6).
+- **Trackers:** Linear signs with `Linear-Signature` (hex HMAC-SHA256 of the body) and is
+  routed by the issue's team key; the generic tracker signs with `X-Canopy-Signature:
+  sha256=<hex>` and is routed by the `scope` it sends (§J0).
 - **Setup:** `JIRA_WEBHOOK_SECRET` / `GITHUB_WEBHOOK_SECRET` / `<PROVIDER>_WEBHOOK_SECRET` (e.g.
-  `LINEAR_WEBHOOK_SECRET`) — **required**: intake fails closed, so an endpoint answers `403` to
+  `LINEAR_WEBHOOK_SECRET`, `GENERIC_WEBHOOK_SECRET`) — **required**: intake fails closed, so an endpoint answers `403` to
   every request until its secret is set, and `401` to a missing or forged signature. Intake
   ACKs-but-ignores when `integrations.webhooks` is off or the provider's reads are MCP/file.
 

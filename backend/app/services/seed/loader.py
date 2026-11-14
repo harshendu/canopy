@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, col, select
 
 from app.connectors.demo import DEMO_JIRA_STATUSES
+from app.connectors.tracker import tracker_enabled
 from app.core.crypto import encrypt_token
 from app.core.security import hash_password
 from app.models.activity import ActivityEvent
@@ -841,6 +842,14 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
     for dc in refs.ds.connections(fid):
         conns[dc.provider] = await _add(session, Connection(
             provider=Provider(dc.provider), name=dc.name, config=dict(dc.config),
+            encrypted_token=encrypt_token("demo-token")))
+
+    if tracker_enabled(Provider.linear):
+        # An unbound Linear workspace (served by the demo mock): bind a native project to it
+        # from its Tracking tab to try switching trackers offline.
+        await _add(session, Connection(
+            provider=Provider.linear, name="Linear — example workspace",
+            config={"demo": True, "workspace_url_key": "example", "team_key": "ENG"},
             encrypted_token=encrypt_token("demo-token")))
 
     # GitHub PRs, each tied to the task it implements (a webhook would match by branch/Jira key).

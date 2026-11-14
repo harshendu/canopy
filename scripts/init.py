@@ -144,8 +144,12 @@ def defaults() -> dict[str, str]:
         "BACKEND_CORS_ORIGINS": "http://localhost:5173,http://localhost:4173",
         "CANOPY_API_BASE_URL": "http://localhost:8000",
         "CANOPY_API_TOKEN": "",
+        "TRACKERS_ENABLED": "jira",
+        "TRACKING_DEFAULT_MODE": "native",
         "GITHUB_WEBHOOK_SECRET": "",
         "JIRA_WEBHOOK_SECRET": "",
+        "LINEAR_WEBHOOK_SECRET": "",
+        "GENERIC_WEBHOOK_SECRET": "",
         "EVENTS_WEBHOOK_SECRET": "",
         "OAUTH_REDIRECT_BASE_URL": "http://localhost:8000",
         "FRONTEND_BASE_URL": "http://localhost:5173",
@@ -155,6 +159,8 @@ def defaults() -> dict[str, str]:
         "GITHUB_OAUTH_CLIENT_SECRET": "",
         "GOOGLE_OAUTH_CLIENT_ID": "",
         "GOOGLE_OAUTH_CLIENT_SECRET": "",
+        "LINEAR_OAUTH_CLIENT_ID": "",
+        "LINEAR_OAUTH_CLIENT_SECRET": "",
     }
 
 
@@ -224,15 +230,50 @@ def collect() -> dict[str, str]:
     header("Secrets")
     success("Generated a random SECRET_KEY and Fernet TOKEN_ENCRYPTION_KEY.")
 
+    header("Work tracking")
+    info("canopy tracks work natively (its own board owns every status), and projects can")
+    info("instead mirror a work tracker. Which trackers may projects be bound to?")
+    trackers = ask_choice(
+        "Trackers to enable",
+        [
+            ("jira", "Jira (recommended if you use it; native boards stay available)"),
+            ("none", "None — canopy is the tracker (native boards only)"),
+            ("linear", "Linear"),
+            ("all", "Jira, Linear and a generic tracker fed by MCP / file / webhook"),
+        ],
+    )
+    env["TRACKERS_ENABLED"] = {
+        "jira": "jira",
+        "none": "",
+        "linear": "linear",
+        "all": "jira,linear,generic",
+    }[trackers]
+    if env["TRACKERS_ENABLED"]:
+        env["TRACKING_DEFAULT_MODE"] = ask_choice(
+            "How should new projects start?",
+            [
+                ("native", "Native — canopy owns status until a tracker is bound (recommended)"),
+                ("mirrored", "Mirrored — waiting for a tracker binding"),
+            ],
+        )
+
     header("Integrations (optional)")
     if ask_yes_no("Configure webhook secrets / OAuth client credentials now?", default=False):
-        if ask_yes_no("Auto-generate webhook secrets (GitHub, Jira, CI events)?", default=True):
-            env["GITHUB_WEBHOOK_SECRET"] = secrets.token_hex(32)
-            env["JIRA_WEBHOOK_SECRET"] = secrets.token_hex(32)
-            env["EVENTS_WEBHOOK_SECRET"] = secrets.token_hex(32)
-            info("Set the same secrets in your GitHub / Jira / CI webhook configuration.")
+        if ask_yes_no(
+            "Auto-generate webhook secrets (GitHub, trackers, CI events)?", default=True
+        ):
+            for key in (
+                "GITHUB_WEBHOOK_SECRET",
+                "JIRA_WEBHOOK_SECRET",
+                "LINEAR_WEBHOOK_SECRET",
+                "GENERIC_WEBHOOK_SECRET",
+                "EVENTS_WEBHOOK_SECRET",
+            ):
+                env[key] = secrets.token_hex(32)
+            info("Set the same secrets in your GitHub / tracker / CI webhook configuration.")
         for label, key in (
             ("Jira", "JIRA_OAUTH"),
+            ("Linear", "LINEAR_OAUTH"),
             ("GitHub", "GITHUB_OAUTH"),
             ("Google", "GOOGLE_OAUTH"),
         ):
@@ -280,9 +321,16 @@ def render_env(e: dict[str, str]) -> str:
         f"CANOPY_API_BASE_URL={e['CANOPY_API_BASE_URL']}",
         f"CANOPY_API_TOKEN={e['CANOPY_API_TOKEN']}",
         "",
+        "# --- Work tracking (USER_FLOWS §J0) ---",
+        "# Trackers projects may mirror (comma-separated; empty = native tracking only).",
+        f"TRACKERS_ENABLED={e['TRACKERS_ENABLED']}",
+        f"TRACKING_DEFAULT_MODE={e['TRACKING_DEFAULT_MODE']}",
+        "",
         "# --- Webhook secrets (each endpoint rejects every request until its secret is set) ---",
         f"GITHUB_WEBHOOK_SECRET={e['GITHUB_WEBHOOK_SECRET']}",
         f"JIRA_WEBHOOK_SECRET={e['JIRA_WEBHOOK_SECRET']}",
+        f"LINEAR_WEBHOOK_SECRET={e['LINEAR_WEBHOOK_SECRET']}",
+        f"GENERIC_WEBHOOK_SECRET={e['GENERIC_WEBHOOK_SECRET']}",
         f"EVENTS_WEBHOOK_SECRET={e['EVENTS_WEBHOOK_SECRET']}",
         "",
         "# --- OAuth 2.0 (3LO) ---",
@@ -294,6 +342,8 @@ def render_env(e: dict[str, str]) -> str:
         f"GITHUB_OAUTH_CLIENT_SECRET={e['GITHUB_OAUTH_CLIENT_SECRET']}",
         f"GOOGLE_OAUTH_CLIENT_ID={e['GOOGLE_OAUTH_CLIENT_ID']}",
         f"GOOGLE_OAUTH_CLIENT_SECRET={e['GOOGLE_OAUTH_CLIENT_SECRET']}",
+        f"LINEAR_OAUTH_CLIENT_ID={e['LINEAR_OAUTH_CLIENT_ID']}",
+        f"LINEAR_OAUTH_CLIENT_SECRET={e['LINEAR_OAUTH_CLIENT_SECRET']}",
         "",
     ]
     return "\n".join(lines)

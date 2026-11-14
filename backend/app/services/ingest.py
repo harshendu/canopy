@@ -129,6 +129,14 @@ async def _remember_identity(
         await session.flush()
 
 
+async def _has_children(session: AsyncSession, task_id: int | None) -> bool:
+    if task_id is None:
+        return False
+    return (
+        await session.execute(select(Task.id).where(Task.parent_id == task_id).limit(1))
+    ).first() is not None
+
+
 async def upsert_task_from_external(
     session: AsyncSession,
     *,
@@ -171,6 +179,15 @@ async def upsert_task_from_external(
         action = "created" if ref is None else "updated"
     else:
         action = "updated"
+        if (
+            task.type == TaskType.summary
+            and task_type == TaskType.task
+            and not force_leaf
+            and await _has_children(session, task.id)
+        ):
+            # A phase with children stays a phase: an event that can't tell (a tracker webhook
+            # without the item's children) must not demote it and orphan the WBS.
+            task_type = TaskType.summary
     task.name = summary
     task.type = task_type
     task.status_owner = provider.value
