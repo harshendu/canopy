@@ -3,8 +3,12 @@
 The bounded-agency posture (§A6) is structural here: **staging** is a reversible
 two-way-door action open to contributors and agent tokens, while **apply / reject /
 per-item review** are `HumanOnly` planner actions — an agent token gets 403, so the
-change can only land through a person in the review queue. Withdraw stays open to the
-author (the agent cleaning up after itself is reversible).
+change can only land through a person in the review queue. Withdraw and **revise** stay
+open to the author (the agent cleaning up after itself, or amending its own staged set
+while the human reviews it, is reversible — nothing lands until a person applies).
+
+The review itself is plan-first: `GET …/preview` simulates the apply and returns the plan
+as a whole, current vs proposed (`app/services/proposal_preview.py`).
 """
 
 from fastapi import APIRouter, HTTPException, status
@@ -30,10 +34,14 @@ from app.schemas.proposal import (
     ProposalItemDetail,
     ProposalItemPatch,
     ProposalItemRead,
+    ProposalItemsBulkPatch,
+    ProposalPreview,
     ProposalRead,
     ProposalRejectRequest,
+    ProposalReviseRequest,
 )
 from app.services import proposals as svc
+from app.services.proposal_preview import build_proposal_preview
 from app.services.scheduling import CycleError
 
 router = APIRouter()
@@ -80,7 +88,7 @@ async def _item_needs_attention(
     if proposal.status != ProposalStatus.open or item.action == ProposalAction.create:
         return False
     current = await svc.snapshot_target(session, item)
-    return current != item.before
+    return svc.drifted(item.before, current)
 
 
 async def _read(session: SessionDep, proposal: Proposal) -> ProposalRead:
@@ -95,6 +103,9 @@ async def _read(session: SessionDep, proposal: Proposal) -> ProposalRead:
             attention += 1
     view.attention_count = attention
     view.scope_label = await _scope_label(session, proposal)
+    if proposal.created_by_user_id is not None:
+        author = await session.get(User, proposal.created_by_user_id)
+        view.created_by = (author.full_name or author.email) if author else None
     return view
 
 
@@ -190,13 +201,19 @@ async def _detail(session: SessionDep, proposal: Proposal) -> ProposalDetail:
         view = ProposalItemDetail.model_validate(item)
         if proposal.status == ProposalStatus.open and item.action != ProposalAction.create:
             view.current = await svc.snapshot_target(session, item)
-            view.stale = view.current != item.before
+            view.stale = svc.drifted(item.before, view.current)
+        if proposal.status == ProposalStatus.open:
+            view.addable_fields = svc.addable_fields(item)
         if item.overridden_by_user_id is not None:
             editor = await session.get(User, item.overridden_by_user_id)
             view.overridden_by = editor.full_name or editor.email if editor else None
         detail_items.append(view)
     header = await _read(session, proposal)
-    return ProposalDetail(**header.model_dump(), items=detail_items)
+    return ProposalDetail(
+        **header.model_dump(),
+        items=detail_items,
+        lookups=await svc.collect_lookups(session, items),
+    )
 
 
 @router.get("/{proposal_id}", response_model=ProposalDetail)
@@ -204,6 +221,89 @@ async def get_proposal(session: SessionDep, _: CurrentUser, proposal_id: int) ->
     """The full review view: items with payloads, provenance, the stage-time `before`
     snapshot, and (while open) the live `current` values + a `stale` flag."""
     proposal = await _get_proposal(session, proposal_id)
+    return await _detail(session, proposal)
+
+
+@router.get("/{proposal_id}/preview", response_model=ProposalPreview)
+async def preview_proposal(
+    session: SessionDep, _: CurrentUser, proposal_id: int
+) -> ProposalPreview:
+    """The plan as a whole, **current vs proposed**: per project, the schedule as it stands
+    and as it would be after applying the included items (same scheduler apply uses), which
+    tasks are added / edited / pushed as a knock-on, how the finish date moves, and whether
+    an apply would succeed right now (`can_apply` + `issues`). A pure simulation — nothing
+    is written. Reflects the reviewer's exclusions and inline overrides, so the picture
+    updates as they edit. Open proposals only (a closed one has no future state)."""
+    proposal = await _get_proposal(session, proposal_id)
+    _require_open(proposal)
+    return await build_proposal_preview(session, proposal)
+
+
+@router.post("/{proposal_id}/revise", response_model=ProposalDetail)
+async def revise_proposal(
+    session: SessionDep,
+    user: ContributorWriter,
+    proposal_id: int,
+    payload: ProposalReviseRequest,
+) -> ProposalDetail:
+    """Amend an open proposal **in place** — add items, merge new values into staged ones,
+    remove items — instead of withdrawing and restaging. This is the conversational
+    co-review loop: the human reviews in the UI, asks their Claude session for changes, and
+    the page updates live (SSE) with a bumped `revision` and the author's `note`.
+
+    Open to the author or a planner, and to **agent tokens** — still staging, still
+    reversible; applying stays human-only. Strict on what it introduces: a revision that
+    would add a new validation problem is refused whole (400 `invalid_items`), though a
+    problem that was already there doesn't block an unrelated fix."""
+    proposal = await _get_proposal(session, proposal_id)
+    _require_open(proposal)
+    if proposal.created_by_user_id != user.id and not is_planner(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the proposal's author (or a planner) may revise it",
+        )
+    try:
+        await svc.revise_proposal(session, proposal, payload)
+    except svc.RevisionRejectedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "invalid_items",
+                "errors": [
+                    {"item_id": i.item_id, "add_index": i.add_index, "error": i.error}
+                    for i in exc.issues
+                ],
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return await _detail(session, proposal)
+
+
+@router.patch("/{proposal_id}/items", response_model=ProposalDetail)
+async def review_items_bulk(
+    session: SessionDep,
+    _: PlannerWriter,
+    __: HumanOnly,
+    proposal_id: int,
+    payload: ProposalItemsBulkPatch,
+) -> ProposalDetail:
+    """Include or exclude many items at once — "skip all the risks", "take everything".
+    `item_ids` omitted means every item. Same human-only planner gate as the per-item veto."""
+    proposal = await _get_proposal(session, proposal_id)
+    _require_open(proposal)
+    items = await svc.load_items(session, proposal)
+    if payload.item_ids is not None:
+        wanted = set(payload.item_ids)
+        unknown = sorted(wanted - {i.id for i in items if i.id is not None})
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Item(s) not found: {unknown}"
+            )
+        items = [i for i in items if i.id in wanted]
+    for item in items:
+        item.excluded = payload.excluded
+    await session.commit()
     return await _detail(session, proposal)
 
 
@@ -217,10 +317,11 @@ async def review_item(
     payload: ProposalItemPatch,
 ) -> ProposalItem:
     """Reviewer edits on one item before applying: include/exclude (the line-item veto), and/or
-    an **audit-preserving field override** — edit a single proposed value inline instead of
-    rejecting the whole proposal. Only fields present in the request are touched; an empty
-    `overrides` clears the override (reverts to the agent's values). The agent's original
-    `payload` is never changed — the override is layered on at apply time (§AA2/T17)."""
+    an **audit-preserving field override** — edit a proposed value inline (or add a value the
+    proposal left out: an assignee, a deadline) instead of rejecting the whole proposal. Only
+    fields present in the request are touched; an empty `overrides` clears the override
+    (reverts to the agent's values). The agent's original `payload` is never changed — the
+    override is layered on at apply time (§AA2/T17)."""
     proposal = await _get_proposal(session, proposal_id)
     _require_open(proposal)
     item = await session.get(ProposalItem, item_id)
@@ -234,19 +335,18 @@ async def review_item(
     if "overrides" in fields_set:
         new_overrides = payload.overrides or {}
         if new_overrides:
-            payload_keys = set(item.payload or {})
-            unknown = set(new_overrides) - payload_keys
-            if unknown:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="override may only edit fields the proposal already sets: "
-                    f"unexpected {sorted(unknown)}",
-                )
             refs = {k for k in new_overrides if k.endswith("_ref")}
             if refs:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"structural refs can't be overridden inline: {sorted(refs)}",
+                )
+            unknown = set(new_overrides) - svc.overridable_fields(item)
+            if unknown:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="override may only edit a value this kind of change can carry: "
+                    f"unexpected {sorted(unknown)}",
                 )
             item.overrides = dict(new_overrides)
             item.overridden_by_user_id = user.id
@@ -258,6 +358,12 @@ async def review_item(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail={"code": "invalid_override", "error": str(exc)},
                 ) from exc
+            # A field the reviewer *added* has no stage-time baseline yet — capture the live
+            # value now so the diff still reads "was → will be" (existing baselines are kept).
+            if item.action != ProposalAction.create:
+                with session.no_autoflush:
+                    live = await svc.snapshot_target(session, item) or {}
+                item.before = {**live, **(item.before or {})}
         else:
             item.overrides = None
             item.overridden_by_user_id = None

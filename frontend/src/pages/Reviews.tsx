@@ -1,25 +1,12 @@
 import { useState } from "react";
-import { useParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 
-import { api, ApiError } from "../api/client";
-import type {
-  Proposal,
-  ProposalApplyResult,
-  ProposalDetail,
-  ProposalItem,
-  ProposalStatus,
-} from "../api/types";
-import { useCurrentUser } from "../lib/useCurrentUser";
-import { isPlanner } from "../lib/permissions";
-import {
-  coerceOverride,
-  diffRows,
-  includedCount,
-  itemHeadline,
-  proposalShape,
-} from "../lib/proposals";
+import { api } from "../api/client";
+import type { Proposal, ProposalStatus } from "../api/types";
+import { proposalShape, timeAgo } from "../lib/proposals";
 import { PageHeader } from "../components/PageHeader";
+import { Icon } from "../components/icons";
 
 const STATUS_FILTERS: { key: ProposalStatus | "all"; label: string }[] = [
   { key: "open", label: "Awaiting review" },
@@ -36,45 +23,22 @@ const STATUS_BADGE: Record<ProposalStatus, string> = {
   withdrawn: "bg-slate-100 text-slate-500",
 };
 
-const ACTION_BADGE: Record<string, string> = {
-  create: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  update: "bg-sky-50 text-sky-700 border-sky-200",
-  resolve: "bg-violet-50 text-violet-700 border-violet-200",
-};
-
-// Compact tint for the collapsed-card shape chips (same color semantics as ACTION_BADGE).
+// Compact tint for the shape chips (create / update / resolve).
 const SHAPE_TONE: Record<string, string> = {
   create: "text-emerald-600",
   update: "text-sky-600",
   resolve: "text-violet-600",
 };
 
+/** The review queue: every staged proposal as a scannable row. Opening one goes to its
+ *  review workspace (`/reviews/:id`) — plan first, then the change-by-change list. */
 export default function Reviews() {
-  const { proposalId } = useParams();
   const [status, setStatus] = useState<ProposalStatus | "all">("open");
-  const [lastApplied, setLastApplied] = useState<ProposalApplyResult | null>(null);
-  const { data: me } = useCurrentUser();
-  const planner = isPlanner(me?.role);
-
   const proposals = useQuery({
     queryKey: ["proposals", status],
     queryFn: () =>
       api.get<Proposal[]>(status === "all" ? "/proposals" : `/proposals?status=${status}`),
-    enabled: !proposalId,
   });
-
-  if (proposalId) {
-    return (
-      <div className="space-y-4">
-        <PageHeader
-          breadcrumbs={[{ label: "Reviews", to: "/reviews" }, { label: "Review" }]}
-          title="Review"
-          subtitle="A single staged change set awaiting your review."
-        />
-        <ProposalCard id={Number(proposalId)} planner={planner} initiallyOpen />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
@@ -83,8 +47,8 @@ export default function Reviews() {
         subtitle={
           <>
             Changes staged by Claude (and teammates) that only land after <em>you</em> review
-            and apply them. Each line shows where the fact came from; untick anything you
-            don&apos;t want before applying.
+            and apply them. Open one to see what it does to the plan as a whole, then go
+            through the changes one by one.
           </>
         }
       />
@@ -105,498 +69,73 @@ export default function Reviews() {
         ))}
       </div>
 
-      {lastApplied && (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
-          <span>
-            Applied {lastApplied.applied} change{lastApplied.applied === 1 ? "" : "s"} from
-            &ldquo;{lastApplied.proposal.title}&rdquo;
-            {lastApplied.skipped > 0 ? ` (${lastApplied.skipped} excluded)` : ""}
-            {lastApplied.replanned_projects.length > 0 ? " — schedules replanned." : "."}
-          </span>
-          <button
-            onClick={() => setLastApplied(null)}
-            className="ml-auto text-emerald-600 hover:text-emerald-800"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {proposals.data?.length === 0 ? (
+      {proposals.isLoading ? (
+        <p className="text-sm text-slate-400">Loading…</p>
+      ) : proposals.data?.length === 0 ? (
         <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500">
           {status === "open"
             ? "Nothing awaits review. Staged changes from Claude sessions will appear here."
             : "No proposals with this status."}
         </div>
       ) : (
-        <div className="space-y-3">
+        <ul className="space-y-3">
           {(proposals.data ?? []).map((p) => (
-            <ProposalCard
-              key={p.id}
-              id={p.id}
-              planner={planner}
-              summaryRow={p}
-              onApplied={setLastApplied}
-            />
+            <li key={p.id}>
+              <ProposalRow proposal={p} />
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   );
 }
 
-function ProposalCard({
-  id,
-  planner,
-  summaryRow,
-  initiallyOpen = false,
-  onApplied,
-}: {
-  id: number;
-  planner: boolean;
-  summaryRow?: Proposal;
-  initiallyOpen?: boolean;
-  onApplied?: (result: ProposalApplyResult) => void;
-}) {
-  const qc = useQueryClient();
-  const [open, setOpen] = useState(initiallyOpen);
-  const [rejectNote, setRejectNote] = useState("");
-  const [rejecting, setRejecting] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
-
-  const detail = useQuery({
-    queryKey: ["proposal", id],
-    queryFn: () => api.get<ProposalDetail>(`/proposals/${id}`),
-    enabled: open,
-  });
-
-  const refreshAll = () => {
-    void qc.invalidateQueries(); // apply replans projects — refresh everything
-  };
-
-  const apply = useMutation({
-    mutationFn: () => api.post<ProposalApplyResult>(`/proposals/${id}/apply`),
-    onSuccess: (result) => {
-      setApplyError(null);
-      onApplied?.(result);
-      refreshAll();
-    },
-    onError: (err) => {
-      if (err instanceof ApiError) {
-        try {
-          const body = JSON.parse(err.message) as {
-            detail?: { code?: string; errors?: { error: string }[] };
-          };
-          if (body.detail?.code === "invalid_items") {
-            setApplyError(
-              `${body.detail.errors?.length ?? 0} item(s) failed validation — details shown inline below. Exclude or fix them, then apply again.`
-            );
-          } else {
-            setApplyError(err.message);
-          }
-        } catch {
-          setApplyError(err.message);
-        }
-      } else {
-        setApplyError(String(err));
-      }
-      void qc.invalidateQueries({ queryKey: ["proposal", id] });
-    },
-  });
-
-  const reject = useMutation({
-    mutationFn: () =>
-      api.post<Proposal>(`/proposals/${id}/reject`, { note: rejectNote || null }),
-    onSuccess: () => {
-      setRejecting(false);
-      refreshAll();
-    },
-  });
-
-  const toggleItem = useMutation({
-    mutationFn: (input: { itemId: number; excluded: boolean }) =>
-      api.patch<ProposalItem>(`/proposals/${id}/items/${input.itemId}`, {
-        excluded: input.excluded,
-      }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["proposal", id] }),
-  });
-
-  // Audit-preserving inline override: PATCH the reviewer's field edits; {} clears them.
-  const overrideItem = useMutation({
-    mutationFn: (input: { itemId: number; overrides: Record<string, unknown> }) =>
-      api.patch<ProposalItem>(`/proposals/${id}/items/${input.itemId}`, {
-        overrides: input.overrides,
-      }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["proposal", id] }),
-  });
-
-  const header = detail.data ?? summaryRow;
-  if (!header) {
-    return (
-      <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-400">
-        {detail.isError ? "Proposal not found." : "Loading…"}
-      </div>
-    );
-  }
-
-  const isOpen = header.status === "open";
-  const items = detail.data?.items ?? [];
-  const included = includedCount(items);
-
+function ProposalRow({ proposal: p }: { proposal: Proposal }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-3 text-left"
-      >
-        <span
-          className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_BADGE[header.status]}`}
-        >
-          {header.status}
+    <Link
+      to={`/reviews/${p.id}`}
+      className="group block rounded-lg border border-slate-200 bg-white px-4 py-3 hover:border-canopy-500/50 hover:shadow-sm"
+    >
+      <div className="flex items-center gap-2">
+        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_BADGE[p.status]}`}>
+          {p.status}
         </span>
-        {header.scope_label && (
+        {p.scope_label && (
           <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-500">
-            {header.scope_label}
+            {p.scope_label}
           </span>
         )}
-        <span className="truncate font-medium">{header.title}</span>
-        {header.attention_count > 0 && (
+        <span className="truncate font-medium group-hover:text-canopy-700">{p.title}</span>
+        {p.attention_count > 0 && (
           <span
             className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800"
-            title="Some items errored or changed since they were staged — review before applying."
+            title="Some changes errored or the plan moved since they were staged — look before applying."
           >
-            ⚠ {header.attention_count} need{header.attention_count === 1 ? "s" : ""} attention
+            ⚠ {p.attention_count} need{p.attention_count === 1 ? "s" : ""} attention
           </span>
         )}
         <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-slate-400">
-          {/* Change shape at a glance (create / update / resolve) without expanding the card. */}
-          {proposalShape(header.action_counts).map((c) => (
+          {/* The change's shape at a glance (create / update / resolve). */}
+          {proposalShape(p.action_counts).map((c) => (
             <span key={c.action} className={`font-medium tabular-nums ${SHAPE_TONE[c.action]}`}>
               {c.glyph}
               {c.count}
             </span>
           ))}
           <span>
-            {header.item_count} change{header.item_count === 1 ? "" : "s"}
-            {header.origin ? ` · ${header.origin}` : ""}
+            {p.item_count} change{p.item_count === 1 ? "" : "s"}
           </span>
+          <Icon name="chevron-right" size={14} className="text-slate-300" />
         </span>
-      </button>
-
-      {open && (
-        <div className="space-y-4 border-t border-slate-100 px-4 py-4">
-          {header.summary && (
-            <p className="whitespace-pre-wrap text-sm text-slate-600">{header.summary}</p>
-          )}
-          {header.status === "rejected" && header.review_note && (
-            <p className="rounded bg-red-50 p-2 text-sm text-red-700">
-              Rejected: {header.review_note}
-            </p>
-          )}
-          {header.status === "applied" && (
-            <p className="rounded bg-emerald-50 p-2 text-sm text-emerald-700">
-              Applied {header.applied_count} change{header.applied_count === 1 ? "" : "s"}
-              {header.reviewed_at ? ` on ${header.reviewed_at.slice(0, 10)}` : ""}.
-            </p>
-          )}
-          {applyError && (
-            <p className="rounded bg-red-50 p-2 text-sm text-red-700">{applyError}</p>
-          )}
-
-          {detail.isLoading ? (
-            <p className="text-sm text-slate-400">Loading changes…</p>
-          ) : (
-            <ul className="space-y-3">
-              {items.map((item) => (
-                <ItemRow
-                  key={item.id}
-                  item={item}
-                  canEdit={planner && isOpen}
-                  onToggle={(excluded) =>
-                    toggleItem.mutate({ itemId: item.id, excluded })
-                  }
-                  onOverride={(overrides) =>
-                    overrideItem.mutateAsync({ itemId: item.id, overrides })
-                  }
-                />
-              ))}
-            </ul>
-          )}
-
-          {planner && isOpen && (
-            <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-              <button
-                onClick={() => apply.mutate()}
-                disabled={apply.isPending || included === 0}
-                className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                {apply.isPending
-                  ? "Applying…"
-                  : `Apply ${included} change${included === 1 ? "" : "s"}`}
-              </button>
-              {!rejecting ? (
-                <button
-                  onClick={() => setRejecting(true)}
-                  className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
-                >
-                  Reject…
-                </button>
-              ) : (
-                <span className="flex flex-1 items-center gap-2">
-                  <input
-                    value={rejectNote}
-                    onChange={(e) => setRejectNote(e.target.value)}
-                    placeholder="Why? (the author reads this and adjusts)"
-                    className="min-w-40 flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
-                  />
-                  <button
-                    onClick={() => reject.mutate()}
-                    disabled={reject.isPending}
-                    className="rounded bg-red-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  >
-                    Reject
-                  </button>
-                  <button
-                    onClick={() => setRejecting(false)}
-                    className="text-sm text-slate-400 hover:text-slate-600"
-                  >
-                    Cancel
-                  </button>
-                </span>
-              )}
-              <span className="ml-auto text-xs text-slate-400">
-                Applying replans affected schedules.
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ItemRow({
-  item,
-  canEdit,
-  onToggle,
-  onOverride,
-}: {
-  item: ProposalItem;
-  canEdit: boolean;
-  onToggle: (excluded: boolean) => void;
-  onOverride: (overrides: Record<string, unknown>) => Promise<unknown>;
-}) {
-  const rows = diffRows(item);
-  const [editingField, setEditingField] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
-  const [overrideError, setOverrideError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const overrides = item.overrides ?? {};
-  const hasOverrides = Object.keys(overrides).length > 0;
-
-  const startEdit = (field: string) => {
-    const raw = field in overrides ? overrides[field] : item.payload[field];
-    setDraft(raw == null ? "" : String(raw));
-    setEditingField(field);
-    setOverrideError(null);
-  };
-  const commit = async (next: Record<string, unknown>) => {
-    setSaving(true);
-    setOverrideError(null);
-    try {
-      await onOverride(next);
-      setEditingField(null);
-    } catch (e) {
-      // The backend rejects a bad override (400 {code:"invalid_override"}); show why.
-      let msg = e instanceof ApiError ? e.message : String(e);
-      try {
-        const body = JSON.parse(msg) as { detail?: { error?: string } | string };
-        if (body.detail && typeof body.detail === "object" && body.detail.error) {
-          msg = body.detail.error;
-        } else if (typeof body.detail === "string") {
-          msg = body.detail;
-        }
-      } catch {
-        /* leave msg as-is */
-      }
-      setOverrideError(msg);
-    } finally {
-      setSaving(false);
-    }
-  };
-  const save = (field: string) =>
-    commit({ ...overrides, [field]: coerceOverride(item.payload[field], draft) });
-  const revert = (field: string) => {
-    const next = { ...overrides };
-    delete next[field];
-    void commit(next);
-  };
-
-  return (
-    <li
-      className={`rounded border p-3 ${
-        item.excluded ? "border-slate-100 bg-slate-50 opacity-60" : "border-slate-200"
-      }`}
-    >
-      <div className="flex items-start gap-2">
-        {canEdit && (
-          <input
-            type="checkbox"
-            checked={!item.excluded}
-            onChange={(e) => onToggle(!e.target.checked)}
-            className="mt-1"
-            title={item.excluded ? "Excluded — won't be applied" : "Included"}
-          />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span
-              className={`rounded border px-1.5 py-0.5 text-xs ${
-                ACTION_BADGE[item.action] ?? "bg-slate-50 text-slate-600"
-              }`}
-            >
-              {item.action}
-            </span>
-            <span className="truncate text-sm font-medium">{itemHeadline(item)}</span>
-            {item.stale && (
-              <span
-                className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800"
-                title="The live value changed after this was staged — check the diff."
-              >
-                changed since staged
-              </span>
-            )}
-            {hasOverrides && (
-              <span
-                className="rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-700"
-                title={
-                  item.overridden_by
-                    ? `Edited by ${item.overridden_by}${
-                        item.overridden_at ? ` on ${item.overridden_at.slice(0, 10)}` : ""
-                      } — the agent's original values are kept below.`
-                    : "You edited a proposed value — the agent's original is kept below."
-                }
-              >
-                edited{item.overridden_by ? ` by ${item.overridden_by}` : ""}
-              </span>
-            )}
-            {item.error && (
-              <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">
-                {item.error}
-              </span>
-            )}
-          </div>
-          {item.reason && <p className="mt-1 text-xs text-slate-500">{item.reason}</p>}
-          {(item.source_label || item.source_kind) && (
-            <p className="mt-1 text-xs text-slate-400">
-              Source: {item.source_kind ? `[${item.source_kind}] ` : ""}
-              {item.source_url ? (
-                <a
-                  href={item.source_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-canopy-700 hover:underline"
-                >
-                  {item.source_label ?? item.source_url}
-                </a>
-              ) : (
-                item.source_label
-              )}
-            </p>
-          )}
-          {rows.length > 0 && (
-            <div className="mt-2 overflow-x-auto">
-              <table className="w-full text-xs">
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.field} className="border-t border-slate-100">
-                      <td className="py-1 pr-3 align-top font-mono text-slate-400">{r.field}</td>
-                      {r.before !== null ? (
-                        <>
-                          <td className="py-1 pr-2 align-top text-slate-500 line-through decoration-slate-300">
-                            {r.before}
-                          </td>
-                          <td className="py-1 pr-2 align-top text-slate-300">→</td>
-                        </>
-                      ) : (
-                        <td className="py-1 pr-2 align-top text-slate-300" colSpan={2} />
-                      )}
-                      <td className="py-1 align-top font-medium text-slate-700">
-                        {editingField === r.field ? (
-                          <span className="flex items-center gap-1">
-                            <input
-                              autoFocus
-                              value={draft}
-                              onChange={(e) => setDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") void save(r.field);
-                                if (e.key === "Escape") setEditingField(null);
-                              }}
-                              className="w-28 rounded border border-slate-300 px-1.5 py-0.5 text-xs"
-                            />
-                            <button
-                              onClick={() => void save(r.field)}
-                              disabled={saving}
-                              className="rounded bg-canopy-500 px-1.5 py-0.5 text-xs font-medium text-white disabled:opacity-50"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={() => setEditingField(null)}
-                              className="text-slate-400 hover:text-slate-600"
-                            >
-                              ✕
-                            </button>
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1.5">
-                            {r.proposed !== null ? (
-                              <>
-                                <span className="text-slate-400 line-through decoration-slate-300">
-                                  {r.proposed}
-                                </span>
-                                <span className="font-semibold text-violet-700">{r.after}</span>
-                              </>
-                            ) : (
-                              <span>{r.after}</span>
-                            )}
-                            {canEdit && r.editable && (
-                              <button
-                                onClick={() => startEdit(r.field)}
-                                className="text-slate-300 hover:text-canopy-600"
-                                title="Override this value"
-                                aria-label={`Override ${r.field}`}
-                              >
-                                ✎
-                              </button>
-                            )}
-                            {canEdit && r.proposed !== null && (
-                              <button
-                                onClick={() => revert(r.field)}
-                                className="text-slate-300 hover:text-slate-600"
-                                title="Revert to the agent's value"
-                                aria-label={`Revert ${r.field}`}
-                              >
-                                ↩
-                              </button>
-                            )}
-                          </span>
-                        )}
-                      </td>
-                      {r.current !== null && (
-                        <td className="py-1 pl-2 align-top text-amber-700">now: {r.current}</td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {overrideError && (
-                <p className="mt-1 text-xs text-red-600">Override rejected: {overrideError}</p>
-              )}
-            </div>
-          )}
-        </div>
       </div>
-    </li>
+      {p.summary && <p className="mt-1.5 line-clamp-2 text-sm text-slate-600">{p.summary}</p>}
+      <p className="mt-1.5 text-xs text-slate-400">
+        Staged {timeAgo(p.created_at)}
+        {p.created_by ? ` by ${p.created_by}` : ""}
+        {p.origin ? ` · ${p.origin}` : ""}
+        {p.revision > 1 ? ` · revision ${p.revision}, updated ${timeAgo(p.revised_at)}` : ""}
+        {p.status === "rejected" && p.review_note ? ` · “${p.review_note}”` : ""}
+      </p>
+    </Link>
   );
 }

@@ -34,6 +34,8 @@ from app.services.seed.catalog import (
     InitiativeSpec,
     LeadershipNoteSpec,
     OutcomeSpec,
+    ProposalItemSpec,
+    ProposalSpec,
     PullRequestSpec,
     RiskSpec,
     ScenarioAddedTask,
@@ -550,6 +552,120 @@ def demo_connections(flagship_project_id: int) -> list[DemoConnection]:
     ]
 
 
+# --------------------------------------------------------------------------- #
+# Review queue — open change proposals a Claude session staged from the week's signal
+# (USER_FLOWS §AA). The first reshapes a schedule (edits, a new phase, new dependencies,
+# knock-on shifts past a hard deadline); the second only touches registers.
+# --------------------------------------------------------------------------- #
+_SLACK = "https://example.slack.com/archives"
+
+PROPOSALS: tuple[ProposalSpec, ...] = (
+    ProposalSpec(
+        "PAYMENTS", "Payments: tokenization slip + pre-freeze PCI pentest",
+        "From this week's #payments standups, the security sync and the provider thread: "
+        "tokenization needs four more days for network-token edge cases, security wants an "
+        "external pentest before any live traffic moves, and refunds can ship full-refund-only "
+        "to claw some time back. Net effect: the cut-over moves out — worth a look before we "
+        "commit to the freeze date.",
+        _email("rahul"), "claude-session (architecture persona)",
+        items=(
+            ProposalItemSpec(
+                "task", "update", {"duration": 16}, target="Card tokenization API",
+                reason="Network-token edge cases need ~4 more days (Priya, Tuesday standup).",
+                source_kind="slack", source_label="#payments — standup thread, Tuesday",
+                source_url=f"{_SLACK}/C0PAYMENTS/p1718000000000100"),
+            ProposalItemSpec(
+                "task", "update", {"duration": 4}, target="Refunds & partial captures",
+                reason="Ship full refunds only at cut-over; partial captures follow after peak.",
+                source_kind="meeting", source_label="Payments weekly — scope trade-offs"),
+            ProposalItemSpec(
+                "task", "create", {"name": "PCI hardening", "type": "summary"}, ref="pci",
+                reason="Security asked for a dedicated hardening phase before cut-over.",
+                source_kind="meeting", source_label="Security sync — PCI readiness"),
+            ProposalItemSpec(
+                "task", "create",
+                {"name": "External penetration test", "duration": 8, "parent_ref": "pci",
+                 "assignee": "Isabel Moreno"},
+                ref="pentest",
+                reason="An external pentest is a precondition for moving live card traffic.",
+                source_kind="meeting", source_label="Security sync — PCI readiness"),
+            ProposalItemSpec(
+                "task", "create",
+                {"name": "Fix pentest findings", "duration": 4, "parent_ref": "pci",
+                 "assignee": "Gabriel Silva"},
+                ref="fixes",
+                reason="Budget for remediation — the last pentest produced two high findings."),
+            ProposalItemSpec(
+                "dependency", "create",
+                {"predecessor": "Payment webhooks & retries", "successor_ref": "pentest"},
+                reason="The pentest needs the full payment flow in place."),
+            ProposalItemSpec(
+                "dependency", "create",
+                {"predecessor_ref": "pentest", "successor_ref": "fixes"}),
+            ProposalItemSpec(
+                "dependency", "create",
+                {"predecessor_ref": "fixes", "successor": "Cut over remaining traffic"},
+                reason="No live traffic moves until the findings are fixed."),
+            ProposalItemSpec(
+                "milestone", "update", {"target_date_weeks": 6, "status": "at_risk"},
+                target="Payments cut-over",
+                reason="With the pentest in the path the cut-over can't land in four weeks."),
+            ProposalItemSpec(
+                "blocker", "create",
+                {"task": "Dual-run reconciliation",
+                 "reason": "Finance hasn't granted access to the settlement reports.",
+                 "category": "external", "severity": "high", "owner": "Ethan Wu",
+                 "needed_by_weeks": 2},
+                reason="Ethan can't start the dual run without the settlement exports.",
+                source_kind="email", source_label="Re: Settlement report access (Finance)"),
+            ProposalItemSpec(
+                "risk", "create",
+                {"title": "Pentest vendor has no slot before the code freeze",
+                 "category": "external", "probability": "medium", "impact": "high",
+                 "owner": "Isabel Moreno",
+                 "mitigation": "Hold a provisional slot now; fall back to the retainer vendor."},
+                source_kind="email", source_label="Pentest SOW — vendor availability"),
+            ProposalItemSpec(
+                "doc_reference", "create",
+                {"url": f"{_DRIVE}/doc-payments-pentest-sow/view", "kind": "other",
+                 "title": "Pentest statement of work"},
+                source_kind="drive", source_label="Pentest statement of work"),
+        ),
+    ),
+    ProposalSpec(
+        "TRACKING", "Tracking: carrier sync follow-ups",
+        "Notes from Thursday's carrier sync. No schedule changes — these keep the risk "
+        "register, the outcome and the launch milestone honest.",
+        _email("amina"), "claude-session (engineering persona)",
+        items=(
+            ProposalItemSpec(
+                "risk", "update",
+                {"status": "mitigating",
+                 "mitigation": "Two carriers moved to webhooks; the rest poll with backoff."},
+                target="Carrier APIs rate-limit tracking polls",
+                reason="Marco confirmed the webhook switch for the two largest carriers.",
+                source_kind="meeting", source_label="Carrier sync — Thursday"),
+            ProposalItemSpec(
+                "outcome", "update", {"current_value": 90.5}, target="Promised date met",
+                reason="Last week's delivered-on-time rate from the logistics dashboard.",
+                source_kind="document", source_label="Logistics weekly report"),
+            ProposalItemSpec(
+                "milestone", "update", {"target_date_weeks": 3}, target="Tracking page live",
+                reason="Launch waits for the two regional carriers' credentials.",
+                source_kind="meeting", source_label="Carrier sync — Thursday"),
+            ProposalItemSpec(
+                "decision", "create",
+                {"title": "Prefer carrier webhooks; poll only where none exist",
+                 "context": "Polling every carrier hits rate limits at peak volume.",
+                 "decision": "Subscribe to webhooks where a carrier offers them and keep "
+                             "hourly polling as the fallback.",
+                 "reversibility": "two_way"},
+                reason="Agreed in the sync; needs an owner and a written record."),
+        ),
+    ),
+)
+
+
 ECOMMERCE = Dataset(
     key="ecommerce",
     name="Online retail — e-commerce",
@@ -578,4 +694,5 @@ ECOMMERCE = Dataset(
     connections=demo_connections,
     leadership_notes=LEADERSHIP_NOTES,
     teams=TEAMS,
+    proposals=PROPOSALS,
 )

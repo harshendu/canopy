@@ -24,6 +24,7 @@ import Decisions from "./pages/Decisions";
 import MyWorkspace from "./pages/MyWorkspace";
 import MyToday from "./pages/MyToday";
 import Reviews from "./pages/Reviews";
+import ReviewWorkspace from "./pages/ReviewWorkspace";
 import AdminUsers from "./pages/AdminUsers";
 import AdminIntegrations from "./pages/AdminIntegrations";
 import AdminFeatures from "./pages/AdminFeatures";
@@ -143,7 +144,7 @@ export default function App() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:projectId" element={<ProjectView />} />
         <Route path="/reviews" element={<Reviews />} />
-        <Route path="/reviews/:proposalId" element={<Reviews />} />
+        <Route path="/reviews/:proposalId" element={<ReviewWorkspace />} />
         <Route path="/me" element={<MyWorkspace />} />
         <Route path="/me/today" element={<MyToday />} />
         <Route path="/decisions" element={<Decisions />} />

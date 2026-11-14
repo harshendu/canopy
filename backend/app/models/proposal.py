@@ -47,6 +47,13 @@ class Proposal(TimestampMixin, table=True):
     # The reviewer's note (most useful on reject — the agent reads it and adjusts).
     review_note: str | None = Field(default=None, sa_column=Column(Text))
     applied_count: int = 0  # items actually applied (excluded ones are skipped)
+    # Co-review trail (§AA5): the author may **revise** an open proposal in place while the
+    # human reviews it in the UI (the conversational loop). `revision` starts at 1 and bumps
+    # on every revise; `revision_note` is the author's one-line "what changed" for the
+    # reviewer. Items carry the revision that last touched them so the UI can mark what's new.
+    revision: int = 1
+    revised_at: datetime | None = None
+    revision_note: str | None = Field(default=None, sa_column=Column(Text))
 
 
 class ProposalItem(TimestampMixin, table=True):
@@ -86,4 +93,6 @@ class ProposalItem(TimestampMixin, table=True):
     overridden_by_user_id: int | None = None
     overridden_at: datetime | None = None
     applied_entity_id: int | None = None  # id of the created/updated entity after apply
+    # The proposal revision that added or last rewrote this item (see Proposal.revision).
+    revision: int = 1
     error: str | None = Field(default=None, sa_column=Column(Text))  # last validation error

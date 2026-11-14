@@ -97,11 +97,61 @@ def schedule_outcome(
     return project_end, violations
 
 
+def infer_project_start(start_date: date | None, task_starts: list[date]) -> date:
+    """The schedule's day-zero: the project's own start date, else its earliest scheduled
+    task, else today. Pure — shared with the proposal preview so a simulated plan anchors
+    exactly where a real replan would."""
+    if start_date:
+        return start_date
+    return min(task_starts) if task_starts else date.today()
+
+
 def _project_start(project: Project, tasks: list[Task]) -> date:
-    if project.start_date:
-        return project.start_date
-    starts = [t.start for t in tasks if t.start]
-    return min(starts) if starts else date.today()
+    return infer_project_start(project.start_date, [t.start for t in tasks if t.start])
+
+
+@dataclass
+class RollupNode:
+    """A WBS node as the summary roll-up needs it (decoupled from the ORM)."""
+
+    id: int
+    parent_id: int | None
+    is_summary: bool
+    start: date | None
+    end: date | None
+
+
+def rollup_summaries(nodes: list[RollupNode]) -> dict[int, tuple[date | None, date | None]]:
+    """Span every summary (phase) over its direct children: earliest child start → latest
+    child end. Pure. Works **bottom-up** so a nested phase is rolled up before its parent
+    reads it — a single pass in arbitrary order would hand the parent last run's span.
+    Returns `id -> (start, end)` for each summary that has children; a childless summary is
+    left out (its dates are whatever the caller already holds)."""
+    by_id = {n.id: n for n in nodes}
+    children: dict[int, list[int]] = {}
+    for n in nodes:
+        if n.parent_id is not None and n.parent_id in by_id:
+            children.setdefault(n.parent_id, []).append(n.id)
+
+    def depth(node_id: int) -> int:
+        seen: set[int] = set()
+        level, cur = 0, by_id[node_id]
+        while cur.parent_id is not None and cur.parent_id in by_id and cur.id not in seen:
+            seen.add(cur.id)
+            level += 1
+            cur = by_id[cur.parent_id]
+        return level
+
+    spans: dict[int, tuple[date | None, date | None]] = {n.id: (n.start, n.end) for n in nodes}
+    rolled: dict[int, tuple[date | None, date | None]] = {}
+    summaries = [n for n in nodes if n.is_summary and n.id in children]
+    for node in sorted(summaries, key=lambda n: depth(n.id), reverse=True):
+        starts = [s for s in (spans[c][0] for c in children[node.id]) if s]
+        ends = [e for e in (spans[c][1] for c in children[node.id]) if e]
+        span = (min(starts) if starts else None, max(ends) if ends else None)
+        spans[node.id] = span
+        rolled[node.id] = span
+    return rolled
 
 
 async def _load(
@@ -129,17 +179,23 @@ def _persist(tasks: list[Task], results: dict[int, SchedResult]) -> None:
         task.end = res.end
         task.is_critical = res.is_critical
         task.total_float = res.total_float
-    # Roll up summary tasks from their direct children.
-    children: dict[int, list[Task]] = {}
+    # Roll up summary tasks from their children (bottom-up, so nested phases stay current).
+    rolled = rollup_summaries(
+        [
+            RollupNode(
+                id=t.id,
+                parent_id=t.parent_id,
+                is_summary=t.type == TaskType.summary,
+                start=t.start,
+                end=t.end,
+            )
+            for t in tasks
+            if t.id is not None
+        ]
+    )
     for t in tasks:
-        if t.parent_id:
-            children.setdefault(t.parent_id, []).append(t)
-    for t in tasks:
-        if t.type == TaskType.summary and t.id in children:
-            child_starts = [c.start for c in children[t.id] if c.start]
-            child_ends = [c.end for c in children[t.id] if c.end]
-            t.start = min(child_starts) if child_starts else None
-            t.end = max(child_ends) if child_ends else None
+        if t.id in rolled:
+            t.start, t.end = rolled[t.id]
             if t.start and t.end:
                 t.duration = (t.end - t.start).days
 

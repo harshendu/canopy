@@ -96,13 +96,46 @@ provenance is your own inference — say so in its `reason`.
   Title it for the reviewer ("Standup follow-ups — payments", not "Updates").
   `summary` = your rationale in 2–5 lines. Set `origin` to your persona context, e.g.
   `"claude-session (management persona)"`.
-- **Tell the user**: what you staged, the item count, and the `review_url`. In the UI
-  they can exclude individual items before applying — mention that.
+- **Tell the user what it does, not just what's in it.** Right after staging, call
+  `canopy:preview_proposal` and lead with the plan-level effect — "moves the finish from
+  Mar 3 to Mar 12; adds 3 tasks; pushes QA and Launch by a week" — then the item count and
+  the `review_url`. The review page opens on the same picture: a **Current ⇄ Proposed**
+  toggle over the whole plan, then the change-by-change list where they can edit a value,
+  exclude a line, and apply.
 - **Follow up** with `canopy:get_proposal` when the session resumes or they ask:
   `applied` → confirm and continue from the applied state; `rejected` → read
   `review_note`, adjust, restage smaller; still `open` → gentle reminder with the link.
 - Withdraw (`canopy:withdraw_proposal`) anything superseded — a stale open proposal is
   noise in the reviewer's queue.
+
+### 5a. Reviewing together (the conversational loop)
+
+The user will often keep the review page open and talk to you about it: *"push the pentest
+out a week"*, *"drop the vendor risk"*, *"what if Dana takes the migration?"*, *"why is
+launch moving?"*. This is the intended way to refine a proposal — treat it as pairing:
+
+1. **Re-read first.** `canopy:get_proposal` — the item ids, plus what the reviewer has
+   already done in the UI: `excluded` items (their veto) and `overrides` (values they
+   hand-edited). Build on those; never re-add something they excluded unless asked.
+2. **Revise in place.** `canopy:revise_proposal` with `update_items` (payload is merged —
+   pass only what changes), `add_items`, `remove_item_ids`, and a one-line `note` in their
+   words ("pentest 5d → 10d; dropped vendor risk"). Their page updates live and marks what
+   changed. Do **not** stage a second proposal or withdraw-and-restage for an edit.
+3. **Say what it did.** `revise_proposal` returns `impact` (the before/after plan
+   summary). Answer in one or two sentences: the finish-date movement, the biggest
+   knock-on shifts, any new deadline miss. If `impact.can_apply` is false, say why
+   (`issues`) and offer the fix.
+4. **Questions are reads.** "Why does launch move?" → `canopy:preview_proposal` and trace
+   the `task_changes` (`edited` → the cause, `shifted` → the knock-on). Don't revise to
+   answer a question.
+5. **Scheduling facts:** task dates are computed. To move work, change `duration`, add a
+   `dependency`, or set `constraint_start` (start no earlier than) — staging `start` does
+   nothing durable.
+6. **The apply click is theirs.** When they're happy, point them at the Apply button on
+   the page. You cannot apply (403 by design) and should not offer to.
+
+If they ask for something outside the proposal's scope (another project/initiative), that
+is a new proposal — say so rather than stretching this one.
 
 ## 6. Session checklist
 
@@ -110,6 +143,8 @@ provenance is your own inference — say so in its `reason`.
 2. Read before writing; anchor ids.
 3. Classify each intended change on the write ladder; batch rung-3 changes into one
    well-titled proposal with provenance.
-4. Replan after schedule-affecting direct edits; proposals replan automatically on apply.
-5. End with: what changed directly, what awaits review (+ `review_url`), what you
+4. `preview_proposal` what you staged and report the plan-level effect; revise in place
+   (`revise_proposal`) as the user reacts — don't spawn sibling proposals.
+5. Replan after schedule-affecting direct edits; proposals replan automatically on apply.
+6. End with: what changed directly, what awaits review (+ `review_url`), what you
    deliberately did NOT do (gates, human-only doors, missing signal).

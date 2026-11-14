@@ -18,7 +18,7 @@ from typing import TypeVar
 
 from sqlalchemy import delete, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import SQLModel, select
+from sqlmodel import SQLModel, col, select
 
 from app.core.crypto import encrypt_token
 from app.core.security import hash_password
@@ -52,6 +52,9 @@ from app.models.base import (
     OutcomeScope,
     OutcomeStatus,
     ProjectHealth,
+    ProposalAction,
+    ProposalEntity,
+    ProposalScope,
     Provider,
     RetrospectiveKind,
     Reversibility,
@@ -83,6 +86,7 @@ from app.models.project import (
     Task,
     TaskStatusHistory,
 )
+from app.models.proposal import Proposal, ProposalItem
 from app.models.retro import Retrospective, RetrospectiveComment
 from app.models.risk_register import RiskItem
 from app.models.scenario import (
@@ -97,10 +101,11 @@ from app.models.scenario import (
 from app.models.spec import Spec, SpecCriterion
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
+from app.services import proposals as proposal_svc
 from app.services.planner import reschedule_project
 from app.services.scenario_engine import snapshot_live_into_scenario
 from app.services.seed import catalog
-from app.services.seed.catalog import Dataset, ProjectSpec
+from app.services.seed.catalog import Dataset, ProjectSpec, ProposalItemSpec, ProposalSpec
 from app.services.seed.ecommerce import ECOMMERCE
 
 M = TypeVar("M", bound=SQLModel)
@@ -850,6 +855,120 @@ async def _build_leadership_notes(session: AsyncSession, refs: _Refs) -> None:
 # --------------------------------------------------------------------------- #
 # Orchestration + summary
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Review queue: open change proposals
+# --------------------------------------------------------------------------- #
+# Shorthand payload keys (names) → the id field they resolve to.
+_PROPOSAL_PEOPLE = {"assignee": "assignee_engineer_id", "owner": "owner_engineer_id"}
+_PROPOSAL_TASKS = {
+    "task": "task_id",
+    "parent": "parent_id",
+    "predecessor": "predecessor_id",
+    "successor": "successor_id",
+}
+
+
+def _proposal_payload(
+    refs: _Refs, project_key: str, item: ProposalItemSpec
+) -> dict[str, object] | None:
+    """Turn a spec's readable payload into the staged one (names → ids, `*_weeks` → dates).
+    None when a name doesn't resolve — the proposal is then skipped, like every other
+    unresolvable reference in the loader."""
+    today = _today()
+    tasks = refs.tasks.get(project_key, {})
+    payload: dict[str, object] = {}
+    for key, value in item.payload.items():
+        if key in _PROPOSAL_PEOPLE:
+            engineer_id = refs.eng(str(value))
+            if engineer_id is None:
+                return None
+            payload[_PROPOSAL_PEOPLE[key]] = engineer_id
+        elif key in _PROPOSAL_TASKS:
+            task = tasks.get(str(value))
+            if task is None:
+                return None
+            payload[_PROPOSAL_TASKS[key]] = _req(task.id)
+        elif key.endswith("_weeks") and isinstance(value, int):
+            payload[key.removesuffix("_weeks")] = _weeks(today, value).isoformat()
+        else:
+            payload[key] = value
+    return payload
+
+
+async def _proposal_target(
+    session: AsyncSession, refs: _Refs, project_key: str, item: ProposalItemSpec
+) -> int | None:
+    """The live row an update/resolve item edits, found by its name within the project."""
+    pid = _req(refs.projects[project_key].id)
+    task = refs.tasks.get(project_key, {}).get(item.target or "")
+    if item.entity == "task":
+        return task.id if task else None
+    if item.entity == "blocker":  # found by the task it sits on (the open one)
+        if task is None:
+            return None
+        return (await session.execute(
+            select(Blocker.id).where(
+                Blocker.task_id == task.id, col(Blocker.resolved_at).is_(None))
+        )).scalars().first()
+    if item.entity == "milestone":
+        return (await session.execute(
+            select(Milestone.id).where(Milestone.project_id == pid, Milestone.name == item.target)
+        )).scalars().first()
+    if item.entity == "risk":
+        return (await session.execute(
+            select(RiskItem.id).where(
+                RiskItem.scope_level == RiskScope.project, RiskItem.scope_id == pid,
+                RiskItem.title == item.target)
+        )).scalars().first()
+    if item.entity == "outcome":
+        return (await session.execute(
+            select(Outcome.id).where(
+                Outcome.scope_level == OutcomeScope.project, Outcome.scope_id == pid,
+                Outcome.statement == item.target)
+        )).scalars().first()
+    return None
+
+
+async def _build_one_proposal(session: AsyncSession, refs: _Refs, spec: ProposalSpec) -> None:
+    project = refs.projects.get(spec.project_key)
+    author = refs.users.get(spec.author_email)
+    if project is None or author is None:
+        return
+    items: list[ProposalItem] = []
+    for index, item in enumerate(spec.items):
+        payload = _proposal_payload(refs, spec.project_key, item)
+        if payload is None:
+            return
+        entity_id: int | None = None
+        if item.action != "create":
+            entity_id = await _proposal_target(session, refs, spec.project_key, item)
+            if entity_id is None:
+                return
+        items.append(ProposalItem(
+            proposal_id=0, sort_order=index, entity_type=ProposalEntity(item.entity),
+            action=ProposalAction(item.action), entity_id=entity_id, ref=item.ref,
+            payload=payload, reason=item.reason, source_kind=item.source_kind,
+            source_label=item.source_label, source_url=item.source_url))
+    # Stage through the same validation an agent's `propose_changes` goes through, so the
+    # demo never ships a proposal the review page couldn't apply.
+    pid = _req(project.id)
+    if await proposal_svc.check_items(session, ProposalScope.project, pid, items):
+        return
+    proposal = await _add(session, Proposal(
+        scope_level=ProposalScope.project, scope_id=pid, title=spec.title,
+        summary=spec.summary, origin=spec.origin, created_by_user_id=author.id))
+    for staged in items:
+        staged.proposal_id = _req(proposal.id)
+        staged.before = await proposal_svc.snapshot_target(session, staged)
+        session.add(staged)
+    await session.flush()
+
+
+async def _build_proposals(session: AsyncSession, refs: _Refs) -> None:
+    for spec in refs.ds.proposals:
+        await _build_one_proposal(session, refs, spec)
+
+
 async def load_seed_data(
     session: AsyncSession, keep_user_ids: set[int], dataset: Dataset | None = None
 ) -> dict[str, int]:
@@ -867,6 +986,7 @@ async def load_seed_data(
     await _build_connections(session, refs)
     await _build_scenarios(session, refs)
     await _build_leadership_notes(session, refs)
+    await _build_proposals(session, refs)
     await session.commit()
     return await seed_summary(session)
 
@@ -894,6 +1014,6 @@ async def seed_summary(session: AsyncSession) -> dict[str, int]:
         "outcomes": Outcome, "blockers": Blocker, "retrospectives": Retrospective,
         "draft_plans": DraftPlan, "connections": Connection, "scenarios": Scenario,
         "activity_events": ActivityEvent, "status_history": TaskStatusHistory,
-        "documents": DocReference,
+        "documents": DocReference, "proposals": Proposal,
     }
     return {name: await _count(session, model) for name, model in models.items()}

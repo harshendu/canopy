@@ -497,8 +497,13 @@ async def test_override_rejects_bad_fields_and_can_be_cleared(client, db_session
             f"/api/v1/proposals/{pid}/items/{item_id}", json={"overrides": body}, headers=full
         )
 
-    # A field the proposal doesn't set can't be introduced via override.
-    assert (await override({"assignee_engineer_id": 1})).status_code == 400
+    # A reviewer may add a *value* the proposal left out (here: a deadline)…
+    added = await override({"deadline": "2026-10-01"})
+    assert added.status_code == 200, added.text
+    # …but never a field that decides where the change lands, an unknown field, or a ref.
+    assert (await override({"project_id": project_id})).status_code == 400
+    assert (await override({"status": "Done"})).status_code == 400
+    assert (await override({"parent_ref": "phase"})).status_code == 400
     # A bad value for a real field is rejected at edit time (not deferred to apply).
     bad = await override({"duration": "lots"})
     assert bad.status_code == 400

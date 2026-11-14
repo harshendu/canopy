@@ -69,14 +69,18 @@ things, split by project or by theme rather than staging one monster.
 ## 5. Report to the user
 
 End with, in this order:
-1. The **review link(s)** and item counts ("12 changes staged — review at …").
+1. The **review link(s)**, item counts, and — from `canopy:preview_proposal` — what the
+   batch does to the plan ("12 changes staged; moves the cut-over from Dec 23 to Dec 28 —
+   review at …"). The review page opens on that same current ⇄ proposed picture.
 2. What you found but did **not** stage (duplicates, ambiguous signal, capacity/PTO
    observations, anything needing their judgment) — with source links.
 3. Anything time-critical they should act on today (a high-severity blocker with a
    needed-by date beats everything else).
 
 Then follow the review loop in `updating-canopy` §5 (check `get_proposal` later; read
-`review_note` on rejection; withdraw anything superseded).
+`review_note` on rejection; withdraw anything superseded). When the user reacts to the
+staged batch in conversation ("drop that risk", "make it 5 days"), amend it in place with
+`canopy:revise_proposal` (§5a) — their open review page updates live.
 
 ## Scheduling
 

@@ -33,8 +33,11 @@ Process:
 3. Dedupe (step above), then stage one reviewable proposal per project/theme
    (3–15 items; reviewer-facing title; summary = what you read + the judgment applied;
    use `ref`/`parent_ref`/`predecessor_ref`/`task_ref` to build multi-item structures).
-4. Report back: review URL(s) + item counts, what you deliberately did NOT stage and
-   why, and anything time-critical (a high-severity blocker with a needed-by date leads).
+4. `canopy:preview_proposal` each staged proposal, so you can say what it does to the
+   plan rather than only what is in it.
+5. Report back: review URL(s) + item counts + the plan-level effect (finish-date movement,
+   biggest knock-on shifts), what you deliberately did NOT stage and why, and anything
+   time-critical (a high-severity blocker with a needed-by date leads).
 
 You are safe to run unattended on an agent-scope token: everything you stage waits for
 a human to apply it in the Reviews queue.

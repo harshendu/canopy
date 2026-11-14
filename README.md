@@ -197,7 +197,10 @@ pip install "fastmcp>=2.3,<5" "httpx>=0.27"
 Then ask things like *"what's my riskiest project and why?"*, *"sync Jira and tell me what
 slipped"*, or *"draft an ADR for moving the scheduler to a queue"*. Writes an agent infers from
 external sources are staged as **change proposals** in the dashboard's **Reviews** queue, not applied
-directly.
+directly. Each one opens on what it does to the plan as a whole (a current ⇄ proposed toggle over the
+schedule), then the change-by-change list you can edit and apply — and while it's open you can keep
+talking: *"push the pentest out a week and drop the vendor risk"* revises it in place and the page
+updates live.
 
 **MCP only, without the plugin:** clone the repo, install `plugin/mcp_server/requirements.txt` into a
 venv, and register the server in your project's `.mcp.json`. Use the venv's interpreter as `command`
