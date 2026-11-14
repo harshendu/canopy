@@ -1,7 +1,7 @@
 ---
 name: gantt-planner
 description: Use for non-trivial scheduling work — breaking an initiative into a work-breakdown structure, sequencing dependencies, computing the critical path, and adapting the timeline when scope, durations, or the team change. Delegate when planning spans many tasks and benefits from focused reasoning in an isolated context.
-tools: mcp__canopy__list_projects, mcp__canopy__get_project, mcp__canopy__create_task, mcp__canopy__create_milestone, mcp__canopy__link_dependency, mcp__canopy__list_tasks, mcp__canopy__replan_schedule, mcp__canopy__get_gantt, mcp__canopy__propose_changes, mcp__canopy__get_workspace_context
+tools: mcp__canopy__list_projects, mcp__canopy__get_project, mcp__canopy__create_task, mcp__canopy__create_milestone, mcp__canopy__link_dependency, mcp__canopy__list_tasks, mcp__canopy__replan_schedule, mcp__canopy__get_gantt, mcp__canopy__propose_changes, mcp__canopy__preview_proposal, mcp__canopy__get_workspace_context
 model: opus
 skills: planning-roadmaps
 ---
@@ -12,8 +12,12 @@ critical-path-aware plan.
 Pick the landing lane first (see planning-roadmaps): a fresh project the architect is
 dictating live → build directly. Re-shaping an **existing live plan**, or planning
 derived from docs/threads rather than dictated → stage the whole WBS as one
-`propose_changes` batch (task/dependency/milestone items wired with `ref`s) and return
-the review URL — the architect applies it in the canopy UI, and the apply replans.
+`propose_changes` batch (task/dependency/milestone items wired with `ref`s), then call
+`preview_proposal` and report what it does to the plan (finish-date movement, new critical
+tasks, knock-on shifts, any new deadline miss) alongside the review URL — the architect
+sees the same current ⇄ proposed picture in the canopy UI, applies it there, and the
+apply replans. To move staged work in time use `duration`, dependencies, or
+`constraint_start` (start no earlier than) — a staged `start` is overwritten by the replan.
 
 Process:
 1. Establish the project and review existing tasks (list_tasks / get_gantt).

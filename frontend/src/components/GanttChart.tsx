@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { GanttResponse, GanttTask } from "../api/types";
 
@@ -6,6 +6,8 @@ const ROW_H = 38;
 const DEFAULT_DAY_W = 26;
 const MIN_DAY_W = 8;
 const MAX_DAY_W = 60;
+const FIT_MIN_DAY_W = 3; // how far "fit to width" may squeeze a long plan
+const TICK_MIN_PX = 44; // closest two date labels may sit before they'd collide
 const LABEL_W = 240;
 const HEADER_H = 28;
 
@@ -69,14 +71,55 @@ interface Geom {
   y: number;
 }
 
+/** Why a row is called out when the chart compares two states of a plan (the proposal
+ *  review): the change `added` it, `edited` it directly, or `shifted` it as a knock-on. */
+export type GanttHighlight = "added" | "edited" | "shifted";
+
+const HIGHLIGHT_STYLE: Record<GanttHighlight, { row: string; stripe: string; label: string }> = {
+  added: { row: "fill-emerald-50", stripe: "fill-emerald-500", label: "New in this proposal" },
+  edited: { row: "fill-sky-50", stripe: "fill-sky-500", label: "Edited by this proposal" },
+  shifted: { row: "fill-amber-50", stripe: "fill-amber-400", label: "Moves as a result" },
+};
+
 export default function GanttChart({
   data,
   onTaskClick,
+  highlights,
+  domain,
+  ghostLabel = "Baseline",
+  fit = false,
 }: {
   data: GanttResponse;
   onTaskClick?: (taskId: number) => void;
+  /** Rows to tint (task id → why). Adds a matching legend. */
+  highlights?: Map<number, GanttHighlight>;
+  /** Pin the time axis to this window instead of fitting it to `data` — keeps two charts
+   *  of the same plan (current vs proposed) on one scale, so only real moves look like moves. */
+  domain?: { min: string; max: string } | null;
+  /** What the thin ghost bar (`baseline_*`) stands for in the legend and tooltips. */
+  ghostLabel?: string;
+  /** Start zoomed so the whole plan fits the available width (the zoom buttons still work).
+   *  For a chart whose job is "show me everything that moves" rather than day-level detail. */
+  fit?: boolean;
 }) {
   const [dayW, setDayW] = useState(DEFAULT_DAY_W);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // The plan's whole extent in days — independent of zoom, filters and collapse.
+  const fullSpan = useMemo(() => {
+    const days = data.tasks
+      .flatMap((t) => [t.start_date, t.end_date, t.deadline])
+      .filter((d): d is string => Boolean(d))
+      .map(parseDay);
+    if (domain) days.push(parseDay(domain.min), parseDay(domain.max));
+    return days.length ? Math.max(...days) - Math.min(...days) + 1 : 1;
+  }, [data, domain]);
+  useLayoutEffect(() => {
+    if (!fit || !scrollRef.current) return;
+    const available = scrollRef.current.clientWidth - LABEL_W - 20;
+    if (available <= 0) return;
+    const fitted = Math.floor((available / fullSpan) * 10) / 10;
+    setDayW(Math.max(FIT_MIN_DAY_W, Math.min(DEFAULT_DAY_W, fitted)));
+  }, [fit, fullSpan]);
   const [ownerFilter, setOwnerFilter] = useState("");
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const toggleCollapse = (id: number) =>
@@ -131,6 +174,7 @@ export default function GanttChart({
       .flatMap((t) => [t.start_date, t.end_date, t.deadline])
       .filter((d): d is string => Boolean(d))
       .map(parseDay);
+    if (domain) days.push(parseDay(domain.min), parseDay(domain.max));
     const min = days.length ? Math.min(...days) : 0;
     const max = days.length ? Math.max(...days) : 0;
     const span = Math.max(max - min + 1, 1);
@@ -155,11 +199,14 @@ export default function GanttChart({
       minDay: min,
       spanDays: span,
       hasChildren,
-      gridDays: Array.from({ length: span }, (_, i) => min + i).filter((_, i) => i % 7 === 0),
+      // Weekly gridlines — thinned to every 2nd/4th… week when zoomed out, so labels don't collide.
+      gridDays: Array.from({ length: span }, (_, i) => min + i).filter(
+        (_, i) => i % (7 * Math.max(1, Math.ceil(TICK_MIN_PX / (7 * dayW)))) === 0
+      ),
       width: LABEL_W + span * dayW + 20,
       height: HEADER_H + tasks.length * ROW_H + 10,
     };
-  }, [data, dayW, ownerFilter, collapsed]);
+  }, [data, dayW, ownerFilter, collapsed, domain]);
 
   // "Today" marker — only drawn when it falls within the charted window.
   const todayIndex = Math.floor(Date.now() / 86_400_000);
@@ -191,7 +238,7 @@ export default function GanttChart({
         </label>
         <span className="mr-1 text-xs text-slate-400">zoom</span>
         <button
-          onClick={() => setDayW((w) => Math.max(MIN_DAY_W, w - 6))}
+          onClick={() => setDayW((w) => Math.max(Math.min(MIN_DAY_W, w), w - 6))}
           className="rounded border border-slate-300 px-2 text-sm text-slate-600"
           aria-label="Zoom out"
         >
@@ -205,7 +252,7 @@ export default function GanttChart({
           +
         </button>
       </div>
-      <div className="overflow-auto">
+      <div ref={scrollRef} className="overflow-auto">
       <svg width={width} height={height} className="select-none text-xs">
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
@@ -291,19 +338,39 @@ export default function GanttChart({
                   x: LABEL_W + g.x + g.w + 4,
                 }
               : null;
+          const highlight = highlights?.get(g.task.id);
           return (
             <g
               key={g.task.id}
               onClick={onTaskClick ? () => onTaskClick(g.task.id) : undefined}
               className={onTaskClick ? "cursor-pointer" : undefined}
             >
+              {highlight && (
+                <g>
+                  <rect
+                    x={0}
+                    y={g.y}
+                    width={width}
+                    height={ROW_H}
+                    className={HIGHLIGHT_STYLE[highlight].row}
+                  />
+                  <rect
+                    x={0}
+                    y={g.y}
+                    width={3}
+                    height={ROW_H}
+                    className={HIGHLIGHT_STYLE[highlight].stripe}
+                  />
+                  <title>{HIGHLIGHT_STYLE[highlight].label}</title>
+                </g>
+              )}
               {onTaskClick && (
                 <rect
                   x={0}
                   y={g.y}
                   width={width}
                   height={ROW_H}
-                  className="fill-transparent hover:fill-slate-50"
+                  className="fill-transparent hover:fill-slate-400/10"
                 />
               )}
               {g.dx !== null && (
@@ -381,7 +448,7 @@ export default function GanttChart({
                       className="fill-slate-300"
                     >
                       <title>
-                        baseline: {g.task.baseline_start} → {g.task.baseline_end}
+                        {ghostLabel.toLowerCase()}: {g.task.baseline_start} → {g.task.baseline_end}
                       </title>
                     </rect>
                   )}
@@ -417,7 +484,7 @@ export default function GanttChart({
                       className={
                         variance.days > 0
                           ? "fill-red-500 text-[10px]"
-                          : "fill-canopy-600 text-[10px]"
+                          : "fill-canopy-700 text-[10px]"
                       }
                     >
                       {variance.days > 0 ? `+${variance.days}d` : `${variance.days}d`}
@@ -425,7 +492,7 @@ export default function GanttChart({
                         {variance.days > 0
                           ? `${variance.days} day(s) later`
                           : `${-variance.days} day(s) earlier`}{" "}
-                        than baseline ({g.task.baseline_end})
+                        than {ghostLabel.toLowerCase()} ({g.task.baseline_end})
                       </title>
                     </text>
                   )}
@@ -448,7 +515,7 @@ export default function GanttChart({
           <span className="inline-block h-2 w-4 rounded-sm bg-slate-700" /> Phase / summary
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block h-1 w-4 rounded-sm bg-slate-300" /> Baseline
+          <span className="inline-block h-1 w-4 rounded-sm bg-slate-300" /> {ghostLabel}
         </span>
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-3 w-0 border-l-2 border-dashed border-amber-400" />{" "}
@@ -459,8 +526,23 @@ export default function GanttChart({
         </span>
         <span className="flex items-center gap-1.5">
           <span className="font-medium text-red-500">+d</span>/
-          <span className="font-medium text-canopy-600">−d</span> vs baseline
+          <span className="font-medium text-canopy-700">−d</span> vs {ghostLabel.toLowerCase()}
         </span>
+        {highlights &&
+          (["added", "edited", "shifted"] as const).map((kind) => (
+            <span key={kind} className="flex items-center gap-1.5">
+              <span
+                className={`inline-block h-3 w-4 rounded-sm border-l-[3px] ${
+                  kind === "added"
+                    ? "border-emerald-500 bg-emerald-50"
+                    : kind === "edited"
+                      ? "border-sky-500 bg-sky-50"
+                      : "border-amber-400 bg-amber-50"
+                }`}
+              />{" "}
+              {HIGHLIGHT_STYLE[kind].label}
+            </span>
+          ))}
       </div>
     </div>
   );

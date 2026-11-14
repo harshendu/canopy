@@ -17,6 +17,11 @@ from external signal (Slack/email/meetings/Jira/GitHub/Drive) — that a human r
   snapshot recomputed at read time shows the reviewer live drift since staging.
 - **Apply** is all-or-nothing: validate every included item, then execute in order in one
   transaction, replan the schedule-affected projects, and publish live-refresh events.
+- **Revise** rewrites an open proposal in place (add / rewrite / remove items) — the
+  conversational co-review loop: the author's session amends the staged set while the human
+  watches it change in the UI. It may never make the proposal *less* valid than it was.
+
+The before/after **plan preview** the reviewer toggles lives in `proposal_preview.py`.
 
 Called from `app/api/v1/proposals.py`; the review/commit endpoints there are human-only.
 """
@@ -53,6 +58,8 @@ from app.models.outcome import Outcome
 from app.models.project import Blocker, Dependency, Initiative, Milestone, Project, Task
 from app.models.proposal import Proposal, ProposalItem
 from app.models.risk_register import RiskItem
+from app.models.spec import Spec
+from app.models.team import Engineer
 from app.schemas.entities import (
     BlockerCreate,
     DependencyCreate,
@@ -65,6 +72,7 @@ from app.schemas.entities import (
     TaskCreate,
     TaskUpdate,
 )
+from app.schemas.proposal import ProposalReviseRequest
 from app.services.metadata import normalize_tags
 from app.services.planner import reschedule_project
 
@@ -89,6 +97,24 @@ class ApplyOutcome:
     applied: int
     skipped: int  # reviewer-excluded items
     replanned_projects: list[int] = field(default_factory=list)
+
+
+@dataclass
+class RevisionIssue:
+    """A problem a revision would introduce. Exactly one locator is set: `item_id` for a
+    staged item, or `add_index` for the n-th entry of the revision's `add_items`."""
+
+    error: str
+    item_id: int | None = None
+    add_index: int | None = None
+
+
+class RevisionRejectedError(Exception):
+    """The revision would leave the proposal less valid than it found it; nothing changed."""
+
+    def __init__(self, issues: list[RevisionIssue]) -> None:
+        super().__init__("; ".join(i.error for i in issues))
+        self.issues = issues
 
 
 # --- payload validators (partial-update shapes the REST API doesn't need) ---
@@ -123,14 +149,14 @@ _ALLOWED_FIELDS: dict[tuple[ProposalEntity, ProposalAction], frozenset[str]] = {
     (ProposalEntity.task, ProposalAction.create): frozenset(
         {
             "project_id", "parent_id", "name", "description", "type", "start", "duration",
-            "deadline", "assignee_engineer_id", "spec_id", "tags",
+            "constraint_start", "deadline", "assignee_engineer_id", "spec_id", "tags",
             "estimate_optimistic", "estimate_likely", "estimate_pessimistic",
         }
     ),
     (ProposalEntity.task, ProposalAction.update): frozenset(
         {
-            "name", "description", "parent_id", "start", "duration", "deadline",
-            "percent_complete", "assignee_engineer_id", "spec_id", "tags",
+            "name", "description", "parent_id", "start", "duration", "constraint_start",
+            "deadline", "percent_complete", "assignee_engineer_id", "spec_id", "tags",
             "estimate_optimistic", "estimate_likely", "estimate_pessimistic",
         }
     ),
@@ -213,6 +239,38 @@ _LABEL_FIELDS: dict[ProposalEntity, str] = {
 
 _RISK_TERMINAL = {RiskStatus.resolved, RiskStatus.accepted, RiskStatus.occurred}
 
+# Whitelisted fields a reviewer may NOT introduce through an inline override: they decide
+# *where* the change lands (scope / structure) rather than a value on it, or are not plain
+# scalars. A field the agent already staged stays editable under the older rule.
+_NOT_ADDABLE: frozenset[str] = frozenset(
+    {
+        "project_id", "scope_level", "scope_id", "task_id", "parent_id", "predecessor_id",
+        "successor_id", "blocking_task_id", "type", "start", "spec_id", "tags",
+        "alternatives", "percent_complete",
+    }
+)
+
+# Scope plumbing the stager fills in (which project / what the entity hangs off). Never a
+# reviewable value: moving a change to another scope is a different proposal.
+_SCOPE_FIELDS: frozenset[str] = frozenset({"project_id", "scope_level", "scope_id"})
+
+# Payload fields that hold another entity's id → the lookup bucket that names it, so the
+# review UI (and an agent reading the proposal) sees "Dana Lee", not 14.
+_ID_FIELD_KINDS: dict[str, str] = {
+    "parent_id": "task",
+    "predecessor_id": "task",
+    "successor_id": "task",
+    "task_id": "task",
+    "blocking_task_id": "task",
+    "assignee_engineer_id": "engineer",
+    "owner_engineer_id": "engineer",
+    "raised_by_engineer_id": "engineer",
+    "decision_owner_id": "engineer",
+    "proposed_by_id": "engineer",
+    "project_id": "project",
+    "spec_id": "spec",
+}
+
 _M = TypeVar("_M")
 
 
@@ -276,6 +334,74 @@ def validate_effective(item: ProposalItem) -> None:
     """Shape/whitelist/coerce-check the effective (overridden) payload so a bad inline override is
     rejected at edit time, not deferred to apply. Raises ValueError on any problem."""
     _validate_payload(item.entity_type, item.action, effective_payload(item))
+
+
+def coerced_fields(item: ProposalItem) -> dict[str, Any]:
+    """The item's effective payload, validated and type-coerced (dates are `date`s, enums are
+    enums) — exactly what apply would write. Raises ValueError when the item is invalid."""
+    return _validate_payload(item.entity_type, item.action, effective_payload(item))
+
+
+def addable_fields(item: ProposalItem) -> list[str]:
+    """Whitelisted fields the proposal does not set yet that a reviewer may add inline (e.g.
+    give a staged task an assignee or a deadline) instead of rejecting and restaging."""
+    key = (item.entity_type, item.action)
+    allowed = _ALLOWED_FIELDS.get(key, frozenset())
+    taken = set(item.payload or {}) | set(item.overrides or {})
+    # A field already expressed through a `*_ref` handle is taken too.
+    for ref_key, id_key in _REF_KEYS.get(key, {}).items():
+        if ref_key in taken:
+            taken.add(id_key)
+    return sorted(allowed - taken - _NOT_ADDABLE)
+
+
+def overridable_fields(item: ProposalItem) -> set[str]:
+    """Every field an inline override may touch on this item: what the proposal already sets
+    (minus structural `*_ref` handles and scope plumbing) plus the reviewer-addable ones."""
+    key = (item.entity_type, item.action)
+    allowed = _ALLOWED_FIELDS.get(key, frozenset())
+    staged = {k for k in (item.payload or {}) if not k.endswith("_ref")} - _SCOPE_FIELDS
+    return staged | set(allowed - _NOT_ADDABLE)
+
+
+def drifted(before: dict[str, Any] | None, current: dict[str, Any] | None) -> bool:
+    """Did the live target move since the stage-time snapshot? True when it vanished, or any
+    field both snapshots hold now differs. Fields only one side holds are ignored (a reviewer
+    may add or drop an override field after the snapshot was taken). Pure."""
+    if current is None:
+        return True
+    if before is None:
+        return False
+    return any(key in before and before[key] != value for key, value in current.items())
+
+
+def order_by_refs(items: list[ProposalItem]) -> list[ProposalItem]:
+    """Stable reorder so every item comes after the create items whose `ref` it points at —
+    apply executes in order, so a handle must exist before it is used. Lets a revision add a
+    phase late and re-point earlier staged tasks under it without the author hand-sorting.
+    A reference cycle is left as-is for validation to report. Pure."""
+    declared: dict[str, ProposalItem] = {}
+    for item in items:
+        if item.ref and item.action == ProposalAction.create:
+            declared.setdefault(item.ref, item)
+    placed: list[ProposalItem] = []
+    done: set[int] = set()
+
+    def place(item: ProposalItem, trail: set[int]) -> None:
+        if id(item) in done or id(item) in trail:
+            return
+        trail.add(id(item))
+        for ref_key in _REF_KEYS.get((item.entity_type, item.action), {}):
+            handle = (item.payload or {}).get(ref_key)
+            target = declared.get(handle) if isinstance(handle, str) else None
+            if target is not None and target is not item:
+                place(target, trail)
+        done.add(id(item))
+        placed.append(item)
+
+    for item in items:
+        place(item, set())
+    return placed
 
 
 def _validate_payload(
@@ -383,6 +509,7 @@ async def check_items(
         try:
             _inject_scope_defaults(item, scope_level, scope_id)
             fields = _validate_payload(item.entity_type, item.action, effective_payload(item))
+            await _check_people(session, fields)
             if item.action == ProposalAction.create:
                 if item.entity_id is not None:
                     raise ValueError("a create item must not set entity_id")
@@ -402,6 +529,17 @@ async def check_items(
         except ValueError as exc:
             issues.append(ItemIssue(index=index, error=str(exc), item_id=item.id))
     return issues
+
+
+async def _check_people(session: AsyncSession, fields: dict[str, Any]) -> None:
+    """Every engineer a payload names (assignee, owner, …) must exist — otherwise apply would
+    die on the foreign key (PG/MySQL) or silently orphan the reference (SQLite)."""
+    for key, kind in _ID_FIELD_KINDS.items():
+        value = fields.get(key)
+        if kind != "engineer" or value is None:
+            continue
+        if await session.get(Engineer, int(value)) is None:
+            raise ValueError(f"{key} {value} is not a known engineer")
 
 
 async def _check_create(
@@ -553,7 +691,7 @@ async def snapshot_target(session: AsyncSession, item: ProposalItem) -> dict[str
     target = await session.get(_entity_model(item.entity_type), item.entity_id)
     if target is None:
         return None
-    keys = set((item.payload or {}).keys())
+    keys = set((item.payload or {}).keys()) | set((item.overrides or {}).keys())
     label_field = _LABEL_FIELDS.get(item.entity_type)
     if label_field:
         keys.add(label_field)
@@ -807,3 +945,195 @@ async def load_items(session: AsyncSession, proposal: Proposal) -> list[Proposal
         .order_by(col(ProposalItem.sort_order), col(ProposalItem.id))
     )
     return list(result.scalars().all())
+
+
+# --- display lookups ---
+
+
+def _referenced_ids(items: list[ProposalItem]) -> dict[str, set[int]]:
+    """Every entity id the items mention (payload, override, and both snapshots), bucketed
+    by lookup kind. Pure."""
+    found: dict[str, set[int]] = {}
+
+    def note(kind: str, value: Any) -> None:
+        if isinstance(value, int) and not isinstance(value, bool):
+            found.setdefault(kind, set()).add(value)
+
+    for item in items:
+        for blob in (item.payload, item.overrides, item.before):
+            if not blob:
+                continue
+            for key, value in blob.items():
+                kind = _ID_FIELD_KINDS.get(key)
+                if kind:
+                    note(kind, value)
+            level = blob.get("scope_level")
+            if level in ("task", "project", "initiative"):
+                note(str(level), blob.get("scope_id"))
+    return found
+
+
+async def collect_lookups(
+    session: AsyncSession, items: list[ProposalItem]
+) -> dict[str, dict[str, str]]:
+    """Display names for the ids a proposal's items reference: `{kind: {"<id>": name}}`."""
+    wanted = _referenced_ids(items)
+    lookups: dict[str, dict[str, str]] = {}
+
+    async def names(kind: str, model: type[Any], label: str) -> None:
+        ids = wanted.get(kind)
+        if not ids:
+            return
+        rows = await session.execute(select(model).where(col(model.id).in_(sorted(ids))))
+        lookups[kind] = {str(row.id): str(getattr(row, label)) for row in rows.scalars().all()}
+
+    await names("task", Task, "name")
+    await names("engineer", Engineer, "name")
+    await names("spec", Spec, "title")
+    if wanted.get("project"):
+        projects = await session.execute(
+            select(Project).where(col(Project.id).in_(sorted(wanted["project"])))
+        )
+        lookups["project"] = {str(r.id): f"{r.key} · {r.name}" for r in projects.scalars().all()}
+    if wanted.get("initiative"):
+        initiatives = await session.execute(
+            select(Initiative).where(col(Initiative.id).in_(sorted(wanted["initiative"])))
+        )
+        lookups["initiative"] = {
+            str(r.id): f"{r.key} · {r.name}" for r in initiatives.scalars().all()
+        }
+    return lookups
+
+
+# --- revise (the conversational co-review loop) ---
+
+
+async def revise_proposal(
+    session: AsyncSession, proposal: Proposal, request: ProposalReviseRequest
+) -> None:
+    """Rewrite an open proposal in place: remove items, merge new values into staged ones,
+    append new ones — then bump `revision` so the reviewer's open page shows what changed.
+
+    The rule is *don't make it worse*: the revised set is re-validated and the revision is
+    refused (`RevisionRejectedError`, nothing written) if it introduces any problem that was not
+    already there. A pre-existing problem the revision doesn't touch (say, a target that
+    vanished after staging) does not block it. A value the author rewrites supersedes the
+    reviewer's inline override on that same field; untouched items keep their overrides and
+    exclusions. Raises ValueError for a malformed request (unknown item ids, an item both
+    updated and removed, or nothing to do)."""
+    items = await load_items(session, proposal)
+    by_id = {item.id: item for item in items if item.id is not None}
+    remove_ids = set(request.remove_item_ids)
+    update_ids = [rev.item_id for rev in request.update_items]
+
+    unknown = sorted((remove_ids | set(update_ids)) - set(by_id))
+    if unknown:
+        raise ValueError(f"no such item(s) in this proposal: {unknown}")
+    if remove_ids & set(update_ids):
+        raise ValueError("an item cannot be both updated and removed in one revision")
+    if len(update_ids) != len(set(update_ids)):
+        raise ValueError("each item may be updated only once per revision")
+    relabel = request.title is not None or request.summary is not None
+    if not (request.add_items or request.update_items or remove_ids or relabel):
+        raise ValueError("an empty revision — pass add_items, update_items, remove_item_ids, "
+                         "title or summary")
+
+    known_errors = {
+        issue.item_id: issue.error
+        for issue in await check_items(session, proposal.scope_level, proposal.scope_id, items)
+    }
+
+    changed: list[ProposalItem] = []
+    for rev in request.update_items:
+        item = by_id[rev.item_id]
+        payload = dict(item.payload or {})
+        for key in rev.remove_fields:
+            payload.pop(key, None)
+        payload.update(rev.payload)
+        # Switching a link between a live id and an intra-proposal ref replaces the other.
+        for ref_key, id_key in _REF_KEYS.get((item.entity_type, item.action), {}).items():
+            if ref_key in rev.payload:
+                payload.pop(id_key, None)
+            elif id_key in rev.payload:
+                payload.pop(ref_key, None)
+        item.payload = payload
+        rewritten = set(rev.payload) | set(rev.remove_fields)
+        if item.overrides:
+            kept = {k: v for k, v in item.overrides.items() if k not in rewritten}
+            item.overrides = kept or None
+            if not kept:
+                item.overridden_by_user_id = None
+                item.overridden_at = None
+        for attr in ("reason", "source_kind", "source_label", "source_url"):
+            if attr in rev.model_fields_set:
+                setattr(item, attr, getattr(rev, attr))
+        item.error = None
+        changed.append(item)
+
+    assert proposal.id is not None
+    added = [
+        ProposalItem(
+            proposal_id=proposal.id,
+            entity_type=new.entity_type,
+            action=new.action,
+            entity_id=new.entity_id,
+            ref=new.ref,
+            payload=dict(new.payload),
+            reason=new.reason,
+            source_kind=new.source_kind,
+            source_label=new.source_label,
+            source_url=new.source_url,
+        )
+        for new in request.add_items
+    ]
+    add_index = {id(item): index for index, item in enumerate(added)}
+
+    kept_items = [item for item in items if item.id not in remove_ids]
+    if not kept_items and not added:
+        raise ValueError("a revision cannot empty the proposal — withdraw it instead")
+    sequence = order_by_refs(kept_items + added)
+
+    # Autoflush stays off while validating: the rewritten payloads must not reach the
+    # database (even uncommitted) before we know the revision holds.
+    with session.no_autoflush:
+        after = await check_items(session, proposal.scope_level, proposal.scope_id, sequence)
+    introduced: list[RevisionIssue] = []
+    for issue in after:
+        item = sequence[issue.index]
+        if id(item) in add_index:
+            introduced.append(RevisionIssue(error=issue.error, add_index=add_index[id(item)]))
+        elif known_errors.get(item.id) != issue.error:
+            introduced.append(RevisionIssue(error=issue.error, item_id=item.id))
+    if introduced:
+        await session.rollback()
+        raise RevisionRejectedError(introduced)
+
+    proposal.revision += 1
+    proposal.revised_at = utcnow()
+    proposal.revision_note = request.note
+    if request.title is not None:
+        proposal.title = request.title
+    if request.summary is not None:
+        proposal.summary = request.summary
+    for item in items:
+        if item.id in remove_ids:
+            await session.delete(item)
+    for order, item in enumerate(sequence):
+        item.sort_order = order
+    for item in changed + added:
+        item.revision = proposal.revision
+        item.before = await snapshot_target(session, item)
+    session.add_all(added)
+    await session.commit()
+    await session.refresh(proposal)
+
+    await publish(
+        {
+            "type": "proposal",
+            "proposal_id": proposal.id,
+            "status": proposal.status.value,
+            "scope_level": proposal.scope_level.value,
+            "scope_id": proposal.scope_id,
+            "revision": proposal.revision,
+        }
+    )

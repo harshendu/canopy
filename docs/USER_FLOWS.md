@@ -1637,9 +1637,17 @@ apply/reject** — committing the change is reserved for a person. (Two staging 
 exist: **draft plans** stage *outbound* plan→Jira tickets (§C10); **proposals** stage
 *inbound* changes to canopy itself.)
 
+The review is **plan-first, then fine-grained, and conversational**: the reviewer first sees
+what the proposal does to the plan *as a whole* (a **Current ⇄ With this proposal** toggle
+over the schedule, §AA2), then goes through the changes one by one in plain words — editing
+or excluding any of them — and can **ask Claude to revise the proposal in conversation while
+the page is open**, watching it update live (§AA5).
+
 ### AA1. Stage a proposal (agent or contributor)
 - **What an item can do:** `task.create/update` (planning fields; Jira-mirrored `status`
-  is **not stageable**), `dependency.create`, `milestone.create/update`,
+  is **not stageable**; to move work in time stage `duration`, a dependency, or
+  **`constraint_start`** — the "start no earlier than" pin — since a task's `start` is
+  computed output the replan overwrites), `dependency.create`, `milestone.create/update`,
   `blocker.create/resolve`, `risk.create/update`, `outcome.create/update`,
   `decision.create` (lands as a **proposed** ADR — the §G lifecycle takes over),
   `doc_reference.create` (deduped per scope+url). Payloads are **whitelisted per
@@ -1653,43 +1661,103 @@ exist: **draft plans** stage *outbound* plan→Jira tickets (§C10); **proposals
 - **Provenance:** each item carries `source_kind` (slack | email | calendar | meeting |
   jira | github | drive | document | chat), `source_label`, `source_url`, and a one-line
   `reason` — the reviewer can audit every line.
-- **Strict at the door:** staging validates every item (shape, refs, targets exist, scope)
-  and rejects the whole batch with per-item errors (400) so the author fixes it now, not
-  the reviewer later. For `update`/`resolve` items a **before-snapshot** of the touched
-  fields is captured at stage time.
+- **Strict at the door:** staging validates every item (shape, refs, targets exist, scope,
+  and that every **person it names is a real engineer** — an unknown `assignee_engineer_id`
+  is refused rather than failing the apply on a foreign key) and rejects the whole batch
+  with per-item errors (400) so the author fixes it now, not the reviewer later. For
+  `update`/`resolve` items a **before-snapshot** of the touched fields is captured at stage
+  time.
 - **API:** `POST /api/v1/proposals` (contributor+; **agent tokens allowed** — staging is a
   reversible two-way door) · **MCP:** `propose_changes` (returns a `review_url`).
 - **Read:** `GET /api/v1/proposals?scope_level=&scope_id=&status=`,
-  `GET /api/v1/proposals/{id}` (items + before/current values + `stale` flags) · **MCP:**
-  `list_proposals`, `get_proposal`.
+  `GET /api/v1/proposals/{id}` (items + before/current values + `stale` flags + **`lookups`**:
+  display names for every id the items mention — tasks, engineers, projects, specs — so a
+  reader sees "Dana Lee", not `assignee_engineer_id: 14`; + the co-review trail `revision` /
+  `revised_at` / `revision_note` and the author's `created_by`) · **MCP:** `list_proposals`,
+  `get_proposal`.
 
 ### AA2. Review & commit (human, in the UI)
-- **UI:** **`/reviews`** (sidebar, with an **open-count badge**; deep-linkable
-  `/reviews/:id` — the link the plugin hands the user). Each proposal shows the author's
-  rationale, scope chip, and per-item cards: action badge, field **diff**
-  (before → proposed, plus the **live value** when it moved after staging — "changed since
-  staged"), provenance link, and reason. The project cockpit (§B3) shows an amber
-  **"staged change proposals await your review"** banner when any target it.
-- **Collapsed-card triage (T17):** every card carries an at-a-glance summary so a full queue is
-  scannable without expanding each one — a **shape chip** row (`+N` creates / `~N` updates / `✓N`
-  resolves, from `action_counts`) and, when relevant, an amber **"⚠ N need attention"** flag
-  (`attention_count`) for items that errored or **drifted since staging**. Both are computed
-  server-side on `ProposalRead` (`app/api/v1/proposals.py:_action_counts` / `_item_needs_attention`),
-  so the list and the nav badge share one source of truth. Shape helper is pure + unit-tested
-  (`frontend/src/lib/proposals.ts:proposalShape`).
+- **Queue — `/reviews`** (sidebar, with an **open-count badge**): one scannable row per
+  proposal — status, scope chip, title, the author's rationale (two lines), who staged it and
+  when, the revision if it has been revised, a **shape chip** row (`+N` creates / `~N`
+  updates / `✓N` resolves, from `action_counts`) and, when relevant, an amber
+  **"⚠ N need attention"** flag (`attention_count`: items that errored or **drifted since
+  staging**). Both are computed server-side on `ProposalRead`
+  (`app/api/v1/proposals.py:_action_counts` / `_item_needs_attention`), so the list and the
+  nav badge share one source of truth. Clicking a row opens its review workspace. The project
+  cockpit (§B3) shows an amber **"staged change proposals await your review"** banner when
+  any target it.
+- **Review workspace — `/reviews/:id`** (the deep link the plugin hands the user;
+  `frontend/src/pages/ReviewWorkspace.tsx`). Top to bottom:
+  - **Header + "Why"** — title, status, scope (links to the project/initiative), who staged
+    it and when, and the author's rationale.
+  - **Impact strip** — the headline before any detail: the **finish date** current →
+    proposed with the day delta (per project for an initiative-wide proposal), the critical-
+    path task count when it changes, plain-language chips for the proposal's shape ("3 new
+    tasks", "6 tasks move as a result", "1 blocker raised"…), and **apply-readiness** —
+    "✓ Ready to apply" or "N things to fix before this can apply" with a **Show me** jump,
+    known *before* clicking Apply.
+  - **Plan tab — the plan as a whole, current ⇄ proposed.** A segmented toggle
+    **Current plan | With this proposal** over the project Gantt (project pills pick one for
+    an initiative-wide proposal). Both sides share one time axis and row order and the chart
+    opens **fitted to the page width**, so flipping the toggle shows exactly what moves and
+    nothing else. Rows are tinted by *why* they differ — **New** in this proposal (green),
+    **Edited** by it (blue), **Moves as a result** (amber: untouched, but pushed/pulled by a
+    change upstream) — and on the proposed side each moved bar carries a thin grey ghost of
+    where it sits today plus a `+Nd` chip. Below: a **What moves** table (start/finish
+    before → after per task, "now critical" when it joins the critical path), the
+    **milestones** before → after, any **new deadline miss**, and a note when the proposal
+    doesn't touch the schedule at all. **Clicking a tinted row** (chart or table) jumps to
+    the change behind it.
+  - **Changes tab — the fine-grained set to apply.** Changes are grouped by the part of the
+    plan they touch (Schedule · Milestones · Blockers · Risks · Outcomes · Decisions · Docs)
+    and each reads in plain words: an action label ("New task", "Update milestone", "Link
+    tasks", "Raise blocker"), the thing's name, and its values with human labels, units and
+    **names instead of ids** ("Assignee Isabel Moreno", "Under PCI hardening (new)",
+    "Duration 12d → 16d") — plus the reason and a provenance chip/link. Filters: **All ·
+    Needs attention · Just revised**. A change that would fail carries the reason inline
+    ("Can't apply: needs “PCI hardening”, which is excluded…"); one whose target moved since
+    staging shows the live value ("now 6d").
+  - **Sticky action bar** — **Apply N changes** (disabled, with the reason, while anything is
+    flagged), **Reject…** with a note, and what applying entails.
+- **API behind the plan view:** `GET /api/v1/proposals/{id}/preview` → per project the
+  `current` and `proposed` schedule (same shape as `GET /projects/{id}/gantt`),
+  `end_current` / `end_proposed` / `end_delta_days`, critical-path counts, `task_changes`
+  (`added | edited | shifted`, before/after dates, the `item_ids` behind each), `milestones`,
+  `new_deadline_misses`, plus overall `counts` and `can_apply` / `issues`. A **pure
+  simulation** — nothing is written (`app/services/proposal_preview.py`): the included items,
+  with the reviewer's overrides, are replayed onto an in-memory copy of the plan and both
+  graphs go through the **same scheduler apply uses**, so "proposed" is exactly what Apply
+  produces (pinned by a test). "Current" is the live plan *recomputed*, so every difference
+  is the proposal's doing; when the saved schedule was stale the project says so
+  (`live_schedule_stale`). Tasks the proposal creates carry synthetic negative ids; a staged
+  dependency cycle is reported (`cycle`, no proposed side) rather than raised. Open proposals
+  only (409 once closed). Replan is project-local, so cross-project hand-off edges are not
+  simulated. **MCP:** `preview_proposal`.
 - **Review actions (planner + human-only — an agent token gets 403):**
-  - **Exclude items** — untick any line before applying
-    (`PATCH /api/v1/proposals/{id}/items/{item_id}` `{excluded}`).
-  - **Inline field override (audit-preserving, T17)** — fix a single wrong value without rejecting
-    the whole proposal. Each editable diff row (scalar, non-`_ref` fields) has a **✎** control: edit
-    the value, **Save**, and it applies instead of the agent's. The agent's original stays as the
-    record (shown struck next to the violet override), the item carries an **"edited by …"** stamp,
-    and **↩** reverts. Same `PATCH …/items/{item_id}` with `{overrides: {field: value}}` (`{}` clears);
-    an override that fails validation is **rejected at edit time** (400 `invalid_override`), not
-    deferred to apply. Mechanics: `payload` (agent) is never mutated — `overrides` (reviewer) is
-    layered on at apply via `effective_payload` (`app/services/proposals.py`), so the merged value is
-    the single source validation and apply read from. Fields the proposal doesn't set, and structural
-    `*_ref` handles, can't be introduced via override.
+  - **Include / exclude** — a checkbox per change, **Include all / Exclude all**, and
+    "Exclude these" per group (`PATCH /api/v1/proposals/{id}/items` `{excluded, item_ids?}`
+    for many at once; `PATCH …/items/{item_id}` `{excluded}` for one). Changes that build on
+    each other **move together**: excluding a new phase also excludes the tasks and
+    dependencies that hang off it, and re-including one brings back what it needs — with an
+    "Also excluded N changes that depend on it · **Undo**" notice — so the remaining set can
+    always still apply. The plan preview recomputes after every toggle.
+  - **Edit in place (audit-preserving, T17)** — fix a value without rejecting the proposal.
+    **Edit** on a card opens a small form over every plain value on that change, with the
+    right control for each: a date picker for dates, a number box with its unit, a dropdown
+    for enums (severity, status, link type…), a people list for assignee/owner, text areas
+    for long text. **+ Add a field…** adds a value the proposal left out (an assignee, a
+    deadline, a "start no earlier than" pin). **Save** applies the reviewer's values instead
+    of the agent's; the agent's original stays as the record (shown struck next to the violet
+    edit), the card carries an **"edited by …"** stamp, and **Reset to the proposed values**
+    reverts. API: `PATCH …/items/{item_id}` with `{overrides: {field: value}}` (`{}` clears);
+    an override that fails validation is **rejected at edit time** (400 `invalid_override`),
+    not deferred to apply. Mechanics: `payload` (agent) is never mutated — `overrides`
+    (reviewer) is layered on at apply via `effective_payload` (`app/services/proposals.py`),
+    so the merged value is the single source validation, the preview and apply read from. An
+    override may touch a value the proposal already sets or any whitelisted value field for
+    that kind of change (`addable_fields` on each item lists them); **scope plumbing**
+    (`project_id`, `scope_*`) and structural `*_ref` handles can never be set this way.
   - **Apply** — `POST /api/v1/proposals/{id}/apply`: re-validates every included item,
     executes **all-or-nothing** in one transaction (per-item failures report inline and
     nothing lands), **auto-replans** the affected projects (a staged dependency cycle →
@@ -1710,20 +1778,77 @@ exist: **draft plans** stage *outbound* plan→Jira tickets (§C10); **proposals
 - Human-only via `HumanOnly` (§A6) on apply/reject/item-review; roles via
   `ContributorWriter`/`PlannerWriter` (§A3a). `GET /api/v1/auth/session` now reports the
   token's `scope` so a session can see its own limits.
+- Revise is `ContributorWriter` + author-or-planner and **open to agent tokens** (it is
+  still staging); the preview is a plain authenticated read.
 - Logic: `app/models/proposal.py` + `app/services/proposals.py` (whitelists, scope checks,
-  ref resolution, snapshots, all-or-nothing apply + replan) + `app/api/v1/proposals.py`;
-  UI `frontend/src/pages/Reviews.tsx` (+ pure `src/lib/proposals.ts`, unit-tested).
+  ref resolution, snapshots, lookups, revise, all-or-nothing apply + replan) +
+  `app/services/proposal_preview.py` (the pure current-vs-proposed simulation; shares
+  `infer_project_start` / `rollup_summaries` with `app/services/planner.py`) +
+  `app/api/v1/proposals.py`; UI `frontend/src/pages/Reviews.tsx` (queue),
+  `src/pages/ReviewWorkspace.tsx`, `src/components/review/PlanCompare.tsx` +
+  `ChangeList.tsx`, and the pure, unit-tested `src/lib/proposals.ts` (field catalog, plain-
+  language facts, grouping, include/exclude dependency closure, preview helpers). The Gantt
+  (`src/components/GanttChart.tsx`) gained optional `highlights` / `domain` / `ghostLabel` /
+  `fit` props for the comparison; the Schedule tab's use of it is unchanged.
 
 ### AA4. Not built (deliberate limits)
 - **No apply MCP tool by design** — the commit click lives in the UI only. (A human's
   full token *could* call the apply endpoint directly; the tool surface simply doesn't
   offer it.)
-- **No inline edit of a staged payload** in the UI (exclude + reject-with-note + restage
-  covers the loop); **no per-item partial apply** (apply is all-or-nothing over the
-  included set); **no auto-expiry** of stale open proposals; **no engineer/assignee
-  notification** when a proposal touches their work.
+- **No chat box in the UI** — the conversation happens in the reviewer's own Claude session
+  (the page offers a starter prompt to copy and updates live as Claude revises, §AA5); there
+  are **no reviewer→agent comments on individual changes** beyond the reject note.
+- **The plan preview is schedule-only** — it shows dates, critical path, milestones and
+  deadline misses, not the knock-on effect on capacity, risk score or forecast (the what-if
+  **scenarios**, §T, are the tool for that). Cross-project hand-off edges are not simulated
+  (replan is project-local). A reviewer can't re-wire a staged dependency or re-parent a
+  task in the form (structure is the author's — ask Claude to revise it).
+- **Revision history is the last revision only** (`revision` counter + `revision_note`);
+  items a revision removes are deleted, not kept as an audit trail.
+- **No per-item partial apply** (apply is all-or-nothing over the included set); **no
+  auto-expiry** of stale open proposals; **no engineer/assignee notification** when a
+  proposal touches their work.
 - Estimates/tags/health writes have no proposal lane (they stay direct, advisory,
   low-risk); Jira ticket **status** is never stageable anywhere (§Source-of-truth).
+
+### AA5. Review together — revise in conversation while reviewing **[new]**
+The review is not a one-shot hand-off. With the workspace open, the reviewer tells their
+Claude session (the canopy plugin, §L) what to change in their own words — *"push the
+pentest out a week"*, *"drop the vendor risk"*, *"add a go/no-go review after the fixes"*,
+*"what does that do to the finish date?"* — and the open page updates as Claude revises.
+- **In the UI:** a **"Refine it by talking to Claude"** strip on every open proposal with a
+  **Copy a starter prompt** button (names the proposal and its URL) and a link to Agent
+  Setup (§A11). When a revision lands the page refreshes itself (SSE, §K — no reload) and
+  shows **"This proposal was just revised (revision N). “<the author's note>”"**; the
+  impact strip and plan redraw, changed/new changes are tagged **revised**, and a **Just
+  revised** filter isolates them. The reviewer's own edits and exclusions on untouched
+  changes are kept.
+- **Revise in place:** `POST /api/v1/proposals/{id}/revise`
+  `{note?, update_items?, add_items?, remove_item_ids?, title?, summary?}` — the author or
+  a planner; **agent tokens allowed** (still staging — nothing lands until a person
+  applies). `update_items[].payload` is **merged** into the staged payload
+  (`remove_fields` drops keys; `reason`/`source_*` replace); an item's entity, action and
+  target can't change (remove + add instead); `add_items` take the same shape as staging,
+  and items are **re-ordered automatically** so a ref declared late still resolves (add a
+  phase, then hang an already-staged task under it). Bumps `Proposal.revision`, stamps
+  `revised_at` + `revision_note`, marks each touched item with that revision, re-snapshots
+  its `before`, and publishes the SSE `proposal` event.
+- **Don't make it worse:** the revised set is re-validated and a revision that would
+  *introduce* a problem is refused whole (400 `invalid_items`, errors keyed by `item_id` /
+  `add_index`; nothing changes) — e.g. removing a phase other staged items hang under. A
+  problem that was already there (a target deleted after staging) doesn't block an
+  unrelated fix. A value the author rewrites **supersedes the reviewer's inline edit of that
+  same field** (the newest instruction wins); other overrides and all exclusions survive.
+- **MCP:** `revise_proposal` (returns the revised proposal **plus `impact`** — the compact
+  before/after plan summary — so Claude can say "that pulls the finish back to Dec 23") and
+  `preview_proposal` (the plan before vs after as data: finish-date movement, the tasks
+  added / edited / shifted with dates, changed milestones, new deadline misses,
+  `can_apply` + `issues`; `include_plan=true` adds both full Gantts). `get_proposal` shows
+  what the reviewer has done so far (`excluded`, `overrides`) so Claude builds on it. The
+  **`updating-canopy`** skill §5a is the runbook (re-read → revise in place → say what it
+  did; questions are reads; the Apply click is the human's).
+- **Still bounded:** a session on an agent token can stage, preview and revise, and still
+  gets **403 on apply/reject** and on the reviewer's include/exclude/override actions.
 
 ---
 
@@ -1758,7 +1883,9 @@ exist: **draft plans** stage *outbound* plan→Jira tickets (§C10); **proposals
   reporting the critical path and end date. Two landing lanes: a **fresh project dictated
   live** is built directly; a **re-shape of an existing live plan** (or a plan derived from
   docs/threads) is staged as one `propose_changes` batch the architect applies from the
-  review queue (§AA — apply replans automatically).
+  review queue (§AA — apply replans automatically); the planner then calls
+  `preview_proposal` and reports what the batch does to the plan (finish date, knock-on
+  shifts), the same current ⇄ proposed picture the review page opens on.
 
 ### L3. Sync from Jira (skill + subagent)
 - Ask Claude to "sync Jira". The **`syncing-jira`** skill / **`jira-sync`** subagent find the Jira
@@ -1870,6 +1997,11 @@ exist: **draft plans** stage *outbound* plan→Jira tickets (§C10); **proposals
   and external-write actions (human-only, hand over the review link). It also carries the
   provenance discipline (every harvested fact cites its source) and the source-of-truth rules
   (Jira status never written; structured mirror-sync ≠ proposals).
+- **Reviewing together (§AA5):** after staging, the skill has Claude `preview_proposal` and
+  lead with the plan-level effect, then stay in the loop while the user reviews in the UI —
+  re-read (`get_proposal`, including the reviewer's exclusions/edits), **`revise_proposal`**
+  in place for each requested change (never a second proposal or withdraw-and-restage),
+  and report the new impact. The user's open review page updates live.
 
 ### L18. Harvest external signals → proposals (skill + subagent) **[new]**
 - The **`harvesting-signals`** skill is the cross-connector pipeline: sweep the session's
@@ -1961,7 +2093,11 @@ project + initiative scope), **blockers**, **outcomes**, **doc references**, **r
 **incident postmortems**), **draft plans**, five **scenarios** (one rich what-if per initiative —
 each a full snapshot of the live plan plus a coherent set of edits across tasks, dependencies,
 milestones, allocations and availability, in `draft`/`ready` status — so the §T
-Compare/Capacity/Gantt/Milestones tabs all show a real delta), three demo **connections**, and
+Compare/Capacity/Gantt/Milestones tabs all show a real delta), two **open change proposals**
+in the review queue (§AA — one that reshapes the Payments schedule with edits, a new phase,
+dependencies and knock-on shifts past the code-freeze deadline; one for Tracking that only
+touches registers and a milestone — staged through the same validation as `propose_changes`,
+so both preview and apply cleanly), three demo **connections**, and
 project state that makes the **alerts** digest fire (deadline miss, overdue milestone,
 over-allocation, overdue risk, open blocker) and the flow board flag **aging** work.
 

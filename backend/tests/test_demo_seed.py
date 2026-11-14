@@ -53,6 +53,49 @@ async def test_seed_loader_builds_a_full_coherent_dataset(db_session):
     assert counts["scenarios"] == 5  # one rich what-if per initiative
     assert counts["status_history"] > 0
     assert counts["connections"] == 3
+    assert counts["proposals"] == 2  # open change proposals awaiting review
+
+
+@pytest.mark.asyncio
+async def test_seed_proposals_are_reviewable(db_session):
+    """Every seeded proposal lands whole (the loader drops one on any unresolved name) and
+    is ready to review: the plan preview computes and an apply would succeed."""
+    from sqlmodel import select
+
+    from app.models.proposal import Proposal, ProposalItem
+    from app.services.proposal_preview import build_proposal_preview
+
+    await seed.load_seed_data(db_session, set())
+    ds = seed.get_dataset()
+    by_title = {
+        p.title: p for p in (await db_session.execute(select(Proposal))).scalars().all()
+    }
+    assert set(by_title) == {spec.title for spec in ds.proposals}
+    previews = {}
+    for spec in ds.proposals:
+        proposal = by_title[spec.title]
+        staged = (
+            await db_session.execute(
+                select(ProposalItem).where(ProposalItem.proposal_id == proposal.id)
+            )
+        ).scalars().all()
+        assert len(staged) == len(spec.items)
+        preview = await build_proposal_preview(db_session, proposal)
+        assert preview.can_apply, preview.issues
+        previews[spec.project_key] = preview
+
+    # The flagship proposal visibly reshapes a schedule: new work, edits, knock-on moves,
+    # and a later finish — the whole point of the current ⇄ proposed toggle.
+    payments = previews["PAYMENTS"]
+    assert payments.counts.tasks_added == 3 and payments.counts.tasks_edited == 2
+    assert payments.counts.tasks_shifted > 0
+    plan = payments.projects[0]
+    assert plan.end_delta_days and plan.end_delta_days > 0
+    assert plan.live_schedule_stale is False
+    # The second one only touches registers and a milestone — the schedule stands still.
+    tracking = previews["TRACKING"]
+    assert tracking.projects[0].end_delta_days == 0
+    assert tracking.counts.milestones_edited == 1 and tracking.counts.risks_edited == 1
 
 
 @pytest.mark.asyncio

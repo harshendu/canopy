@@ -1167,10 +1167,15 @@ export interface ProposalItem {
   overridden_at: string | null;
   applied_entity_id: number | null;
   error: string | null;
+  /** The proposal revision that added or last rewrote this item (== the proposal's own
+   *  `revision` means "changed in the latest revise"). */
+  revision?: number;
   /** live values recomputed at read time (open proposals, update/resolve items) */
   current?: Record<string, unknown> | null;
   /** the target moved (or vanished) since the before-snapshot was taken */
   stale?: boolean;
+  /** Whitelisted fields the proposal doesn't set yet that the reviewer may add inline. */
+  addable_fields?: string[];
 }
 
 export interface Proposal {
@@ -1194,10 +1199,113 @@ export interface Proposal {
   /** Items that errored or drifted since staging — surfaced as a "needs attention" flag. */
   attention_count: number;
   scope_label: string | null;
+  /** Bumped each time the author revises the open proposal in place (co-review). */
+  revision: number;
+  revised_at: string | null;
+  /** The author's "what changed" line for the latest revision. */
+  revision_note: string | null;
+  /** resolved display name of the author */
+  created_by: string | null;
 }
+
+/** Display names for the ids a proposal's items mention: `{kind: {"<id>": name}}`. */
+export type ProposalLookups = Partial<
+  Record<"task" | "engineer" | "project" | "initiative" | "spec", Record<string, string>>
+>;
 
 export interface ProposalDetail extends Proposal {
   items: ProposalItem[];
+  lookups: ProposalLookups;
+}
+
+// --- Proposal plan preview: the plan as a whole, current vs proposed ---
+export type PreviewTaskKind = "added" | "edited" | "shifted";
+
+export interface PreviewIssue {
+  item_id: number | null;
+  project_id: number | null;
+  error: string;
+}
+
+export interface PreviewTaskChange {
+  /** live id; a task the proposal creates has a synthetic negative id */
+  task_id: number;
+  name: string;
+  kind: PreviewTaskKind;
+  is_summary: boolean;
+  item_ids: number[];
+  start_before: string | null;
+  start_after: string | null;
+  end_before: string | null;
+  end_after: string | null;
+  end_delta_days: number | null;
+  critical_before: boolean;
+  critical_after: boolean;
+}
+
+export interface PreviewMilestone {
+  milestone_id: number;
+  name: string;
+  kind: "added" | "edited" | "unchanged";
+  item_ids: number[];
+  target_before: string | null;
+  target_after: string | null;
+  status_before: string | null;
+  status_after: string | null;
+}
+
+export interface PreviewDeadlineMiss {
+  task_id: number;
+  name: string;
+  deadline: string;
+  end: string;
+}
+
+export interface ProjectPlanPreview {
+  project_id: number;
+  key: string;
+  name: string;
+  current: GanttResponse;
+  /** null when the staged dependencies form a cycle */
+  proposed: GanttResponse | null;
+  end_current: string | null;
+  end_proposed: string | null;
+  end_delta_days: number | null;
+  critical_current: number;
+  critical_proposed: number;
+  task_changes: PreviewTaskChange[];
+  milestones: PreviewMilestone[];
+  new_deadline_misses: PreviewDeadlineMiss[];
+  live_schedule_stale: boolean;
+  cycle: boolean;
+}
+
+export interface PreviewCounts {
+  tasks_added: number;
+  tasks_edited: number;
+  tasks_shifted: number;
+  dependencies_added: number;
+  milestones_added: number;
+  milestones_edited: number;
+  blockers_raised: number;
+  blockers_resolved: number;
+  risks_added: number;
+  risks_edited: number;
+  outcomes_added: number;
+  outcomes_edited: number;
+  decisions_added: number;
+  docs_added: number;
+}
+
+export interface ProposalPreview {
+  proposal_id: number;
+  revision: number;
+  included: number;
+  excluded: number;
+  can_apply: boolean;
+  issues: PreviewIssue[];
+  counts: PreviewCounts;
+  projects: ProjectPlanPreview[];
 }
 
 export interface ProposalApplyResult {

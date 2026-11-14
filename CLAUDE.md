@@ -107,13 +107,29 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   risk/outcome/decision/doc_reference; Jira-mirrored `status` never stageable), scope-contained
   to one project/initiative, may reference each other via `ref`/`*_ref` handles, and carry
   provenance (`source_kind/label/url`) + a stage-time `before` snapshot. Apply is
-  **all-or-nothing** + auto-replan (`app/services/proposals.py`); staging/withdraw are open to
-  agent tokens, review/apply/reject are planner + `HumanOnly` (`app/api/v1/proposals.py`, gate
-  `ai.proposals`). UI: `/reviews` (+ nav badge, project-cockpit banner). MCP:
-  `propose_changes`/`list_proposals`/`get_proposal`/`withdraw_proposal` +
-  `get_workspace_context` (session orientation: persona, token scope, features, open
-  proposals). Skills: `updating-canopy` (the write-ladder contract), `harvesting-signals`,
-  `persona-playbooks`; subagent `signal-harvester`. USER_FLOWS §AA.
+  **all-or-nothing** + auto-replan (`app/services/proposals.py`); staging/withdraw/**revise**
+  are open to agent tokens, review/apply/reject are planner + `HumanOnly`
+  (`app/api/v1/proposals.py`, gate `ai.proposals`). The review is **plan-first**:
+  `GET /proposals/{id}/preview` returns the plan as a whole, current vs proposed —
+  `app/services/proposal_preview.py` replays the included items (reviewer overrides applied)
+  onto an in-memory copy of the plan and runs the **same scheduler apply uses**
+  (`compute_schedule` + the shared `rollup_summaries`/`infer_project_start` in `planner.py`),
+  classifying each task `added | edited | shifted`. It is pure and must stay faithful to
+  apply — `tests/test_proposal_preview.py` pins preview == post-apply Gantt, so a new
+  schedule-affecting field/entity in `_apply_item` needs its twin in `stage_items`. The
+  **co-review loop**: `POST /proposals/{id}/revise` amends an open proposal in place
+  (merge/add/remove items, bump `revision` + `revision_note`, SSE) under a
+  *don't-make-it-worse* validation rule, so a human reviews in the UI while asking Claude
+  for changes. To move staged work in time use `duration`/dependencies/`constraint_start`
+  (a staged `start` is computed output). UI: `/reviews` queue → `/reviews/:id` workspace
+  (`ReviewWorkspace.tsx` + `components/review/`: impact strip, Current ⇄ Proposed Gantt,
+  grouped plain-language change cards with typed inline edit; wording/field catalog in the
+  pure `lib/proposals.ts`) (+ nav badge, project-cockpit banner). MCP:
+  `propose_changes`/`preview_proposal`/`revise_proposal`/`list_proposals`/`get_proposal`/
+  `withdraw_proposal` + `get_workspace_context` (session orientation: persona, token scope,
+  features, open proposals). Skills: `updating-canopy` (the write-ladder contract + the
+  reviewing-together loop), `harvesting-signals`, `persona-playbooks`; subagent
+  `signal-harvester`. USER_FLOWS §AA.
 - **Flow board:** `GET /projects/{id}/board` groups leaf tasks into status lanes with WIP per lane,
   and flags **aging** tasks (in-status age > the team's cycle-time P85) — pure logic in
   `app/services/flow.py`; age/cycle dates derived from `TaskStatusHistory`. WIP limits are a

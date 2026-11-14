@@ -439,6 +439,42 @@ class PullRequestSpec:
 
 
 @dataclass(frozen=True)
+class ProposalItemSpec:
+    """One staged change in a seeded review-queue proposal (USER_FLOWS §AA).
+
+    ``payload`` is the staged payload as an agent would send it, plus name-based shorthands
+    the loader resolves so the data stays readable: ``assignee`` / ``owner`` (engineer name →
+    ``*_engineer_id``), ``task`` / ``parent`` / ``predecessor`` / ``successor`` (a live task
+    name in the project → its id), and ``<date field>_weeks`` (weeks from today → that date
+    field, e.g. ``target_date_weeks``). ``target`` names the live thing an update/resolve
+    edits (a blocker is found by the task it sits on)."""
+
+    # task | dependency | milestone | blocker | risk | outcome | decision | doc_reference
+    entity: str
+    action: str = "create"  # create | update | resolve
+    payload: dict[str, object] = field(default_factory=dict)
+    target: str | None = None
+    ref: str | None = None
+    reason: str | None = None
+    source_kind: str | None = None  # slack | email | meeting | jira | github | drive | ...
+    source_label: str | None = None
+    source_url: str | None = None
+
+
+@dataclass(frozen=True)
+class ProposalSpec:
+    """An **open** change proposal awaiting review, scoped to one project — the review
+    workspace's demo content (plan preview + change list)."""
+
+    project_key: str
+    title: str
+    summary: str
+    author_email: str
+    origin: str = "claude-session"
+    items: tuple[ProposalItemSpec, ...] = ()
+
+
+@dataclass(frozen=True)
 class Dataset:
     """One complete, self-contained demo narrative (people → initiatives → projects → extras).
 
@@ -468,6 +504,7 @@ class Dataset:
     connections: Callable[[int], list[DemoConnection]]  # flagship project id → connections
     leadership_notes: tuple[LeadershipNoteSpec, ...] = ()
     teams: tuple[TeamSpec, ...] = ()
+    proposals: tuple[ProposalSpec, ...] = ()
 
     def accounts(self) -> list[DemoAccount]:
         return [DemoAccount(u.email, u.full_name, u.role.value, u.function.value)
