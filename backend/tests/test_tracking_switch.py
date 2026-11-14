@@ -411,3 +411,39 @@ async def test_one_tracker_scope_feeds_one_project(client, db_session, monkeypat
         headers=admin,
     )
     assert other.status_code == 200, other.text
+
+
+
+async def test_switching_off_a_legacy_bound_project_stops_its_connection(client, db_session):
+    """A connection that predates bindings feeds its `config.project_id`; switching that project
+    to native records the binding as detached, so the connection stops feeding it."""
+    admin = await _admin(client, db_session)
+    project = Project(key="LEG", name="Legacy", tracking_mode="mirrored")
+    db_session.add(project)
+    await db_session.flush()
+    assert project.id is not None
+    connection = Connection(
+        provider=Provider.jira, name="Old Jira",
+        config={"base_url": "https://jira.example.com", "project_id": project.id,
+                "jira_project_key": "LEG"},
+    )
+    db_session.add(connection)
+    await db_session.commit()
+    project_id, connection_id = project.id, connection.id
+    before = (await client.get(f"/api/v1/projects/{project_id}/tracking", headers=admin)).json()
+    assert before["binding"] is None and before["legacy_connection_id"] == connection_id
+
+    applied = await client.post(
+        f"/api/v1/projects/{project_id}/tracking/switch",
+        json={"to_mode": "native", "dry_run": False}, headers=admin,
+    )
+    assert applied.status_code == 200, applied.text
+    after = (await client.get(f"/api/v1/projects/{project_id}/tracking", headers=admin)).json()
+    assert after["mode"] == "native" and after["legacy_connection_id"] is None
+    assert [(h["provider"], h["scope"]) for h in after["history"]] == [
+        ("jira", {"project_key": "LEG"})
+    ]
+    db_session.expire_all()
+    fresh = await db_session.get(Connection, connection_id)
+    assert fresh is not None
+    assert await tracker_sync.bindings_for_connection(db_session, fresh) == []

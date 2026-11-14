@@ -420,10 +420,30 @@ def _publishable(task: Task) -> bool:
 
 
 async def _detach_current(session: AsyncSession, project_id: int, now: Any) -> None:
+    """Detach the project's binding. One that lives only in a pre-binding connection's
+    `config.project_id` is recorded as a detached row — which also stops that connection's
+    legacy fallback from binding the project again."""
     binding = await active_binding(session, project_id)
     if binding is not None:
         binding.active = False
         binding.detached_at = now
+        return
+    legacy = await tracker_sync.binding_for_project(session, project_id)
+    if legacy is not None and legacy.row is None:
+        session.add(
+            TrackerBinding(
+                connection_id=legacy.connection_id,
+                provider=legacy.provider,
+                target_type="project",
+                target_id=project_id,
+                scope_kind="project",
+                scope=dict(legacy.scope.values),
+                mapping=dict(legacy.scope.mapping),
+                sync_iterations=legacy.sync_iterations,
+                active=False,
+                detached_at=now,
+            )
+        )
 
 
 async def _release(session: AsyncSession, plan: SwitchPlan, tasks: list[Task], now: Any) -> None:
