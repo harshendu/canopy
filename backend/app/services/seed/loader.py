@@ -63,8 +63,10 @@ from app.models.base import (
     RiskScope,
     RiskStatus,
     SpecStatus,
+    StatusSource,
     TaskType,
     TeamRole,
+    TrackingMode,
     utcnow,
 )
 from app.models.doc import DocReference
@@ -102,6 +104,7 @@ from app.models.spec import Spec, SpecCriterion
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
 from app.services import proposals as proposal_svc
+from app.services import workflow
 from app.services.planner import reschedule_project
 from app.services.scenario_engine import snapshot_live_into_scenario
 from app.services.seed import catalog
@@ -364,6 +367,7 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
     for phase in spec.phases:
         summary = await _add(session, Task(
             project_id=pid, name=phase.name, type=TaskType.summary, duration=0))
+        await workflow.assign_native_key(session, summary)
         for ts in phase.tasks:
             task = await _add(session, Task(
                 project_id=pid, parent_id=summary.id, name=ts.name,
@@ -374,6 +378,7 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
                 estimate_pessimistic=ts.estimate[2] if ts.estimate else None,
                 deadline=_weeks(today, ts.deadline_weeks) if ts.deadline_weeks else None,
             ))
+            await workflow.assign_native_key(session, task)
             refs.tasks[spec.key][ts.name] = task
             leaves.append(task)
 
@@ -407,6 +412,7 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
 
 async def _apply_lifecycle(session: AsyncSession, refs: _Refs, spec: ProjectSpec) -> None:
     base = utcnow()
+    columns = workflow.default_view().columns
     for phase in spec.phases:
         for ts in phase.tasks:
             if ts.milestone:
@@ -414,14 +420,19 @@ async def _apply_lifecycle(session: AsyncSession, refs: _Refs, spec: ProjectSpec
             task = refs.tasks[spec.key][ts.name]
             created_days, transitions = _lifecycle(ts.status, ts.entered_days_ago)
             task.created_at = base - timedelta(days=created_days)
-            task.status = ts.status
+            author = ts.assignee or "canopy"
+            # Through the one status write path, back-dated: the task enters To Do when it is
+            # created, then walks its lifecycle — each step stamped with its category.
+            steps = [("To Do", created_days), *[(to, days) for _, to, days in transitions]]
+            for to_status, days_ago in steps:
+                workflow.record_transition(
+                    session, task, to_status,
+                    category=workflow.resolve_category(to_status, columns=columns),
+                    source=StatusSource.canopy, author=author,
+                    at=base - timedelta(days=days_ago),
+                )
             task.percent_complete = _PERCENT.get(ts.status, 0.0)
-            author = ts.assignee or "Jira Sync"
-            for from_status, to_status, days_ago in transitions:
-                await _add(session, TaskStatusHistory(
-                    task_id=_req(task.id), from_status=from_status, to_status=to_status,
-                    changed_at=base - timedelta(days=days_ago), author=author,
-                ))
+            await session.flush()
 
 
 async def _build_project_arch(
@@ -711,13 +722,25 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
     await _add(session, JiraLink(
         connection_id=_req(conns["jira"].id), jira_issue_id=epic_id, jira_key=epic_key,
         jira_issue_type="Epic", target_type="project", target_id=fid))
-    # Mirror Jira issue keys onto tasks so each shows a clickable <KEY>-… link in the UI.
+    # The flagship is mirrored from Jira: the tasks Jira knows are Jira-owned (status locked to
+    # the tracker on the board, each with its clickable <KEY>-… link); the rest of its tasks —
+    # canopy-only work such as milestones and spikes — stay canopy-owned.
+    flagship = refs.projects[refs.ds.flagship_key]
+    flagship.tracking_mode = TrackingMode.mirrored.value
     for ext_id, key, name in refs.ds.jira_task_keys:
         task = refs.tasks[refs.ds.flagship_key].get(name)
         if task is not None and task.id is not None:
+            task.status_owner = Provider.jira.value
+            task.key = key
             await _add(session, ExternalRef(
                 provider=Provider.jira, external_id=ext_id, external_key=key,
                 entity_type="task", entity_id=task.id))
+            # Its history came from Jira, observed by sync.
+            await session.execute(
+                update(TaskStatusHistory)
+                .where(col(TaskStatusHistory.task_id) == task.id)
+                .values(source=StatusSource.sync.value, author="Jira")
+            )
 
 
 async def _build_scenarios(session: AsyncSession, refs: _Refs) -> None:

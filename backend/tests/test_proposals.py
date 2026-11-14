@@ -212,9 +212,9 @@ async def test_stage_time_validation_rejects_bad_items(client, db_session) -> No
             headers=full,
         )
 
-    # Jira-owned status is not a stageable field at all.
+    # A staged status must be a column of the project's workflow.
     resp = await stage(
-        [{"entity_type": "task", "action": "create", "payload": {"name": "T", "status": "Done"}}]
+        [{"entity_type": "task", "action": "create", "payload": {"name": "T", "status": "Shipped"}}]
     )
     assert resp.status_code == 400
     assert "status" in str(resp.json()["detail"]["errors"][0]["error"])
@@ -502,7 +502,7 @@ async def test_override_rejects_bad_fields_and_can_be_cleared(client, db_session
     assert added.status_code == 200, added.text
     # …but never a field that decides where the change lands, an unknown field, or a ref.
     assert (await override({"project_id": project_id})).status_code == 400
-    assert (await override({"status": "Done"})).status_code == 400
+    assert (await override({"status_owner": "jira"})).status_code == 400
     assert (await override({"parent_ref": "phase"})).status_code == 400
     # A bad value for a real field is rejected at edit time (not deferred to apply).
     bad = await override({"duration": "lots"})

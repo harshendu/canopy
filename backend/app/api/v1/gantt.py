@@ -4,9 +4,16 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from app.api.deps import CurrentUser, FeatureGate, PlannerWriter, SessionDep
+from app.api.deps import (
+    CurrentUser,
+    FeatureGate,
+    PlannerWriter,
+    SessionDep,
+    current_engineer,
+    is_planner,
+)
 from app.core.events import publish
-from app.models.base import RiskScope, RiskStatus, TaskType
+from app.models.base import RiskScope, RiskStatus, StatusCategory, TaskType
 from app.models.project import (
     Baseline,
     Blocker,
@@ -14,18 +21,17 @@ from app.models.project import (
     Milestone,
     Project,
     Task,
-    TaskStatusHistory,
 )
 from app.models.risk_register import RiskItem
 from app.models.team import Allocation, Engineer, EngineerAvailability
+from app.models.user import User
 from app.schemas.entities import (
     AlertRead,
     AlertsResponse,
     BaselineRead,
     BaselineRequest,
-    BoardLaneRead,
     BoardResponse,
-    BoardTaskRead,
+    BoardViewer,
     BurndownPoint,
     BurndownResponse,
     ForecastResponse,
@@ -35,7 +41,7 @@ from app.schemas.entities import (
     ReplanResult,
     WhatIfRequest,
 )
-from app.services.access import ensure_project_editable
+from app.services.access import ensure_project_editable, project_can_edit
 from app.services.alerts import (
     AlertBlocker,
     AlertMilestone,
@@ -44,18 +50,20 @@ from app.services.alerts import (
     OverAllocation,
     compute_alerts,
 )
-from app.services.burndown import compute_burndown, done_dates_per_task, is_done_status
+from app.services.board import completion_dates, history_points, project_board
+from app.services.burndown import compute_burndown
 from app.services.capacity import (
     AllocationSpan,
     AvailabilitySpan,
     mondays,
     over_allocated_weeks,
 )
-from app.services.flow import BoardTaskInput, build_board
+from app.services.features import feature_enabled
 from app.services.forecast import monte_carlo_forecast, weekly_throughput
 from app.services.metadata import risk_exposure
 from app.services.planner import PlanOutcome, reschedule_project
 from app.services.scheduling import CycleError
+from app.services.workflow import category_of_task
 
 router = APIRouter()
 
@@ -234,17 +242,11 @@ async def burndown(session: SessionDep, _: CurrentUser, project_id: int) -> Burn
     )
     leaves = [t for t in tasks if t.type != TaskType.summary]
     total = len(leaves)
-    task_ids = {t.id for t in tasks}
-
-    history = (
-        await session.execute(
-            select(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids))
-        )
-    ).scalars().all()
-    # One completion date per task (last done transition) — a reopened-then-redone task must not
-    # count twice, which would inflate throughput / push burndown remaining negative.
-    done_dates = done_dates_per_task(
-        (h.task_id, h.to_status, h.changed_at.date()) for h in history
+    # One completion date per task (its last transition into a done category) — a reopened-
+    # then-redone task must not count twice, which would inflate throughput / push burndown
+    # remaining negative.
+    done_dates = completion_dates(
+        await history_points(session, [t.id for t in leaves if t.id is not None])
     )
 
     ends = [t.end for t in tasks if t.end]
@@ -278,14 +280,10 @@ async def project_forecast(
         ).scalars().all()
     )
     leaves = [t for t in tasks if t.type != TaskType.summary]
-    remaining = sum(1 for t in leaves if t.percent_complete < 100)
-    task_ids = {t.id for t in tasks}
-    history = (
-        await session.execute(
-            select(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids))
-        )
-    ).scalars().all()
-    done_dates = sorted(h.changed_at.date() for h in history if is_done_status(h.to_status))
+    remaining = sum(1 for t in leaves if _is_open(t))
+    done_dates = completion_dates(
+        await history_points(session, [t.id for t in leaves if t.id is not None])
+    )
     today = date.today()
     result = monte_carlo_forecast(remaining, weekly_throughput(done_dates, today), today)
     return ForecastResponse(
@@ -308,82 +306,31 @@ async def project_forecast(
     response_model=BoardResponse,
     dependencies=[FeatureGate("tracking.board")],
 )
-async def board(session: SessionDep, _: CurrentUser, project_id: int) -> BoardResponse:
-    """Flow board: leaf tasks in status lanes, with WIP per lane and aging vs cycle-time P85."""
+async def board(session: SessionDep, user: CurrentUser, project_id: int) -> BoardResponse:
+    """Kanban board: the project's workflow columns in order (empty ones included), cards
+    ranked within each, WIP per column against its limit, aging vs cycle-time P85, and what
+    the caller may move. Canopy-owned cards move via `POST /tasks/{id}/move`."""
     project = await session.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-    tasks = list(
-        (
-            await session.execute(select(Task).where(Task.project_id == project_id))
-        ).scalars().all()
+    return await project_board(session, project, await board_viewer(session, user, project))
+
+
+async def board_viewer(session: AsyncSession, user: User, project: Project) -> BoardViewer:
+    """What the caller may do on this project's board (shared with the team board)."""
+    engineer = await current_engineer(session, user)
+    return BoardViewer(
+        can_plan=is_planner(user) and await project_can_edit(session, user, project),
+        engineer_id=engineer.id if engineer is not None else None,
+        native_enabled=await feature_enabled(session, "tracking.native"),
     )
-    leaves = [t for t in tasks if t.type != TaskType.summary and t.id is not None]
-    history = (
-        await session.execute(
-            select(TaskStatusHistory).where(
-                col(TaskStatusHistory.task_id).in_({t.id for t in leaves})
-            )
-        )
-    ).scalars().all()
-    by_task: dict[int, list[TaskStatusHistory]] = {}
-    for h in history:
-        by_task.setdefault(h.task_id, []).append(h)
 
-    today = date.today()
-    inputs: list[BoardTaskInput] = []
-    for t in leaves:
-        assert t.id is not None
-        rows = by_task.get(t.id, [])
-        # When did it enter its current status? (latest matching transition; else the task's last
-        # update, not created_at — a months-old task freshly moved in Jira but synced without its
-        # changelog would otherwise read as aging-for-months, a false "stuck" signal.)
-        entered = max(
-            (h.changed_at.date() for h in rows if h.to_status == t.status),
-            default=t.updated_at.date(),
-        )
-        age_days = max(0, (today - entered).days)
-        done_dates = [h.changed_at.date() for h in rows if is_done_status(h.to_status)]
-        cycle_days = (
-            max(0, (max(done_dates) - t.created_at.date()).days) if done_dates else None
-        )
-        inputs.append(
-            BoardTaskInput(
-                id=t.id,
-                name=t.name,
-                status=t.status,
-                assignee_engineer_id=t.assignee_engineer_id,
-                is_done=is_done_status(t.status),
-                age_days=age_days,
-                cycle_days=cycle_days,
-            )
-        )
 
-    result = build_board(inputs)
-    return BoardResponse(
-        project_id=project_id,
-        cycle_time_p85_days=result.cycle_time_p85_days,
-        aging_count=result.aging_count,
-        lanes=[
-            BoardLaneRead(
-                status=lane.status,
-                is_done=lane.is_done,
-                wip=lane.wip,
-                tasks=[
-                    BoardTaskRead(
-                        id=bt.id,
-                        name=bt.name,
-                        status=bt.status,
-                        assignee_engineer_id=bt.assignee_engineer_id,
-                        is_done=bt.is_done,
-                        age_days=bt.age_days,
-                        aging=bt.aging,
-                    )
-                    for bt in lane.tasks
-                ],
-            )
-            for lane in result.lanes
-        ],
+def _is_open(task: Task) -> bool:
+    """Still to finish: not in a done or cancelled category (and not marked 100% by hand)."""
+    return (
+        category_of_task(task) not in (StatusCategory.done, StatusCategory.cancelled)
+        and task.percent_complete < 100
     )
 
 

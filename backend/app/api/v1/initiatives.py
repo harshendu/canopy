@@ -10,7 +10,7 @@ from app.api.deps import ArchitectWriter, CurrentUser, FeatureGate, SessionDep
 from app.api.v1.projects import open_project_risk_counts, summarize_project
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
-from app.models.base import ADRStatus, ProjectHealth, TaskType, utcnow
+from app.models.base import ADRStatus, ProjectHealth, StatusCategory, TaskType, utcnow
 from app.models.leadership import InitiativeLead
 from app.models.org import Pod, Team
 from app.models.outcome import Outcome
@@ -20,7 +20,6 @@ from app.models.project import (
     Initiative,
     Project,
     Task,
-    TaskStatusHistory,
 )
 from app.models.risk_register import RiskItem
 from app.models.team import Allocation, Engineer, EngineerAvailability
@@ -45,13 +44,14 @@ from app.services.access import (
     led_initiative_ids,
     owned_project_ids,
 )
-from app.services.burndown import done_dates_per_task
+from app.services.board import completion_dates, history_points, leaves_of
 from app.services.capacity import AvailabilitySpan
 from app.services.cross_project import CPDep, CPTask, cross_project_critical_path
 from app.services.drift import level as drift_level
 from app.services.forecast import monte_carlo_forecast, weekly_throughput
 from app.services.metadata import normalize_tags
 from app.services.scheduling import CycleError
+from app.services.workflow import category_of_task
 
 router = APIRouter()
 
@@ -563,19 +563,16 @@ async def initiative_forecast(
         if project_ids
         else []
     )
-    leaves = [t for t in tasks if t.type != TaskType.summary]
-    remaining = sum(1 for t in leaves if t.percent_complete < 100)
-    task_ids = {t.id for t in tasks}
-    done_dates: list = []
-    if task_ids:
-        history = (
-            await session.execute(
-                select(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids))
-            )
-        ).scalars().all()
-        done_dates = done_dates_per_task(
-            (h.task_id, h.to_status, h.changed_at.date()) for h in history
-        )
+    leaves = leaves_of(tasks)
+    remaining = sum(
+        1
+        for t in leaves
+        if category_of_task(t) not in (StatusCategory.done, StatusCategory.cancelled)
+        and t.percent_complete < 100
+    )
+    done_dates = completion_dates(
+        await history_points(session, [t.id for t in leaves if t.id is not None])
+    )
     today = date.today()
     result = monte_carlo_forecast(remaining, weekly_throughput(done_dates, today), today)
     return ForecastResponse(

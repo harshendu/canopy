@@ -22,6 +22,44 @@ class TaskType(StrEnum):
     summary = "summary"  # a summary task acts as a phase / workstream in the WBS
 
 
+# --- Work tracking (status ownership, categories, workflows) ---
+# These closed sets are stored as plain VARCHAR columns (no native DB enum type) and validated
+# by these StrEnums at the API boundary — the pattern `Milestone.status` already uses — so
+# adding a value never needs a dialect-branched enum migration.
+class TrackingMode(StrEnum):
+    """Who owns a project's work items: canopy itself, or an external tracker it mirrors."""
+
+    native = "native"
+    mirrored = "mirrored"
+
+
+class StatusCategory(StrEnum):
+    """What a status *means* — every flow metric reads this, never the display name."""
+
+    todo = "todo"  # not started
+    in_progress = "in_progress"  # started, not finished (counts as WIP)
+    done = "done"  # completed — counts as throughput
+    cancelled = "cancelled"  # dropped — leaves WIP, never counts as throughput
+
+
+class WipEnforcement(StrEnum):
+    off = "off"
+    warn = "warn"  # the move succeeds and reports `wip_limit_exceeded`
+    block = "block"  # the move is refused with 409 `wip_limit_reached`
+
+
+class StatusSource(StrEnum):
+    """Where a `TaskStatusHistory` row came from (approximate rows can later be replaced)."""
+
+    canopy = "canopy"  # a move made in canopy (board, API, MCP, proposal apply)
+    sync = "sync"  # observed by a sync/webhook/ingest; dated by the item's `updated`
+    backfill = "backfill"  # replayed from a tracker's changelog (exact transition times)
+
+
+# The `status_owner` value of a task whose status canopy owns (else a provider key, e.g. "jira").
+CANOPY_OWNER = "canopy"
+
+
 class DependencyType(StrEnum):
     FS = "FS"  # finish-to-start (default)
     SS = "SS"  # start-to-start

@@ -1,3 +1,4 @@
+import re
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
@@ -284,6 +285,23 @@ async def project_summary(
     )
 
 
+_KEY_PREFIX = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,15}$")
+
+
+def _clean_key_prefix(value: object) -> str | None:
+    """A task-key prefix: 1-16 letters/digits/underscores starting with a letter, stored upper
+    case; blank clears it (native keys then use the project key)."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if not _KEY_PREFIX.match(text):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="task_key_prefix must be 1-16 letters, digits or _, starting with a letter",
+        )
+    return text.upper()
+
+
 async def _validate_org_refs(
     session: AsyncSession, pod_id: int | None, owner_engineer_id: int | None
 ) -> None:
@@ -347,6 +365,8 @@ async def update_project(
     await _validate_org_refs(session, data.get("pod_id"), data.get("owner_engineer_id"))
     if "tags" in data and data["tags"] is not None:
         data["tags"] = normalize_tags(data["tags"])
+    if "task_key_prefix" in data:
+        data["task_key_prefix"] = _clean_key_prefix(data["task_key_prefix"])
     for field, value in data.items():
         setattr(project, field, value)
     if "health" in data or "status_note" in data:

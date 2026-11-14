@@ -77,9 +77,13 @@ provenance is your own inference — say so in its `reason`.
 
 ## 4. Source-of-truth rules (never violate)
 
-- **Jira owns tickets and status.** Never write ticket status anywhere — not via
-  `update_task` (the API refuses), not via a proposal (`status` is not stageable), not
-  via your own Jira tools *for tasks canopy mirrors*. Plan→Jira ticket creation goes
+- **Status belongs to its owner.** Every task says who owns its status (`status_owner` on
+  the task / board card). For a **canopy-owned** task, a status change is a board move:
+  `move_task` for an explicit instruction ("move CHK-12 to In Review"), or a staged `status`
+  in a proposal when you *inferred* it from a signal. For a **mirrored** task (owned by Jira
+  or another tracker) never write its status anywhere — not via `move_task` (it refuses
+  and tells you the owner), not via a proposal (refused), not via your own Jira tools *for
+  tasks canopy mirrors*. `update_task` never sets status. Plan→Jira ticket creation goes
   through the reviewed **draft plan** flow (`drafting-jira-tickets`), content only.
 - **GitHub owns code; Drive owns design docs.** Canopy links, it never copies
   (`add_doc_reference`); the only canopy→Drive write is an export snapshot.

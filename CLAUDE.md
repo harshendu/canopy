@@ -16,8 +16,14 @@ from **GitHub** and **Google Drive**. One FastAPI backend with two front doors: 
 and a Claude Code plugin (FastMCP server + skills + subagents).
 
 ## Source-of-truth boundaries (do not violate)
-- **Jira** owns epics/stories and ticket **status**. canopy syncs *from* Jira and **never writes
-  status back**. Mirrored status on canopy tasks is read-only. **Scoped exception:** from an
+- **The status owner owns status.** Every task has one `status_owner`: `canopy` (a native
+  project's tasks, and canopy-only work in a mirrored one) or the tracker it is mirrored from.
+  canopy moves only canopy-owned tasks and **never writes status to a tracker**; a mirrored
+  task's status is read-only in canopy. **`workflow.record_transition` is the only writer of
+  `Task.status`** (moves, proposal apply, draft finalise and every inbound sync end there, so
+  history, categories and progress stay consistent — `tests/test_status_single_writer.py`).
+- **Jira** owns the epics/stories it mirrors and their **status**. canopy syncs *from* Jira and
+  **never writes status back**. Mirrored status on canopy tasks is read-only. **Scoped exception:** from an
   architect-reviewed **draft plan** (see Draft plans below) canopy may *create* tickets and *update
   ticket content* (summary/description/story points + epic→story parent) via
   `JiraConnector.create_issue`/`update_issue` — but **status is still never written**, and canopy
@@ -104,7 +110,8 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   (`app/models/proposal.py`) stage **inbound canopy writes** an agent inferred (from
   Slack/email/meetings/docs) for a human to review and apply in the UI — the inbound twin of
   draft plans. Items are whitelisted per entity×action (task/dependency/milestone/blocker/
-  risk/outcome/decision/doc_reference; Jira-mirrored `status` never stageable), scope-contained
+  risk/outcome/decision/doc_reference; task `status` stageable only on canopy-owned tasks,
+  never on a mirrored one), scope-contained
   to one project/initiative, may reference each other via `ref`/`*_ref` handles, and carry
   provenance (`source_kind/label/url`) + a stage-time `before` snapshot. Apply is
   **all-or-nothing** + auto-replan (`app/services/proposals.py`); staging/withdraw/**revise**
@@ -130,10 +137,19 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   features, open proposals). Skills: `updating-canopy` (the write-ladder contract + the
   reviewing-together loop), `harvesting-signals`, `persona-playbooks`; subagent
   `signal-harvester`. USER_FLOWS §AA.
-- **Flow board:** `GET /projects/{id}/board` groups leaf tasks into status lanes with WIP per lane,
-  and flags **aging** tasks (in-status age > the team's cycle-time P85) — pure logic in
-  `app/services/flow.py`; age/cycle dates derived from `TaskStatusHistory`. WIP limits are a
-  client-side knob (not persisted). MCP: `get_board`.
+- **Kanban board + native tracking:** a project is `tracking_mode` native|mirrored. Board columns
+  are a **workflow** (`app/models/workflow.py`: ordered statuses, each with a **category**
+  todo|in_progress|done|cancelled + optional WIP limit, enforcement off|warn|block), resolved
+  project override → team → workspace template → built-in default (`app/services/workflow.py`,
+  nothing written on read). **Metrics read categories, never status names** (stamped on the task
+  and on each `TaskStatusHistory` row). `GET /projects/{id}/board` shows every column (empty ones
+  too) with ranked cards, WIP vs limit and **aging** (in-status age > cycle-time P85, cycle =
+  first start → last done); pure logic in `app/services/flow.py`, assembly in
+  `app/services/board.py`. `POST /tasks/{id}/move` changes a canopy-owned card's status/rank
+  (planner, or an engineer on own/unassigned cards; 409 for a mirrored card), gated by
+  `tracking.native`; workflows: `GET/PUT /teams|projects/{id}/workflow`, `/workflows/template`.
+  Native tasks get keys `<prefix>-<n>`. MCP: `get_board`/`move_task`/`get_workflow`/
+  `set_workflow`. USER_FLOWS §C9.
 - **Probabilistic forecast:** `GET /projects/{id}/forecast` and `GET /initiatives/{id}/forecast`
   run a Monte-Carlo simulation (`app/services/forecast.py`, pure) — burn down the remaining items by
   sampling historical weekly throughput (from `TaskStatusHistory`, incl. zero weeks) to report
@@ -193,8 +209,9 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   (skill: `spec-driven-development`). Vision + roadmap in `docs/AI_NATIVE_EXECUTION.md`; USER_FLOWS §W.
 - **Delivery metrics (DORA + flow):** `GET /projects|initiatives/{id}/delivery` computes DORA
   (deploy freq, change-fail rate, recovery time from the §J8 activity feed) + flow (throughput,
-  cycle time, WIP, aging from `TaskStatusHistory` + the board) — pure in
-  `app/services/flow_metrics.py`, reusing `build_board`/`weekly_throughput`/`is_done_status`.
+  cycle time started→done, lead time, WIP = in-progress category, aging from
+  `TaskStatusHistory` + the board) — pure in `app/services/flow_metrics.py`, reusing
+  `build_board`/`weekly_throughput` and the stamped status categories.
   **Team-level only — never per-engineer** (Goodhart); reports `sufficient=false`/`null` instead of
   faking thin data. MCP: `get_delivery_metrics`. USER_FLOWS §X; roadmap gap #3 in AI_NATIVE_EXECUTION.md.
 - **Outcomes (outcomes over output):** `Outcome` (`app/models/outcome.py`) makes a project/

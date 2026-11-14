@@ -89,8 +89,9 @@ def register(mcp, client) -> None:
           parent_id, constraint_start, deadline, assignee_engineer_id, tags, estimate_*;
           dependency: predecessor_id, successor_id, type, lag; blocker: task_id, reason,
           category, severity, needed_by; risk/outcome/doc_reference: their usual fields —
-          scope defaults to the proposal's scope). Jira-mirrored task `status` is NOT
-          stageable.
+          scope defaults to the proposal's scope). A task `status` (a column of the
+          project's workflow) is stageable only on canopy-owned tasks; a task mirrored from a
+          tracker (`status_owner` is not "canopy") is refused — its status belongs there.
         - **Moving work in time:** a task's dates are *computed* by the scheduler from
           durations + dependencies, so to move it change `duration`, add a `dependency`,
           or set `constraint_start` ("start no earlier than", YYYY-MM-DD). Staging `start`

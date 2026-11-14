@@ -28,7 +28,9 @@ from app.models.base import (
     RiskScope,
     RiskStatus,
     SpecStatus,
+    StatusCategory,
     TaskType,
+    WipEnforcement,
     WriteStrategy,
 )
 from app.schemas.auth import UserRead
@@ -67,6 +69,8 @@ class ProjectUpdate(BaseModel):
     tags: list[str] | None = None
     health: ProjectHealth | None = None
     status_note: str | None = None
+    # Prefix of native task keys (`<prefix>-<n>`); empty string clears it (the key is used).
+    task_key_prefix: str | None = None
 
 
 class ProjectRead(BaseModel):
@@ -88,6 +92,9 @@ class ProjectRead(BaseModel):
     health: ProjectHealth | None = None
     status_note: str | None = None
     status_updated_at: datetime | None = None
+    # Work tracking: native (canopy owns status) | mirrored (an external tracker does).
+    tracking_mode: str = "native"
+    task_key_prefix: str | None = None
 
 
 class HolidayCreate(BaseModel):
@@ -136,10 +143,11 @@ class TaskCreate(BaseModel):
     # A "start no earlier than" (SNET) scheduling constraint — the CPM pin. Distinct from `start`,
     # which is the computed output (overwritten each replan). Set this to hold a task's start.
     constraint_start: date | None = None
-    # NB: `status` is deliberately NOT writable here — it is the Jira-mirrored, read-only field
-    # (Source-of-truth boundary). Writing it directly silently corrupts the status-derived views
-    # (board/aging, burndown, forecast, DORA) with no TaskStatusHistory row. The proposal and MCP
-    # write paths already exclude it; the direct REST route now matches them.
+    # The first status of a new (canopy-owned) task: a column of the project's workflow, else the
+    # first `todo` column. It goes through `workflow.record_transition` like every status write,
+    # so the creation is in the task's history. Changing it later is `POST /tasks/{id}/move` —
+    # `TaskUpdate` deliberately has no `status` (a PATCH would skip history and ownership).
+    status: str | None = None
     deadline: date | None = None
     assignee_engineer_id: int | None = None
     spec_id: int | None = None
@@ -159,7 +167,7 @@ class TaskUpdate(BaseModel):
     duration: int | None = None
     percent_complete: float | None = None
     constraint_start: date | None = None  # SNET pin (see TaskCreate); `start` is computed output
-    # `status` is Jira-mirrored + read-only — not writable via this route (see TaskCreate).
+    # No `status`: a status change is a move (`POST /tasks/{id}/move`) — see TaskCreate.
     deadline: date | None = None
     assignee_engineer_id: int | None = None
     spec_id: int | None = None
@@ -187,6 +195,9 @@ class TaskRead(BaseModel):
     is_critical: bool
     total_float: int
     status: str | None
+    status_category: str | None = None
+    status_owner: str = "canopy"
+    key: str | None = None
     sprint: str | None
     deadline: date | None
     assignee_engineer_id: int | None
@@ -228,8 +239,65 @@ class TaskStatusHistoryRead(BaseModel):
     task_id: int
     from_status: str | None
     to_status: str | None
+    to_category: str | None = None
     changed_at: datetime
     author: str | None
+    source: str = "sync"
+
+
+# --- Board moves + workflows (USER_FLOWS §C9) ---
+class TaskMoveRequest(BaseModel):
+    """Move a card. `to_status` changes the status (canopy-owned tasks only); omit it to only
+    reorder. Placement: between `after_task_id` and `before_task_id` (either may be omitted),
+    else at the `position` end of the column. `expected_status` guards against a lost update."""
+
+    to_status: str | None = None
+    after_task_id: int | None = None
+    before_task_id: int | None = None
+    position: Literal["top", "bottom"] = "bottom"
+    expected_status: str | None = None
+
+
+class TaskMoveResponse(BaseModel):
+    task: TaskRead
+    changed: bool
+    warnings: list[str] = []
+
+
+class WorkflowColumnRead(BaseModel):
+    name: str
+    category: StatusCategory
+    position: int
+    wip_limit: int | None = None
+
+
+class WorkflowRead(BaseModel):
+    id: int | None
+    # Where the columns are defined: project | team | template | default.
+    scope: str
+    team_id: int | None
+    project_id: int | None
+    name: str
+    wip_enforcement: WipEnforcement
+    # True when the asked-for project/team has no workflow of its own and uses this one.
+    inherited: bool
+    columns: list[WorkflowColumnRead]
+
+
+class WorkflowColumnIn(BaseModel):
+    name: str
+    category: StatusCategory
+    wip_limit: int | None = None
+    # Set to rename an existing column; its canopy-owned tasks keep their place.
+    previous_name: str | None = None
+
+
+class WorkflowUpdate(BaseModel):
+    name: str = "Default"
+    wip_enforcement: WipEnforcement = WipEnforcement.warn
+    columns: list[WorkflowColumnIn]
+    # Where the canopy-owned tasks of a removed column go: {"Old column": "New column"}.
+    move_tasks_to: dict[str, str] = {}
 
 
 # --- Dependency ---
@@ -659,6 +727,21 @@ class BoardTaskRead(BaseModel):
     is_done: bool
     age_days: int
     aging: bool
+    # Card detail (optional so the scenario board, which renders a projection, can omit it).
+    project_id: int | None = None
+    key: str | None = None
+    status_category: str | None = None
+    # "canopy", or the provider key of the tracker that owns this card's status.
+    status_owner: str = "canopy"
+    # The card's status can be changed in canopy (it is canopy-owned).
+    movable: bool = True
+    external_url: str | None = None
+    rank: int = 0
+    parent_id: int | None = None
+    blocked: bool = False
+    is_critical: bool = False
+    deadline: date | None = None
+    tags: list[str] = []
 
 
 class BoardLaneRead(BaseModel):
@@ -666,6 +749,20 @@ class BoardLaneRead(BaseModel):
     is_done: bool
     wip: int
     tasks: list[BoardTaskRead]
+    category: str | None = None
+    position: int = 0
+    wip_limit: int | None = None
+    over_limit: bool = False
+    # False = a status found on a card that the workflow does not name (e.g. a mirrored status).
+    in_workflow: bool = True
+
+
+class BoardViewer(BaseModel):
+    """What the caller may do, so the client can tell which cards it can move."""
+
+    can_plan: bool = False  # may move any canopy-owned card and edit the workflow
+    engineer_id: int | None = None  # may move cards assigned to this engineer (or pull one)
+    native_enabled: bool = True  # feature `tracking.native`
 
 
 class BoardResponse(BaseModel):
@@ -673,6 +770,9 @@ class BoardResponse(BaseModel):
     lanes: list[BoardLaneRead]
     cycle_time_p85_days: int | None
     aging_count: int
+    mode: str = "native"
+    wip_enforcement: str = "warn"
+    viewer: BoardViewer | None = None
 
 
 # --- Blockers (flagged impediments) ---
@@ -1298,7 +1398,9 @@ class IngestIssue(BaseModel):
     external_id: str  # provider issue id (opaque, stable) — the ExternalRef key
     external_key: str | None = None  # human key, e.g. "PROJ-123"
     summary: str
-    status: str | None = None  # mirrored read-only (Jira stays status owner)
+    status: str | None = None  # mirrored read-only (the tracker stays the status owner)
+    # todo | in_progress | done | cancelled, when the tracker says; else derived from the name.
+    status_category: str | None = None
     issue_type: str | None = None  # epic types become summary tasks
     parent_external_id: str | None = None
     updated: str | None = None  # remote "updated" timestamp, for staleness checks
@@ -1593,6 +1695,7 @@ class FlowMetricsRead(BaseModel):
     aging_wip: int
     sufficient: bool
     reason: str | None = None
+    lead_time_median_days: float | None = None
 
 
 class DeliveryMetricsRead(BaseModel):

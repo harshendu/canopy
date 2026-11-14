@@ -1,16 +1,19 @@
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Column, Text
+from sqlalchemy import JSON, BigInteger, Column, Text
 from sqlmodel import Field
 
 from app.models.base import (
+    CANOPY_OWNER,
     BlockerCategory,
     BlockerSeverity,
     DecisionRule,
     DependencyType,
     ProjectHealth,
+    StatusSource,
     TaskType,
     TimestampMixin,
+    TrackingMode,
 )
 
 
@@ -64,6 +67,13 @@ class Project(TimestampMixin, table=True):
     # the weekly status headline
     status_note: str | None = Field(default=None, sa_column=Column(Text))
     status_updated_at: datetime | None = None
+    # Work tracking (USER_FLOWS §C9, CLAUDE.md "Source-of-truth boundaries"): `native` = canopy
+    # owns every task's status; `mirrored` = an external tracker owns the tasks it knows (see
+    # `Task.status_owner`). Stored as VARCHAR, validated by `TrackingMode`.
+    tracking_mode: str = TrackingMode.native.value
+    # Native task keys are `<task_key_prefix or key>-<n>`; this is the next `n` to hand out.
+    next_task_number: int = 1
+    task_key_prefix: str | None = None
 
 
 class Holiday(TimestampMixin, table=True):
@@ -125,8 +135,18 @@ class Task(TimestampMixin, table=True):
     is_critical: bool = False
     total_float: int = 0
 
-    # Mirror of the upstream (Jira) status; canopy never writes this back.
+    # Display name of the current status. Written ONLY by `workflow.record_transition` (a canopy
+    # move or an inbound sync), which also stamps `status_category` and appends history. For a
+    # mirrored task the tracker owns it and canopy never writes it back.
     status: str | None = None
+    # What the status means (todo | in_progress | done | cancelled) — what every metric reads.
+    status_category: str | None = None
+    # Who owns `status`: "canopy", or the provider key of the tracker the task is mirrored from.
+    status_owner: str = CANOPY_OWNER
+    # Card order on the board. 0 = unranked (sorts by id); see `flow.effective_rank`.
+    board_rank: int = Field(default=0, sa_type=BigInteger)
+    # Human key: the external key for a mirrored task (e.g. SHOP-101), `<prefix>-<n>` for native.
+    key: str | None = Field(default=None, index=True)
     # Active Jira sprint name (from the Agile API), when applicable.
     sprint: str | None = None
     # Hard deadline; the scheduler flags tasks whose computed end exceeds it.
@@ -137,14 +157,18 @@ class Task(TimestampMixin, table=True):
 
 
 class TaskStatusHistory(TimestampMixin, table=True):
-    """Status transitions mirrored from the Jira issue changelog."""
+    """One status transition, whoever owns the status: a canopy move, a sync-observed change,
+    or a transition replayed from a tracker's changelog (`source`). `to_category` is stamped at
+    write time so a later rename or remap of a status never rewrites the past."""
 
     id: int | None = Field(default=None, primary_key=True)
     task_id: int = Field(foreign_key="task.id", index=True)
     from_status: str | None = None
     to_status: str | None = None
+    to_category: str | None = None
     changed_at: datetime = Field(index=True)
     author: str | None = None
+    source: str = StatusSource.sync.value
 
 
 class Dependency(TimestampMixin, table=True):

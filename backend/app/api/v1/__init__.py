@@ -37,6 +37,7 @@ from app.api.v1 import (
     tasks,
     team,
     teams,
+    workflows,
 )
 
 api_router = APIRouter()
@@ -56,6 +57,8 @@ api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(dependencies.router, prefix="/dependencies", tags=["dependencies"])
 api_router.include_router(team.router, prefix="/team", tags=["team"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
+# Board workflows are core (every native project has one; status changes are gated per move).
+api_router.include_router(workflows.router, tags=["workflows"])
 api_router.include_router(
     architecture.router,
     prefix="/architecture",

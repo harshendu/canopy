@@ -107,13 +107,14 @@ async def test_project_forecast_endpoint(client, db_session):
     assert f0["remaining_items"] == 2
     assert f0["p50_date"] is None
 
-    # Seed a completion in each of the last 4 weeks so a throughput trend exists.
+    # Seed a completion in each of the last 4 weeks so a throughput trend exists (one task per
+    # week: a task's completion counts once, at its last transition into done).
     today = date.today()
     for i in range(4):
         day = today - timedelta(weeks=i + 1)
         db_session.add(
             TaskStatusHistory(
-                task_id=ids[0],
+                task_id=ids[i],
                 to_status="done",
                 changed_at=datetime.combine(day, datetime.min.time()),
             )

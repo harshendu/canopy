@@ -16,13 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.connectors.base import SyncResult
-from app.models.base import Provider, TaskType
+from app.models.base import Provider, StatusSource, TaskType
 from app.models.integration import Connection, PullRequest
 from app.models.project import Task
 from app.models.team import Engineer
 from app.schemas.entities import IngestIssue, IngestPullRequest
-from app.services import mapping
-from app.services.burndown import is_done_status
+from app.services import mapping, workflow
 
 _EPIC_TYPES = {"Epic"}
 
@@ -85,10 +84,16 @@ async def upsert_task_from_external(
     force_leaf: bool = False,
     assignee_account_id: str | None = None,
     assignee_name: str | None = None,
+    status_category: str | None = None,
 ) -> tuple[str, int]:
     """Idempotently upsert one external item as a canopy Task (via `ExternalRef`). Returns
     `(action, task_id)` where action is created|updated|skipped. Shared by the direct Jira sync
-    and MCP ingest so both stay consistent."""
+    and MCP ingest so both stay consistent.
+
+    The task is mirrored: `status_owner` becomes the provider and its key the external key. Its
+    status goes through `workflow.record_transition`, so a changed status appends a history row
+    (source `sync`, dated by the item's `updated`) and completion reconciles progress — the
+    burndown/forecast/aging views get data from the very first sync."""
     ref = await mapping.get_ref(session, provider, external_id, "task")
     if ref is not None and not mapping.is_stale(ref, updated):
         return "skipped", ref.entity_id
@@ -105,16 +110,22 @@ async def upsert_task_from_external(
     else:
         action = "updated"
     task.name = summary
-    task.status = status
     task.type = task_type
-    # Mirror completion from the upstream status so the status-derived views (board/burndown/
-    # forecast/DORA) and the progress %/rollups agree on one definition of "done". Jira has no
-    # percent field, so: a done status ⇒ 100%; a task that regressed out of done drops back to 0;
-    # a not-yet-done task keeps any manually-entered partial progress (canopy-only signal).
-    if is_done_status(status):
-        task.percent_complete = 100.0
-    elif task.percent_complete >= 100.0:
-        task.percent_complete = 0.0
+    task.status_owner = provider.value
+    if external_key:
+        task.key = external_key
+    # The one status write path: stamps the category, appends history when the status changed,
+    # and mirrors completion into progress (a done status ⇒ 100%; leaving done drops a 100% back
+    # to 0; other manual partial progress is kept) so every view agrees on one "done".
+    category = workflow.resolve_category(status, explicit=status_category)
+    workflow.record_transition(
+        session,
+        task,
+        status,
+        category=category,
+        source=StatusSource.sync,
+        at=workflow.parse_remote_time(updated),
+    )
     # Ownership mirrors the upstream assignee when one is set; an unassigned upstream issue
     # leaves any locally-set owner alone (assignment stays usable for canopy-only workflows).
     engineer_id = await resolve_assignee_engineer(session, assignee_account_id, assignee_name)
@@ -183,6 +194,7 @@ async def ingest_issues(
             updated=issue.updated,
             assignee_account_id=issue.assignee_account_id,
             assignee_name=issue.assignee_name,
+            status_category=issue.status_category,
         )
         setattr(result, action, getattr(result, action) + 1)
         if issue.parent_external_id:

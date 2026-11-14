@@ -125,19 +125,22 @@ def register(mcp, client) -> None:
         duration: int = 1,
         task_type: str = "task",
         parent_id: int | None = None,
+        status: str | None = None,
     ) -> dict:
         """Create a task in a project's plan.
 
         task_type is one of "task", "milestone", or "summary" (a summary task acts
-        as a phase/workstream parent in the work-breakdown structure).
+        as a phase/workstream parent in the work-breakdown structure). The task gets a key
+        (e.g. CHK-12) and a first status: `status` if given (a column of the project's
+        workflow — see `get_workflow`), else the first to-do column. Summary tasks carry none.
         """
-        return await client.post(
-            "/tasks",
-            {
-                "project_id": project_id,
-                "name": name,
-                "duration": duration,
-                "type": task_type,
-                "parent_id": parent_id,
-            },
-        )
+        body: dict = {
+            "project_id": project_id,
+            "name": name,
+            "duration": duration,
+            "type": task_type,
+            "parent_id": parent_id,
+        }
+        if status is not None:
+            body["status"] = status
+        return await client.post("/tasks", body)

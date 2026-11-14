@@ -58,6 +58,7 @@ from app.models.scenario import (
 from app.models.spec import Spec, SpecCriterion
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
+from app.models.workflow import Workflow, WorkflowStatus
 
 __all__ = [
     "ADRComment",
@@ -119,4 +120,6 @@ __all__ = [
     "TeamMember",
     "User",
     "UserConnection",
+    "Workflow",
+    "WorkflowStatus",
 ]

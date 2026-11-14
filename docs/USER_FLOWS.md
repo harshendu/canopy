@@ -25,9 +25,15 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 - **Claude** — acts on the architect's behalf through the plugin's MCP tools / skills / subagents.
 
 ## Source-of-truth boundaries (affect every sync flow)
-- **Jira** owns epics/stories and ticket **status**. Canopy syncs *from* Jira and **never writes
-  status back**. Mirrored status on canopy tasks is read-only. **Scoped exception (§C10):** from
-  an architect-reviewed **draft plan**, canopy can **create** new tickets and **update ticket
+- **Every task's status has exactly one owner** (`Task.status_owner`): **canopy** for a task only
+  canopy knows (every task of a **native** project, plus canopy-only work — milestones, spikes —
+  in a **mirrored** one), or the **external tracker** (Jira today) for a task mirrored from it.
+  canopy moves only canopy-owned tasks (§C9) and **never writes status to a tracker** — a
+  mirrored task's status is read-only in canopy and changes only when its tracker says so.
+  Every status change, native or synced, goes through one write path that records history.
+- **Jira** owns the epics/stories it mirrors into canopy and their **status**. Canopy syncs
+  *from* Jira and **never writes status back**. **Scoped exception (§C10):** from an
+  architect-reviewed **draft plan**, canopy can **create** new tickets and **update ticket
   content** (summary / description / story points + the epic→story parent link) — but **status is
   still never written**; the new issues flow back in via the normal Jira sync.
 - **GitHub** owns code + some architecture docs. **Google Drive** holds design docs. Canopy reads
@@ -577,14 +583,22 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
   (**task** / **milestone** / **summary**), a **parent (phase)** picker (any summary task in the
   project — nests the new task into the WBS tree directly from the form), optional deadline →
   "Add".
-- **API:** `POST /api/v1/tasks` · **MCP:** `create_task`.
+- **API:** `POST /api/v1/tasks` (optional `status`) · **MCP:** `create_task` (optional `status`).
 - **Notes:** a **summary** task is a phase/workstream; the WBS is built by setting `parent_id`,
   now exposed in the UI form (previously API/MCP-only) alongside the API/MCP.
+- **Key + first status:** every new task gets a human **key** (`<project key>-<n>`, e.g. `CHK-12`;
+  a project's `task_key_prefix` overrides the prefix, keys already in use are skipped) and — unless
+  it is a summary task — a **first status**: the `status` asked for (must be a column of the
+  project's workflow, else 422 `unknown_status`), or the default for its progress (first done
+  column at 100%, first in-progress column when started, else the first to-do column). The first
+  status is recorded as a transition in the task's history. With **`tracking.native`** off canopy
+  owns no status: new tasks start without one (an explicit `status` is a 403).
 - **Edit / assign / delete:** `PATCH /api/v1/tasks/{id}` (a planner edits any task; an engineer
   only one assigned to them — §A3a) · **MCP:** `update_task` (planning fields: name/duration/
-  start/end/deadline/percent_complete/parent — **status stays Jira-mirrored, read-only**; `status`
-  is not a writable field on the direct REST route either, matching the proposal/MCP whitelists)
-  and `assign_task` (set/clear `assignee_engineer_id`). **Delete** is a planner-only **Delete**
+  start/end/deadline/percent_complete/parent). **`status` is not a PATCH field**: a status change
+  is a board **move** (§C9 — `POST /api/v1/tasks/{id}/move`, MCP `move_task`), which records the
+  transition and is refused for a task whose status a tracker owns. `assign_task` sets/clears
+  `assignee_engineer_id`. **Delete** is a planner-only **Delete**
   button in the task detail panel (§C1a, `window.confirm`'d) → `DELETE /api/v1/tasks/{id}`, which
   cascades its dependencies/status-history/blockers server-side (`app/services/cascade.py`) and
   promotes any child tasks to the deleted task's parent rather than orphaning them.
@@ -714,22 +728,80 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
   the remaining items by sampling the team's **historical weekly throughput** (completed items/week,
   including stall weeks, from `TaskStatusHistory` — the same source as burndown §H). Needs no
   per-task estimates; reports a distribution, not a single date. Insufficient until ~3 weeks of
-  throughput exist.
+  throughput exist. A task completes when it enters a status whose **category** is `done`
+  (counted once, at its last such transition); `remaining` counts leaves not in a done or
+  cancelled category.
 
 ---
 
-## C9. Flow board (Kanban + WIP + aging) **[new — v2 §C-R2]**
-- **UI:** project → **Board** tab → leaf tasks grouped into **status lanes** (from the Jira-mirrored
-  `status`; done lanes sort last). Each lane shows **WIP** (count of not-done tasks); set a **WIP
-  limit** (client-side) and lanes over it turn red. Cards show **age in status** and the **owner's
-  initials chip** (hover for the name), with an **owner filter** (Everyone / Unassigned / per
-  engineer) beside the WIP knob — mirroring the Gantt's ownership view (§C6a). A card **aging**
-  beyond the team's **cycle-time P85** is highlighted amber (the leading "this is stuck" signal).
-- **API:** `GET /api/v1/projects/{id}/board` (lanes with per-task `age_days`/`aging`, `wip`, plus
-  `cycle_time_p85_days` and `aging_count`) · **MCP:** `get_board`. Logic is pure in
-  `app/services/flow.py` (grouping + P85 + aging); age/cycle dates come from `TaskStatusHistory`.
-- **Not built:** **persisted** per-lane / per-engineer WIP limits (the limit is a client-side knob
-  for now); drag-to-change status (status is Jira-owned, read-only).
+## C9. Kanban board & native tracking (workflow, moves, WIP, aging) **[updated]**
+Projects are tracked **natively** (canopy owns every task's status — `Project.tracking_mode =
+native`, the default) or **mirrored** from a tracker (Jira owns the tasks it knows; canopy-only
+tasks in the project stay canopy-owned). The board works the same in both; only who may move a
+card's status differs.
+
+### C9.1 Workflow (the board's columns)
+- **What:** an ordered list of **columns** — a status name, a **category** (`todo` |
+  `in_progress` | `done` | `cancelled`) and an optional **WIP limit** — plus a **WIP
+  enforcement** (`off` | `warn` | `block`). The default is Backlog · To Do · In Progress · In Review
+  · Done · Cancelled, enforcement `warn`.
+- **Where it is defined:** a **team** workflow is shared by every project the team runs (a
+  project's team = its pod's team, else its initiative's team); a project may **override** it; a
+  team-less project uses the **workspace template**; with nothing saved, the built-in default
+  applies (nothing is written on read).
+- **API:** `GET/PUT /api/v1/teams/{id}/workflow` (the team's directors/managers or an admin),
+  `GET/PUT/DELETE /api/v1/projects/{id}/workflow` (an override; planners who may edit the
+  project), `GET/PUT /api/v1/workflows/template` (admin) · **MCP:** `get_workflow`, `set_workflow`.
+  A PUT replaces the columns: a column carrying `previous_name` is a **rename** (its tasks follow,
+  no transition); removing a column that still holds canopy-owned tasks needs `move_tasks_to`
+  (`{"Old": "New"}` — those tasks move with a recorded transition), else 422 `column_in_use`. A
+  workflow needs at least one `todo` and one `done` column. Core (ungated).
+- **Categories, not names, drive every metric** (§C8, §H, §X): `done` is throughput, `cancelled`
+  leaves WIP but is never throughput, `in_progress` is started work. A status's category is
+  resolved from what the tracker sent, else the workflow's column, else a name heuristic, and is
+  **stamped on each history row** so a later rename or remap never rewrites the past.
+
+### C9.2 Read the board
+- **UI:** project → **Board** tab → the workflow's columns **in order, empty ones included**
+  (a status found on a card that the workflow doesn't name — e.g. a mirrored status — shows as an
+  extra column after its category's columns). Cards are **ranked** within a column; each shows its
+  key, name, **age in status**, the owner's initials chip and, for a mirrored card, its tracker.
+  Columns show WIP vs their limit; a card **aging** beyond the team's **cycle-time P85** is
+  highlighted amber.
+- **API:** `GET /api/v1/projects/{id}/board` — lanes (`status`, `category`, `position`, `wip`,
+  `wip_limit`, `over_limit`, `in_workflow`) with cards (`key`, `status_owner`, `movable`,
+  `external_url`, `rank`, `blocked`, `is_critical`, `deadline`, `tags`, `age_days`, `aging`), plus
+  `mode`, `wip_enforcement`, `cycle_time_p85_days`, `aging_count` and a `viewer` block (may plan?
+  which engineer? is native tracking on?) · **MCP:** `get_board`. Pure logic in
+  `app/services/flow.py` (columns, WIP, P85, aging, ranks); assembly in `app/services/board.py`.
+- **Cycle time** is now *started → done* (first transition into `in_progress` → last into `done`;
+  falls back to created when a task never passed through a started status); **lead time** is
+  created → done (§X).
+
+### C9.3 Move a card
+- **API:** `POST /api/v1/tasks/{id}/move` `{to_status?, after_task_id?, before_task_id?,
+  position: top|bottom, expected_status?}` · **MCP:** `move_task`. Omitting `to_status` only
+  reorders (allowed for mirrored cards too — rank is canopy's). Every status change goes through
+  the one write path (`workflow.record_transition`): it stamps the category, appends a
+  `TaskStatusHistory` row (author = the mover, `source = canopy`) and reconciles progress
+  (entering done → 100%; leaving done → 0; other manual progress kept).
+- **Who:** a planner moves any card in projects they may edit (§R6); an **engineer** moves their
+  own cards, or **pulls** an unassigned one (which assigns it to them); viewers read. An agent
+  token acts as its issuer — a move is a two-way door; a status an agent merely *inferred* goes
+  through a proposal (§AA).
+- **Refusals:** `409 status_externally_owned` (a mirrored task — the body names the `provider`
+  and the item's `url`), `409 wip_limit_reached` (enforcement `block` and the column is full;
+  `warn` succeeds with `warnings: ["wip_limit_exceeded"]`), `409 stale` (`expected_status` no
+  longer matches), `422 unknown_status`, `403 native_tracking_disabled` (feature
+  **`tracking.native`** off — every status must then come from a tracker).
+- **Ranks:** integers with gaps of 1024; a drop takes the midpoint of its neighbours, and when no
+  gap is left the team's cards are renumbered once (relative order everywhere is kept). A card
+  never placed sorts by creation order.
+- **Live refresh:** creating or moving a task publishes a `board` event (§K).
+
+### C9.4 Not built yet
+- The board UI is still read-only: moving, the per-column WIP limits and the workflow editor are
+  API/MCP-only until the drag-and-drop board lands (see Known UI gaps).
 
 ---
 
@@ -983,8 +1055,10 @@ review it, alternatives, reversibility, and a discussion thread.
   folds burndown into Risk and adds cumulative flow / cycle time / throughput / PR latency — those
   extra charts are **not built**, and burndown stays its own tab for now.)
 - **API:** `GET /api/v1/projects/{id}/burndown` · **MCP:** `get_burndown`.
-- **Notes:** burndown is driven by task **status history**, which is populated from Jira (see J5).
-  Without synced status transitions the chart is flat at the total.
+- **Notes:** burndown is driven by task **status history**, recorded on every status change —
+  a board move (§C9) for canopy-owned tasks, every sync/webhook/ingest that changes a mirrored
+  task's status (§J3), and the changelog backfill (§J5). A task counts as completed when it enters
+  a `done`-category status. Without any transitions the chart is flat at the total.
 
 ---
 
@@ -1203,7 +1277,13 @@ attach their **own** OAuth credential to it — canopy then reads/writes **as th
   back-fills the account id), else **auto-created** — and set as the task's owner, so synced work
   arrives with clear individual ownership on the Gantt/Board/workspace (§C6a, §M). An issue that is
   **unassigned in Jira leaves a locally-set owner untouched** (local assignment stays usable);
-  a set Jira assignee wins over a local one. Status stays read-only as ever.
+  a set Jira assignee wins over a local one. Synced tasks are **Jira-owned** (`status_owner =
+  jira`, key = the Jira key) and their status stays read-only in canopy.
+- **Status history on every sync:** when a sync, webhook or ingest changes a task's status it
+  appends a `TaskStatusHistory` row (dated by the issue's `updated`, `source = sync`, category
+  stamped), so burndown, forecast, aging and delivery metrics have data from the first sync
+  without calling the per-issue history endpoint. The changelog backfill (§J5) later replaces
+  these approximate rows with the exact transitions.
 - **Completion (progress %):** sync mirrors completion from the issue status — a **done** status
   marks the task **100%** complete, and an issue that regresses out of done drops back to 0 (a
   not-yet-done issue keeps any manually-entered partial progress). This keeps the status-derived
@@ -1211,8 +1291,10 @@ attach their **own** OAuth credential to it — canopy then reads/writes **as th
   definition of done, so a Jira-driven project no longer reads as 0% complete with an inflated
   forecast. Shared by the direct sync and the MCP ingest (§J3a). **"Done" is recognized across the
   common completion columns** — `done/closed/resolved/complete(d)/shipped/deployed/released/live/
-  merged/accepted` (`app/services/burndown.py:is_done_status`), so a board that ends in "Shipped"
-  registers as done everywhere; per-connection configurable done-mapping is the remaining follow-up.
+  merged/accepted` (the name heuristic in `app/services/workflow.py:resolve_category`, used when
+  neither the tracker nor the workflow says), so a board that ends in "Shipped" registers as done
+  everywhere; the status **category** stamped on the task and on each history row is what every
+  view reads.
   Completion is counted **once per task** (last done transition) — a reopened-then-redone task no
   longer double-counts (which had inflated throughput and could drive burndown remaining negative).
 - **API:** `POST /api/v1/connectors/connections/{id}/sync` (full) and `.../sync/incremental` ·
@@ -1273,7 +1355,8 @@ GitHub→PRs); invalid rows are reported and skipped (a bad row never aborts the
 ### J5. Jira sprints & status history
 - **API:** `GET /api/v1/connectors/jira/{id}/boards`, `.../sprints?board_id=`, and
   `POST /api/v1/connectors/jira/{id}/history?issue_key=` (pulls the issue changelog into
-  `TaskStatusHistory`, which feeds the burndown).
+  `TaskStatusHistory`, `source = backfill`, categories stamped; it **replaces** the approximate
+  `sync` rows recorded for that task and keeps rows canopy recorded itself).
 
 ### J6. Read GitHub / Google Drive content
 - **API:** `GET /api/v1/connectors/github/{id}/file?path=`, `.../github/{id}/pulls`,
@@ -1560,7 +1643,8 @@ The quantitative backbone of [`AI_NATIVE_EXECUTION.md`](./AI_NATIVE_EXECUTION.md
 DORA + flow metrics computed from canopy's own signal — the §J8 activity substrate (deploys /
 incidents) and `TaskStatusHistory` (throughput / cycle time) + the board (WIP / aging). Logic is
 pure in `app/services/flow_metrics.py` (unit-tested); the endpoint reuses `build_board`,
-`weekly_throughput`, and `is_done_status` so the numbers match the board / forecast / burndown.
+`weekly_throughput`, and the status **categories** stamped on history so the numbers match the
+board / forecast / burndown.
 
 - **Team-level by design.** There is deliberately **no per-engineer breakdown** — per-individual
   delivery metrics are a Goodhart trap (velocity / diffs / tokens as a target). The response says
@@ -1577,8 +1661,9 @@ pure in `app/services/flow_metrics.py` (unit-tested); the endpoint reuses `build
   `change_fail_rate` (≈ failures ÷ deploys), `recovered_incidents` + `mean`/`median_recovery_hours`
   (incident_open→close paired FIFO — an MTTR proxy).
 - **Flow:** `completed_items`, `throughput_per_week`, `cycle_time_median_days` +
-  `cycle_time_p85_days` (created→done over the window), `wip` (current not-done leaves), `aging_wip`
-  (WIP over the team's cycle-time P85), `sufficient` + `reason`.
+  `cycle_time_p85_days` (**started→done** over the window), `lead_time_median_days`
+  (created→done), `wip` (leaves in an `in_progress` category right now — the backlog is not WIP),
+  `aging_wip` (WIP over the team's cycle-time P85), `sufficient` + `reason`.
 
 ### X2. Not built (deliberate limits)
 - **UI:** a **Delivery** tab on the project cockpit and a **Delivery metrics** panel on the
@@ -1644,8 +1729,10 @@ or excluding any of them — and can **ask Claude to revise the proposal in conv
 the page is open**, watching it update live (§AA5).
 
 ### AA1. Stage a proposal (agent or contributor)
-- **What an item can do:** `task.create/update` (planning fields; Jira-mirrored `status`
-  is **not stageable**; to move work in time stage `duration`, a dependency, or
+- **What an item can do:** `task.create/update` (planning fields, plus `status` — a column of
+  the project's workflow — **on canopy-owned tasks only**: a mirrored task's status belongs to its
+  tracker and is refused; apply writes it through the one status write path, so it lands in the
+  history with the reviewer as author; to move work in time stage `duration`, a dependency, or
   **`constraint_start`** — the "start no earlier than" pin — since a task's `start` is
   computed output the replan overwrites), `dependency.create`, `milestone.create/update`,
   `blocker.create/resolve`, `risk.create/update`, `outcome.create/update`,
@@ -2147,6 +2234,8 @@ markdown ADR) and a Drive folder of checkout and payments docs.
 ## Known UI gaps (currently API/MCP-only)
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
+- **Moving cards, per-column WIP limits and editing the workflow** (§C9) — `POST /tasks/{id}/move`,
+  `PUT .../workflow` / MCP `move_task`, `set_workflow`; the board UI still renders read-only.
 - The **epic doc-field mapping / harvest** setup (§V2/§V3) stays conversational (AI-driven via the
   plugin) — no React wizard (deliberate); the Docs **tab** itself is built (read + add links).
 - Project rename/archive/date edits (B4) — the header has the weekend toggle + health/status/tags

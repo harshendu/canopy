@@ -40,6 +40,31 @@ async def _jira_base_url(session: AsyncSession) -> str | None:
     return str(base) if base else None
 
 
+async def external_urls(session: AsyncSession, task_ids: list[int]) -> dict[int, str]:
+    """Browse URLs of the tracker items behind mirrored tasks, keyed by task id (tasks whose
+    tracker exposes no browsable site are left out)."""
+    if not task_ids:
+        return {}
+    refs = (
+        await session.execute(
+            select(ExternalRef).where(
+                ExternalRef.provider == Provider.jira,
+                ExternalRef.entity_type == "task",
+                col(ExternalRef.entity_id).in_(task_ids),
+            )
+        )
+    ).scalars().all()
+    if not refs:
+        return {}
+    base = await _jira_base_url(session)
+    out: dict[int, str] = {}
+    for ref in refs:
+        url = jira_browse_url(base, ref.external_key or ref.external_id)
+        if url:
+            out[ref.entity_id] = url
+    return out
+
+
 async def collect_task_links(session: AsyncSession, task_id: int) -> TaskExternalLinksRead:
     ref_result = await session.execute(
         select(ExternalRef).where(

@@ -19,14 +19,15 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from sqlmodel import select
+from sqlalchemy import delete
+from sqlmodel import col, select
 
 from app.connectors.base import Connector, SyncResult, register
 from app.connectors.http import request_with_retry
-from app.models.base import Provider, TaskType
+from app.models.base import Provider, StatusSource, TaskType
 from app.models.integration import ExternalRef
 from app.models.project import Project, Task, TaskStatusHistory
-from app.services import ingest, mapping
+from app.services import ingest, mapping, workflow
 
 _FIELDS = ["summary", "status", "issuetype", "parent", "updated", "assignee"]
 _EPIC_TYPES = {"Epic"}
@@ -671,9 +672,19 @@ class JiraConnector(Connector):
                 if data.get("isLast", True) or not page:
                     break
 
+        transitions = self._parse_status_history(histories)
+        if transitions:
+            # The changelog is exact: it replaces the approximate rows sync recorded (dated by the
+            # item's `updated`). Rows canopy itself recorded (a native period) are kept.
+            await self.session.execute(
+                delete(TaskStatusHistory).where(
+                    col(TaskStatusHistory.task_id) == ref.entity_id,
+                    col(TaskStatusHistory.source) == StatusSource.sync.value,
+                )
+            )
         added = 0
-        for transition in self._parse_status_history(histories):
-            changed_at = self._parse_dt(transition["changed_at"])
+        for transition in transitions:
+            changed_at = workflow.parse_remote_time(transition["changed_at"])
             if changed_at is None:
                 continue
             if await self._has_history(ref.entity_id, changed_at, transition["to_status"]):
@@ -683,8 +694,10 @@ class JiraConnector(Connector):
                     task_id=ref.entity_id,
                     from_status=transition["from_status"],
                     to_status=transition["to_status"],
+                    to_category=workflow.resolve_category(transition["to_status"]),
                     changed_at=changed_at,
                     author=transition["author"],
+                    source=StatusSource.backfill.value,
                 )
             )
             added += 1

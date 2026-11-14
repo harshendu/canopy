@@ -193,3 +193,40 @@ async def ensure_task_editable(session: AsyncSession, user: User, task_id: int) 
     if task is None:
         return
     await ensure_project_editable(session, user, task.project_id)
+
+
+async def team_seat_roles(session: AsyncSession, user: User, team_id: int) -> set[TeamRole]:
+    """The director/manager seats the user holds on a team."""
+    eng_ids = await engineer_ids_for_user(session, user)
+    if not eng_ids:
+        return set()
+    rows = (
+        await session.execute(
+            select(TeamMember.role).where(
+                TeamMember.team_id == team_id, col(TeamMember.engineer_id).in_(eng_ids)
+            )
+        )
+    ).scalars().all()
+    return {TeamRole(r) for r in rows}
+
+
+async def team_can_manage(session: AsyncSession, user: User, team_id: int) -> bool:
+    """May change the team's delivery settings and board workflow: a director or manager
+    seat on the team, or an admin."""
+    if user.role == UserRole.admin:
+        return True
+    return bool(await team_seat_roles(session, user, team_id))
+
+
+async def ensure_team_manageable(session: AsyncSession, user: User, team_id: int) -> None:
+    if await team_can_manage(session, user, team_id):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "not_team_lead",
+            "team_id": team_id,
+            "message": "Only the team's directors and managers can change its delivery "
+            "settings; you have read-only visibility.",
+        },
+    )

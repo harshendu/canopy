@@ -41,7 +41,7 @@ from app.models.base import (
     TaskType,
 )
 from app.models.project import Dependency, Holiday, Milestone, Project, Task
-from app.models.proposal import Proposal
+from app.models.proposal import Proposal, ProposalItem
 from app.models.team import Engineer
 from app.schemas.entities import GanttLink, GanttResponse, GanttTask
 from app.schemas.proposal import (
@@ -56,6 +56,7 @@ from app.schemas.proposal import (
     TaskChangeKind,
 )
 from app.services import proposals as proposal_svc
+from app.services import workflow
 from app.services.planner import (
     RollupNode,
     SchedInput,
@@ -88,6 +89,7 @@ class SimTask:
     deadline: date | None
     percent_complete: float
     assignee_engineer_id: int | None
+    status: str | None = None
 
 
 @dataclass
@@ -184,6 +186,19 @@ def _resolve(fields: dict[str, Any], ref_key: str, id_key: str, refs: dict[str, 
     return int(value) if value is not None else None
 
 
+def _apply_status_progress(task: SimTask, fields: dict[str, Any]) -> None:
+    """Mirror `workflow.record_transition`'s progress rule for a staged status (its category
+    is resolved by the builder into `status_category`): entering done sets 100%, leaving done
+    drops a 100% back to 0. Kept in step with apply so preview == post-apply."""
+    category = fields.get("status_category")
+    if category is None:
+        return
+    if category == "done":
+        task.percent_complete = 100.0
+    elif task.percent_complete >= 100.0:
+        task.percent_complete = 0.0
+
+
 def stage_items(
     tasks: list[SimTask],
     deps: list[SimDep],
@@ -230,7 +245,9 @@ def stage_items(
                 deadline=f.get("deadline"),
                 percent_complete=float(f.get("percent_complete") or 0.0),
                 assignee_engineer_id=f.get("assignee_engineer_id"),
+                status=f.get("status"),
             )
+            _apply_status_progress(new, f)
             plan.tasks.append(new)
             task_by_id[new.id] = new
             plan.added_tasks.add(new.id)
@@ -250,6 +267,9 @@ def stage_items(
             for key in _TASK_CLEARABLE_FIELDS:
                 if key in f:
                     setattr(target, key, f[key])
+            if f.get("status") is not None:
+                target.status = str(f["status"])
+                _apply_status_progress(target, f)
             plan.edited_tasks.add(target.id)
             plan.touched_projects.add(target.project_id)
             touch_task(target.id, item.id)
@@ -596,6 +616,37 @@ def preview_project(
 # --------------------------------------------------------------------------- #
 
 
+async def _staged_status_category(
+    session: AsyncSession, item: ProposalItem, fields: dict[str, Any]
+) -> str | None:
+    """The category apply will stamp for a staged task's status: the staged column's, or —
+    for a created task with no status — the default column for its progress. None when the
+    item does not touch status."""
+    if item.action == ProposalAction.create:
+        project = await session.get(Project, int(fields.get("project_id") or 0))
+        if project is None:
+            return None
+        view = await workflow.resolve_workflow(session, project)
+        if fields.get("status") is not None:
+            column = view.column(str(fields["status"]))
+        else:
+            probe = Task(
+                project_id=project.id or 0,
+                name="",
+                percent_complete=float(fields.get("percent_complete") or 0.0),
+            )
+            column = workflow.default_column(view, probe)
+        return column.category if column is not None else None
+    if fields.get("status") is None or item.entity_id is None:
+        return None
+    task = await session.get(Task, item.entity_id)
+    project = await session.get(Project, task.project_id) if task is not None else None
+    if project is None:
+        return None
+    column = (await workflow.resolve_workflow(session, project)).column(str(fields["status"]))
+    return column.category if column is not None else None
+
+
 async def build_proposal_preview(session: AsyncSession, proposal: Proposal) -> ProposalPreview:
     """Simulate applying the proposal's included items and report the plan before vs after,
     together with whether an apply would currently succeed (and why not). Read-only."""
@@ -625,6 +676,10 @@ async def build_proposal_preview(session: AsyncSession, proposal: Proposal) -> P
             fields = proposal_svc.coerced_fields(item)
         except ValueError:
             continue
+        if item.entity_type == ProposalEntity.task:
+            category = await _staged_status_category(session, item, fields)
+            if category is not None:
+                fields["status_category"] = category
         sim_items.append(
             SimItem(
                 id=item.id,
@@ -703,6 +758,7 @@ async def build_proposal_preview(session: AsyncSession, proposal: Proposal) -> P
             deadline=t.deadline,
             percent_complete=t.percent_complete,
             assignee_engineer_id=t.assignee_engineer_id,
+            status=t.status,
         )
         for t in task_rows
         if t.id is not None
