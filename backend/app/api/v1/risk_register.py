@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
-from app.models.base import RiskScope, RiskStatus, utcnow
+from app.models.base import DocLinkEntity, RiskScope, RiskStatus, utcnow
 from app.models.project import Initiative, Project, Task
 from app.models.risk_register import RiskItem
 from app.schemas.entities import (
@@ -18,6 +18,7 @@ from app.schemas.entities import (
     RiskItemRead,
     RiskItemUpdate,
 )
+from app.services import design_docs
 
 router = APIRouter()
 
@@ -127,5 +128,6 @@ async def close_risk(
 async def delete_risk(session: SessionDep, _: PlannerWriter, risk_id: int) -> None:
     item = await session.get(RiskItem, risk_id)
     if item is not None:
+        await design_docs.drop_links_to(session, DocLinkEntity.risk, [risk_id])
         await session.delete(item)
         await session.commit()

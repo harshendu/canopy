@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
 from app.api.deps import ContributorWriter, CurrentUser, PlannerWriter, SessionDep
-from app.models.base import SpecStatus
+from app.models.base import DocLinkEntity, SpecStatus
 from app.models.project import Project, Task
 from app.models.spec import Spec, SpecCriterion
 from app.schemas.entities import (
@@ -23,6 +23,7 @@ from app.schemas.entities import (
     SpecRead,
     SpecUpdate,
 )
+from app.services import design_docs
 from app.services import specs as spec_service
 
 router = APIRouter()
@@ -120,6 +121,7 @@ async def delete_spec(session: SessionDep, _: PlannerWriter, spec_id: int) -> No
         task.spec_id = None
     for criterion in await _criteria(session, spec_id):
         await session.delete(criterion)
+    await design_docs.drop_links_to(session, DocLinkEntity.spec, [spec_id])
     await session.delete(spec)
     await session.commit()
 

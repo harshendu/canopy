@@ -1359,34 +1359,124 @@ export interface SpecDetail extends Spec {
   acceptance_ratio: number;
 }
 
-// --- Document graph (link, don't store) ---
-export type DocKind =
-  | "prd"
-  | "design"
-  | "tech_design"
-  | "architecture"
-  | "release"
-  | "qa"
-  | "runbook"
-  | "other";
+// --- Document graph (link, don't store) + design docs (USER_FLOWS §V5) ---
+/** Any kind is allowed — an open slug backed by the workspace kind catalog. */
+export type DocKind = string;
 export type DocScope = "project" | "initiative" | "task";
-export type DocSource = "jira_epic" | "manual" | "repo" | "drive";
+export type DocSource = "jira_epic" | "manual" | "repo" | "drive" | "agent" | "claude_sync";
 export type DocLinkHealth = "unchecked" | "ok" | "stale" | "broken";
+export type DocProvider =
+  | "claude"
+  | "gdrive"
+  | "github"
+  | "figma"
+  | "confluence"
+  | "jira"
+  | "web";
+export type DocReviewStatus = "draft" | "in_review" | "approved" | "superseded" | "archived";
+export type DocVisibility = "owner" | "users" | "org" | "public" | "unknown";
+export type DocRelation = "basis" | "gate" | "reference";
+export type DocLinkEntity =
+  | "project"
+  | "initiative"
+  | "task"
+  | "decision"
+  | "spec"
+  | "milestone"
+  | "outcome"
+  | "risk"
+  | "retro"
+  | "component";
+export type DocStage =
+  | "frame"
+  | "define"
+  | "design"
+  | "decide"
+  | "plan"
+  | "build"
+  | "release"
+  | "learn"
+  | "other";
 
 export interface DocReference {
   id: number;
-  scope_level: DocScope;
-  scope_id: number;
+  /** The doc's home; null only for a personal doc not filed under anything. */
+  scope_level: DocScope | null;
+  scope_id: number | null;
   kind: DocKind;
   title: string | null;
   url: string;
-  source: DocSource;
+  source: string;
   owner_engineer_id: number | null;
   connection_id: number | null;
   external_field: string | null;
   link_health: DocLinkHealth;
   last_checked_at: string | null;
   created_at: string;
+  provider?: string;
+  external_id?: string | null;
+  format?: string;
+  private_to_user_id?: number | null;
+  visibility?: string;
+  review_status?: DocReviewStatus | null;
+  review_version?: string | null;
+  current_version?: string | null;
+  approved_version?: string | null;
+  approved_by_user_id?: number | null;
+  approved_at?: string | null;
+  summary?: string | null;
+  supersedes_id?: number | null;
+  created_by_user_id?: number | null;
+  updated_at?: string | null;
+}
+
+export interface DocLink {
+  id: number;
+  doc_id: number;
+  entity_type: DocLinkEntity;
+  entity_id: number;
+  relation: DocRelation;
+  pinned_version: string | null;
+  pinned_at: string | null;
+  created_by_user_id: number | null;
+  created_at: string;
+  /** The target's display name. */
+  label: string | null;
+}
+
+/** A doc with its catalog entry and its labelled links. */
+export interface DesignDoc extends DocReference {
+  kind_label: string;
+  stage: DocStage | string;
+  personal: boolean;
+  links: DocLink[];
+}
+
+export interface EntityDoc {
+  link: DocLink;
+  doc: DesignDoc;
+}
+
+export interface DocRegisterResult {
+  doc: DesignDoc;
+  created: boolean;
+}
+
+export interface DocKindDef {
+  key: string;
+  label: string;
+  stage: DocStage | string;
+  expected: boolean;
+  builtin: boolean;
+  sort_order: number;
+  doc_count: number;
+}
+
+export interface DocCoverageKind {
+  kind: string;
+  label: string;
+  stage: string;
+  state: "approved" | "in_review" | "draft" | "linked" | "missing";
 }
 
 export interface DocCoverage {
@@ -1396,6 +1486,9 @@ export interface DocCoverage {
   present: DocKind[];
   missing: DocKind[];
   by_kind: Record<string, number>;
+  expected?: DocCoverageKind[];
+  by_stage?: { stage: string; total: number; approved: number }[];
+  needs_attention?: number;
 }
 
 export interface PullRequest {

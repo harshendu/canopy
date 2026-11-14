@@ -2,8 +2,10 @@ from fastapi import APIRouter, status
 from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
+from app.models.base import DocLinkEntity
 from app.models.project import Milestone
 from app.schemas.entities import MilestoneCreate, MilestoneRead
+from app.services import design_docs
 from app.services.access import ensure_project_editable
 
 router = APIRouter()
@@ -37,5 +39,6 @@ async def delete_milestone(session: SessionDep, user: PlannerWriter, milestone_i
     milestone = await session.get(Milestone, milestone_id)
     if milestone is not None:
         await ensure_project_editable(session, user, milestone.project_id)
+        await design_docs.drop_links_to(session, DocLinkEntity.milestone, [milestone_id])
         await session.delete(milestone)
         await session.commit()

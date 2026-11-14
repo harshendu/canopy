@@ -46,6 +46,8 @@ from app.models.base import (
     CANOPY_OWNER,
     ADRStatus,
     DocScope,
+    DocSource,
+    DocVisibility,
     OutcomeScope,
     ProposalAction,
     ProposalEntity,
@@ -80,7 +82,7 @@ from app.schemas.entities import (
     TaskUpdate,
 )
 from app.schemas.proposal import ProposalReviseRequest
-from app.services import sprint_service, workflow
+from app.services import design_docs, sprint_service, workflow
 from app.services.features import feature_enabled
 from app.services.metadata import normalize_tags
 from app.services.org import project_team_id
@@ -229,7 +231,7 @@ _ALLOWED_FIELDS: dict[tuple[ProposalEntity, ProposalAction], frozenset[str]] = {
         }
     ),
     (ProposalEntity.doc_reference, ProposalAction.create): frozenset(
-        {"scope_level", "scope_id", "url", "kind", "title", "owner_engineer_id"}
+        {"scope_level", "scope_id", "url", "kind", "title", "owner_engineer_id", "visibility"}
     ),
 }
 
@@ -613,6 +615,8 @@ async def _check_create(
             raise ValueError("blocker reason is required")
     elif entity in (ProposalEntity.risk, ProposalEntity.outcome, ProposalEntity.doc_reference):
         await _check_polymorphic_scope(session, entity, fields, projects, scope_level, scope_id)
+        if entity == ProposalEntity.doc_reference:
+            await _check_doc_shareable(session, fields)
     elif entity == ProposalEntity.decision:
         if fields.get("project_id") not in projects:
             raise ValueError("decision project is outside this proposal's scope")
@@ -649,6 +653,19 @@ async def _check_sprint(session: AsyncSession, task: Task, sprint_id: int | None
         raise ValueError(f"sprint {sprint_id} is not a sprint of this task's team")
     if sprint.state == SprintState.completed.value:
         raise ValueError(f"sprint {sprint_id} is completed")
+
+
+async def _check_doc_shareable(session: AsyncSession, fields: dict[str, Any]) -> None:
+    """The sharing rule for a staged doc link: a Claude doc must be shared in Claude before it
+    joins shared work (USER_FLOWS §V5)."""
+    try:
+        info = design_docs.classify(str(fields.get("url") or ""), strict=False)
+        visibility = DocVisibility(str(_jsonable(fields.get("visibility")) or "unknown"))
+        await design_docs.require_shareable(session, info, visibility, fields.get("title"))
+    except design_docs.DocError as exc:
+        raise ValueError(exc.message) from exc
+    except ValueError as exc:
+        raise ValueError(f"invalid doc link: {exc}") from exc
 
 
 async def _check_polymorphic_scope(
@@ -929,23 +946,22 @@ async def _apply_item(
         assert adr.id is not None
         return adr.id
 
-    # doc_reference.create — idempotent per (scope, url), like the harvest path.
-    existing = await session.execute(
-        select(DocReference).where(
-            DocReference.scope_level == DocScope(str(_jsonable(fields["scope_level"]))),
-            DocReference.scope_id == int(fields["scope_id"]),
-            col(DocReference.url) == str(fields["url"]),
-        )
+    # doc_reference.create — the shared register-or-link path: one document is one record, and
+    # a document already tracked elsewhere gets a link to this scope instead of a copy.
+    result = await design_docs.register_core(
+        session,
+        info=design_docs.classify(str(fields["url"]), strict=False),
+        kind=fields.get("kind"),
+        title=fields.get("title"),
+        scope_level=DocScope(str(_jsonable(fields["scope_level"]))),
+        scope_id=int(fields["scope_id"]),
+        source=DocSource.agent,
+        created_by=None,
+        visibility=DocVisibility(str(_jsonable(fields.get("visibility")) or "unknown")),
+        owner_engineer_id=fields.get("owner_engineer_id"),
     )
-    found = existing.scalars().first()
-    if found is not None:
-        assert found.id is not None
-        return found.id
-    doc = DocReference(**fields)
-    session.add(doc)
-    await session.flush()
-    assert doc.id is not None
-    return doc.id
+    assert result.doc.id is not None
+    return result.doc.id
 
 
 _UNSET = object()

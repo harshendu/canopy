@@ -40,6 +40,11 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
   these on demand and caches lightly. **Scoped write (§S):** canopy can *upload an export snapshot*
   (a generated PDF/CSV) into a connected Drive — it stores its own artifacts there but still does
   not own the design docs it reads.
+- **Claude** (claude.ai) owns the **Claude Docs and artifacts** a session publishes — design docs,
+  pages, prototypes, diagrams. Canopy keeps one record per document (link, identity, kind,
+  version, a short summary, review state, links to the work) and **never receives the content**;
+  a Claude session registers and re-checks them (§V5). A Claude doc joins shared work only once
+  it is **shared in Claude** (§V6).
 
 ---
 
@@ -624,8 +629,10 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
   **risk register** (RAID; hidden when `governance.risk` is off). An **External links** section shows the task's links out to
   the systems that own the work: its **tracker item** (Jira, Linear… — named by the tracker's
   label and clickable when the tracker exposes a browsable site), the **GitHub PRs** implementing it (with open/closed state), and its
-  task-scoped **design docs** (GitHub / Drive / Jira / manual, badged by source). Read-only —
-  canopy links, it never stores; doc CRUD lives on the project **Docs** tab (§V).
+  pull requests. A **Design docs** section lists the docs filed under the task or linked to it
+  (provider · format · review status · relation), with **Link a doc** for contributors on
+  their own tasks (§V7); personal docs show only to their owner. Doc CRUD lives on the project
+  **Docs** tab (§V).
 - **API:** `PATCH /api/v1/tasks/{id}` (`tags`, `estimate_optimistic`/`estimate_likely`/
   `estimate_pessimistic`; `TaskRead` returns computed `pert_mean` + `estimate_spread`) ·
   `GET/POST /api/v1/tasks/{id}/blockers` · `GET/POST /api/v1/risks?scope_level=task&scope_id=…` ·
@@ -1878,8 +1885,10 @@ release | qa | runbook | other), a `source` (jira_epic | manual | repo | drive),
 `link_health` (unchecked | ok | stale | broken — checking is a follow-up).
 
 ### V1. List / add / manage references + coverage
-- **API:** `GET /api/v1/docs?scope_level=&scope_id=&kind=` (open read), `POST /api/v1/docs`
-  (planner; validates the scope exists, no FK), `PATCH/DELETE /api/v1/docs/{id}` (planner),
+- **API:** `GET /api/v1/docs?scope_level=&scope_id=&kind=` (open read; docs filed there or
+  linked there, §V5), `POST /api/v1/docs` (planner on the scope, or a contributor on a project —
+  §V7; validates the scope exists, no FK; dedupes into a link, §V5), `PATCH/DELETE
+  /api/v1/docs/{id}` (the doc's writers, §V7),
   `GET /api/v1/docs/coverage?scope_level=&scope_id=` (which **expected** kinds — prd / design /
   tech_design / architecture — are present vs **missing**, rolled up so a project includes its
   tasks and an initiative includes its projects + their tasks; absence of a doc is a signal,
@@ -1911,14 +1920,111 @@ release | qa | runbook | other), a `source` (jira_epic | manual | repo | drive),
 
 ### V4. Not built (deliberate limits)
 - **UI:** a **Docs** tab on the project cockpit and a **Documents** panel on the initiative cockpit
-  list references grouped by kind with coverage badges + an add-link form (the AI-driven *setup* /
-  harvest stays conversational). Built.
-- **No link-health checking** (a HEAD/404 sweep to flag broken/stale links — `link_health`
-  exists but stays `unchecked`), **no Jira attachments** harvest (only fields + remote/
-  description links), and **no write-back** of canopy-added links onto the Jira epic
-  (canopy-local for now).
+  list docs grouped by kind with coverage badges, filters and an add form (§V5); the AI-driven
+  epic *setup* / harvest stays conversational. Built.
+- **No Jira attachments** harvest (only fields + remote/description links), and **no write-back**
+  of canopy-added links onto the Jira epic (canopy-local for now).
 - **AI doc *generation*** (drafting a tech-design from the PRD + ADRs, syncing the architecture
   doc to reality via drift) is a separate future slice, not part of this flow.
+
+### V5. Design docs: register, identity, the open kind catalog **[new]**
+A **design doc** is any document the work runs on — most often made in **Claude**: a Claude Doc,
+or a published artifact (a markdown page, an image page, static HTML with interactive
+illustrations, a prototype) — or a Drive / Figma / Confluence / repo doc. `DocReference` is one
+row per *document*, however many places use it:
+- **Identity.** `app/services/doc_urls.py` (pure) classifies a link by its **exact host**:
+  `provider` (claude | gdrive | github | figma | confluence | jira | web), the provider's
+  `external_id` (a claude.ai artifact id from `/artifact/[<title>-]<id>`, `/code/artifact/<uuid>`,
+  `/public/artifacts/<uuid>`, `preview.claude.ai`; a Drive file id; a repo path…), a `format`
+  hint, and a canonical link (a Claude title slug dropped, an `#anchor` kept). Registration
+  dedupes on provider + id, else the link — a second registration returns the existing record
+  and the new scope gets a **link**, never a copy. Registration accepts https only.
+- **What canopy stores:** link, title, kind, `format` (document | page | prototype | diagram |
+  image | deck | canvas | sheet — an open slug), `current_version` (the source's version label),
+  a ≤2,000-character plain-text `summary`, `visibility`, `review_status` (NULL = an untracked
+  plain link; `draft` once tracked), `supersedes_id`, who registered it. **Never the content** —
+  a session may send a SHA-256 of the exported text (the MCP server hashes it locally) into the
+  version log (`DocRevision`).
+- **Kinds are data, not schema.** `kind` is an open slug (`Threat Model` → `threat_model`); the
+  workspace **kind catalog** (`DocKindDef`, seeded with prd, design, tech_design, architecture,
+  rfc, research, qa, release, runbook, other) gives each kind a label, a **lifecycle stage**
+  (frame | define | design | decide | plan | build | release | learn | other) and an
+  **expected** flag. An unknown kind joins under stage `other`; planners relabel/re-stage it;
+  admins **merge** one kind into another. Coverage and filters read the stage, never the name.
+- **Coverage** (`GET /docs/coverage`) now counts docs *linked* to the scope as well as filed
+  there, ignores superseded / archived / personal docs, takes expected kinds from the catalog,
+  and adds each expected kind's best state (approved | in_review | draft | linked | missing) and
+  counts by stage.
+- **Migration** (`0b1c2d3e4f5a`): `kind`/`source` became VARCHAR (open kinds; sources `agent`,
+  `claude_sync`); existing links were classified; rows pointing at the same document were
+  **merged** into one doc with links (survivor = the broadest home; proposal items re-pointed);
+  each ADR `rfc_url` and spec `source_url` became a doc + a **basis** link (the fields stay,
+  read-only aliases for one release).
+- **API:** `POST /api/v1/docs/register` (201 created / 200 existing; `{doc, created}`) ·
+  `GET /api/v1/docs` (filters: `scope_level`+`scope_id` = filed there **or** linked there,
+  `entity_type`+`entity_id`, `kind`, `stage`, `provider`, `review_status` incl. `untracked`,
+  `personal`) · `GET/PATCH/DELETE /api/v1/docs/{id}` · `POST /api/v1/docs` (the legacy add-link
+  form: a plain link, deduped into a link) · `GET /api/v1/docs/kinds` · `PUT
+  /api/v1/docs/kinds/{key}` (planner) · `POST /api/v1/docs/kinds/{key}/merge` (admin). All gated
+  by `governance.docs`; SSE `docs` events refresh the views.
+- **MCP:** `register_design_doc` (hashes optional `content` locally), `get_design_doc`,
+  `list_design_docs`, `list_doc_kinds`; `add_doc_reference` / `list_doc_references` stay one
+  release as aliases. **Skill:** `tracking-design-docs`.
+- **UI:** the **Docs** tab — filters (status, where it lives, stage), per-doc badges (provider ·
+  format · status · version, "via Claude", "not shared", "limited audience"), expandable summary
+  + "linked to" chips, an **Add doc** form that classifies the link as you type, offers the
+  catalog's kinds with free entry and asks who can open a Claude doc, and a **Kinds** panel
+  (planners: label / stage / expected; admins: merge).
+
+### V6. Personal and shared docs (the sharing rule) **[new]**
+- **Personal** (`private_to_user_id`): anyone — viewers included — can track a doc for their own
+  use; no sharing needed; it may have no home and links only to the owner's **own tasks**
+  (reference). It is invisible to everyone else — planners, admins, and an admin impersonating
+  its owner (one visibility filter, `design_docs.visible_clause`).
+- **Shared:** filed under a home (project / initiative / task) and visible to everyone. **A Claude
+  doc must be shared in Claude** (`visibility` users | org | public): registering it as shared,
+  promoting it, linking it, staging it in a proposal (`doc_reference.create` now takes
+  `visibility`) return **409 `doc_not_shared`** while it is `owner` or `unknown` (a shared
+  record of the same artifact someone already made counts). A doc shared with named people
+  shows a **limited audience** chip. Other providers keep today's behaviour.
+- **Promote:** `POST /api/v1/docs/{id}/promote` `{scope_level, scope_id, visibility?}` — the
+  owner files a personal doc under a home once it is shared; if the same document is already
+  shared, the personal record folds into it (links moved).
+- **UI:** **My docs** on `/me` (track a doc privately; "share with the team" → pick a project +
+  who can open it). **MCP:** `register_design_doc(personal=True)`, `promote_design_doc`.
+
+### V7. Links to the work a doc serves **[new]**
+- `DocLink` (doc ↔ project | initiative | task | decision | spec | milestone | outcome | risk |
+  retro | component) with a **relation**: `basis` (the entity was derived from / decided on the
+  doc — pins `pinned_version` = the doc's current version), `gate` (should not complete until
+  the doc is approved — advisory), `reference` (context). Idempotent per doc + entity.
+- **Who may write:** a planner who may edit the doc's home (ownership rules, §R6; 403
+  `not_initiative_lead`); a **contributor** for a doc they registered under a project or their
+  own task, linking it to **their own tasks** only; a link's **target** must be work the caller
+  may edit — so one PRD can serve two projects without either team editing the other's plan.
+  Viewers track personal docs only.
+- Deleting a task / project / initiative / spec / milestone / outcome / risk drops the links to
+  it; a doc **homed** there moves to another place it is linked to (or goes, with its links and
+  versions) — `design_docs.release_docs_homed_at`, used by `app/services/cascade.py`.
+- **API:** `POST /api/v1/docs/{id}/links` · `PATCH/DELETE /api/v1/docs/links/{id}` ·
+  `GET /api/v1/docs/links?entity_type=&entity_id=` (docs on one entity, with the link).
+  **MCP:** `link_design_doc`, `register_design_doc(links=[…])`.
+- **UI:** a **Design docs** panel (`LinkedDocs`) on the ADR detail (replacing the bare RFC link),
+  the spec card (replacing the bare source link) and the task panel: relation, pinned version
+  vs now ("doc now r14 — re-check"), unlink, and **Link a doc** (pick a project doc, or paste a
+  link to register + link in one step).
+
+### V8. Not built yet (design docs)
+- **Versions, review and approval** (`request-review` / human-only `approve`, the version log
+  beyond registration, session **checks** that write `link_health` / `last_checked_at`,
+  changed-since-approval and behind-pin alerts, `/me` approvals) — the next slice;
+  `review_status` stops at `draft` until then.
+- **Lifecycle wiring** (pins at ADR accept / spec approve / baseline, docs on milestones /
+  outcomes / risks / retros, design-doc tables in exports, freezing an approved version) and the
+  **automation** (a doc-sentinel sweep, the organization artifact sync) — later slices.
+- By design: **no content search, no embedded preview** (canopy never frames or fetches a doc),
+  **no mirrored comment threads** (review conversations stay in Claude), **no automatic
+  registration** (a session or a person registers).
 
 ---
 

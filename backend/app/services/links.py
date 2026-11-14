@@ -12,6 +12,7 @@ from app.connectors.tracker import registered_trackers, tracker_class
 from app.models.base import DocScope, Provider
 from app.models.doc import DocReference
 from app.models.integration import Connection, ExternalRef, PullRequest
+from app.models.user import User
 from app.schemas.entities import (
     DocReferenceRead,
     JiraIssueLink,
@@ -19,6 +20,7 @@ from app.schemas.entities import (
     TaskExternalLinksRead,
     TrackerItemLink,
 )
+from app.services import design_docs
 
 
 def jira_browse_url(base_url: str | None, key: str) -> str | None:
@@ -133,7 +135,9 @@ async def tracker_link(session: AsyncSession, task_id: int) -> TrackerItemLink |
     )
 
 
-async def collect_task_links(session: AsyncSession, task_id: int) -> TaskExternalLinksRead:
+async def collect_task_links(
+    session: AsyncSession, task_id: int, user: User | None = None
+) -> TaskExternalLinksRead:
     tracker = await tracker_link(session, task_id)
     # `jira` is the pre-tracker field, kept for one release (same item when Jira owns it).
     jira = (
@@ -149,12 +153,16 @@ async def collect_task_links(session: AsyncSession, task_id: int) -> TaskExterna
     )
     prs = [PullRequestRead.model_validate(pr) for pr in pr_result.scalars().all()]
 
+    # Docs homed at the task or linked to it; a personal doc only for its owner.
+    linked = await design_docs.doc_ids_linked_to(session, DocScope.task.value, [task_id])
+    visible = (
+        design_docs.visible_clause(user)
+        if user is not None
+        else col(DocReference.private_to_user_id).is_(None)
+    )
     doc_result = await session.execute(
         select(DocReference)
-        .where(
-            DocReference.scope_level == DocScope.task,
-            DocReference.scope_id == task_id,
-        )
+        .where(design_docs.scope_or_link_clause(DocScope.task, task_id, linked), visible)
         .order_by(col(DocReference.id).desc())
     )
     docs = [DocReferenceRead.model_validate(d) for d in doc_result.scalars().all()]

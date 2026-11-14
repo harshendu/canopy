@@ -6,7 +6,6 @@ import type {
   Blocker,
   BlockerCategory,
   BlockerSeverity,
-  DocSource,
   Engineer,
   Sprint,
   Task,
@@ -35,15 +34,9 @@ import { featureOn, useFeatures } from "../lib/useFeatures";
 import { useMoveCard } from "../lib/useMoveCard";
 import { useProjectTeam } from "../lib/useProjectTeam";
 import { Icon } from "./icons";
+import LinkedDocs from "./LinkedDocs";
 import RiskRegister from "./RiskRegister";
 import TagEditor from "./TagEditor";
-
-const DOC_SOURCE_LABEL: Record<DocSource, string> = {
-  jira_epic: "Jira",
-  manual: "manual",
-  repo: "GitHub",
-  drive: "Drive",
-};
 
 const numOrNull = (s: string): number | null => (s.trim() === "" ? null : Number(s));
 
@@ -148,6 +141,18 @@ export default function TaskDetailPanel({
             <h3 className="mb-2 text-sm font-semibold text-slate-700">External links</h3>
             <ExternalLinksSection taskId={taskId} />
           </section>
+
+          {featureOn(features, "governance.docs") && (
+            <section>
+              <LinkedDocs
+                entityType="task"
+                entityId={taskId}
+                projectId={projectId}
+                mayLink={mayContribute}
+                title="Design docs"
+              />
+            </section>
+          )}
 
           {featureOn(features, "tracking.blockers") && (
             <section>
@@ -600,9 +605,8 @@ function ExternalLinksSection({ taskId }: { taskId: number }) {
   if (!data) return <p className="text-xs text-slate-400">Loading…</p>;
 
   const item = trackerItemOf(data);
-  const empty = !item && data.pull_requests.length === 0 && data.docs.length === 0;
-  if (empty)
-    return <p className="text-xs text-slate-400">No linked tracker item, pull requests, or docs.</p>;
+  const empty = !item && data.pull_requests.length === 0;
+  if (empty) return <p className="text-xs text-slate-400">No linked tracker item or pull requests.</p>;
 
   return (
     <div className="space-y-3 text-sm">
@@ -660,31 +664,6 @@ function ExternalLinksSection({ taskId }: { taskId: number }) {
         </div>
       )}
 
-      {data.docs.length > 0 && (
-        <div>
-          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Documents
-          </div>
-          <ul className="space-y-1">
-            {data.docs.map((d) => (
-              <li key={d.id} className="flex items-center gap-2">
-                <a
-                  href={d.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="truncate text-canopy-700 hover:underline"
-                  title={d.url}
-                >
-                  {d.title || d.url}
-                </a>
-                <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-500">
-                  {DOC_SOURCE_LABEL[d.source]}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   );
 }

@@ -27,6 +27,7 @@ const COUNT_LABELS: Record<string, string> = {
   activity_events: "Activity events",
   status_history: "Status history",
   documents: "Documents",
+  doc_links: "Doc links",
 };
 
 export default function DemoData() {

@@ -44,9 +44,14 @@ from app.models.base import (
     BlockerSeverity,
     CriterionStatus,
     DeliveryMethod,
-    DocKind,
+    DocLinkEntity,
+    DocLinkHealth,
+    DocRelation,
+    DocReviewStatus,
     DocScope,
     DocSource,
+    DocStage,
+    DocVisibility,
     LeadershipNoteKind,
     LeadershipNoteStatus,
     LeadershipScope,
@@ -74,7 +79,7 @@ from app.models.base import (
     TrackingMode,
     utcnow,
 )
-from app.models.doc import DocReference
+from app.models.doc import DocLink, DocReference, DocRevision
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import (
     Connection,
@@ -115,14 +120,21 @@ from app.models.spec import Spec, SpecCriterion
 from app.models.sprint import Sprint
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
+from app.services import doc_kinds, sprint_service, tracker_links, tracker_sync, workflow
 from app.services import proposals as proposal_svc
-from app.services import sprint_service, tracker_links, tracker_sync, workflow
 from app.services import sprints as sprint_metrics
+from app.services.doc_urls import classify_doc_url
 from app.services.org import team_project_ids
 from app.services.planner import reschedule_project
 from app.services.scenario_engine import snapshot_live_into_scenario
 from app.services.seed import catalog
-from app.services.seed.catalog import Dataset, ProjectSpec, ProposalItemSpec, ProposalSpec
+from app.services.seed.catalog import (
+    Dataset,
+    DocSpec,
+    ProjectSpec,
+    ProposalItemSpec,
+    ProposalSpec,
+)
 from app.services.seed.ecommerce import ECOMMERCE
 
 M = TypeVar("M", bound=SQLModel)
@@ -457,10 +469,7 @@ async def _build_initiative_extras(session: AsyncSession, refs: _Refs) -> None:
                 target_resolution_date=_weeks(today, r.target_weeks) if r.target_weeks else None,
             ))
         for d in spec.docs:
-            await _add(session, DocReference(
-                scope_level=DocScope.initiative, scope_id=iid, kind=DocKind(d.kind),
-                title=d.title, url=d.url, source=DocSource(d.source),
-            ))
+            await _add_doc(session, refs, d, DocScope.initiative, iid)
 
 
 # --------------------------------------------------------------------------- #
@@ -535,10 +544,10 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
     comps = await _build_project_arch(session, refs, spec, pid)
     adrs = await _build_project_adrs(session, refs, spec, pid, comps)
     await _build_project_drift(session, spec, pid, comps)
-    await _build_project_specs(session, refs, spec, pid, adrs)
+    specs = await _build_project_specs(session, refs, spec, pid, adrs)
     await _build_project_risk(session, refs, spec, pid)
     await _build_project_outcomes(session, refs, spec, pid)
-    await _build_project_docs(session, refs, spec, pid)
+    await _build_project_docs(session, refs, spec, pid, adrs, specs)
     await _build_project_blockers(session, refs, spec)
     await _build_project_retro(session, refs, spec, pid, comps)
     await _build_project_draft(session, spec, pid)
@@ -649,7 +658,8 @@ async def _build_project_drift(
 async def _build_project_specs(
     session: AsyncSession, refs: _Refs, spec: ProjectSpec, pid: int,
     adrs: dict[str, ArchitectureDecision],
-) -> None:
+) -> dict[str, Spec]:
+    built: dict[str, Spec] = {}
     for s in spec.specs:
         adr = adrs.get(s.adr_title) if s.adr_title else None
         spec_row = await _add(session, Spec(
@@ -657,6 +667,7 @@ async def _build_project_specs(
             out_of_scope=s.out_of_scope, status=SpecStatus(s.status),
             owner_engineer_id=refs.eng(s.owner), adr_id=adr.id if adr else None,
             source_url=s.source_url))
+        built[s.title] = spec_row
         for i, c in enumerate(s.criteria):
             await _add(session, SpecCriterion(
                 spec_id=_req(spec_row.id), text=c.text, status=CriterionStatus(c.status),
@@ -666,6 +677,7 @@ async def _build_project_specs(
             if task is not None:
                 task.spec_id = spec_row.id
         await session.flush()
+    return built
 
 
 async def _build_project_risk(
@@ -709,9 +721,51 @@ async def _build_project_outcomes(
             target_date=_weeks(today, o.target_weeks), owner_engineer_id=refs.eng(o.owner)))
 
 
+async def _add_doc(
+    session: AsyncSession, refs: _Refs, d: DocSpec, scope_level: DocScope, scope_id: int
+) -> DocReference:
+    """One seeded document: classified from its URL like a registration, with its review
+    state, version log and (for a personal doc) its owner."""
+    info = classify_doc_url(d.url, strict=False)
+    kind = await doc_kinds.ensure_kind(session, d.kind)
+    if d.kind_stage:
+        await doc_kinds.update_kind(session, kind, stage=DocStage(d.kind_stage))
+    owner = refs.users.get(d.personal_for) if d.personal_for else None
+    approved = d.review_status == DocReviewStatus.approved.value
+    doc = await _add(session, DocReference(
+        scope_level=scope_level, scope_id=scope_id, kind=kind, title=d.title, url=info.url,
+        source=DocSource(d.source).value, provider=info.provider.value,
+        external_id=info.external_id,
+        format=d.format or (info.format_hint.value if info.format_hint else "other"),
+        private_to_user_id=owner.id if owner is not None else None,
+        visibility=d.visibility or DocVisibility.unknown.value,
+        review_status=DocReviewStatus(d.review_status).value if d.review_status else None,
+        current_version=d.version,
+        approved_version=d.approved_version if approved else None,
+        approved_at=utcnow() - timedelta(days=12) if approved else None,
+        summary=d.summary,
+        link_health=DocLinkHealth.ok if d.version else DocLinkHealth.unchecked,
+        last_checked_at=utcnow() - timedelta(days=2) if d.version else None,
+    ))
+    versions = [v for v in (d.approved_version, d.version) if v]
+    for i, version in enumerate(dict.fromkeys(versions)):
+        await _add(session, DocRevision(
+            doc_id=_req(doc.id), version=version, source="session",
+            change_summary="Approved for build" if version == d.approved_version else
+            ("Revised after review feedback" if i else None),
+        ))
+    return doc
+
+
 async def _build_project_docs(
-    session: AsyncSession, refs: _Refs, spec: ProjectSpec, pid: int
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec, pid: int,
+    adrs: dict[str, ArchitectureDecision], specs: dict[str, Spec],
 ) -> None:
+    milestones = {
+        m.name: m for m in (
+            await session.execute(select(Milestone).where(Milestone.project_id == pid))
+        ).scalars().all()
+    }
     for d in spec.docs:
         scope_level = DocScope.project
         scope_id = pid
@@ -719,9 +773,30 @@ async def _build_project_docs(
             task = refs.tasks[spec.key].get(d.task_name)
             if task is not None:
                 scope_level, scope_id = DocScope.task, _req(task.id)
-        await _add(session, DocReference(
-            scope_level=scope_level, scope_id=scope_id, kind=DocKind(d.kind), title=d.title,
-            url=d.url, source=DocSource(d.source)))
+        doc = await _add_doc(session, refs, d, scope_level, scope_id)
+        for link in d.links:
+            target_id: int | None = None
+            if link.entity_type == DocLinkEntity.task:
+                linked_task = refs.tasks[spec.key].get(link.name)
+                target_id = linked_task.id if linked_task is not None else None
+            elif link.entity_type == DocLinkEntity.decision:
+                adr = adrs.get(link.name)
+                target_id = adr.id if adr is not None else None
+            elif link.entity_type == DocLinkEntity.spec:
+                spec_row = specs.get(link.name)
+                target_id = spec_row.id if spec_row is not None else None
+            elif link.entity_type == DocLinkEntity.milestone:
+                milestone = milestones.get(link.name)
+                target_id = milestone.id if milestone is not None else None
+            if target_id is None:
+                continue
+            basis = link.relation == DocRelation.basis.value
+            pin = (d.approved_version or d.version) if basis else None
+            await _add(session, DocLink(
+                doc_id=_req(doc.id), entity_type=link.entity_type, entity_id=target_id,
+                relation=DocRelation(link.relation).value, pinned_version=pin,
+                pinned_at=utcnow() - timedelta(days=12) if pin else None,
+            ))
 
 
 async def _build_project_blockers(
@@ -1155,6 +1230,7 @@ async def load_seed_data(
     ``dataset`` picks the narrative (default: the e-commerce one); see ``DATASETS`` in the
     package init."""
     refs = _Refs(ds=dataset or ECOMMERCE)
+    await doc_kinds.ensure_builtins(session)  # the kind catalog (a reset wipes it)
     await _build_users(session, refs)
     await _build_team(session, refs)
     await _build_teams(session, refs)
@@ -1193,6 +1269,6 @@ async def seed_summary(session: AsyncSession) -> dict[str, int]:
         "outcomes": Outcome, "blockers": Blocker, "retrospectives": Retrospective,
         "draft_plans": DraftPlan, "connections": Connection, "scenarios": Scenario,
         "activity_events": ActivityEvent, "status_history": TaskStatusHistory,
-        "documents": DocReference, "proposals": Proposal,
+        "documents": DocReference, "doc_links": DocLink, "proposals": Proposal,
     }
     return {name: await _count(session, model) for name, model in models.items()}

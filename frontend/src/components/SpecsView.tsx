@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
+import LinkedDocs from "./LinkedDocs";
 import type {
   CriterionStatus,
   Spec,
@@ -160,11 +161,15 @@ function SpecDetailPanel({
       <p className="text-slate-700">{d.problem}</p>
       {d.context && <p className="text-xs text-slate-500">Context: {d.context}</p>}
       {d.out_of_scope && <p className="text-xs text-slate-500">Out of scope: {d.out_of_scope}</p>}
-      {d.source_url && (
-        <a href={d.source_url} target="_blank" rel="noreferrer" className="text-xs text-canopy-700 underline">
-          source doc ↗
-        </a>
-      )}
+      <LinkedDocs
+        entityType="spec"
+        entityId={specId}
+        projectId={projectId}
+        mayLink={mayPlan}
+        legacyUrl={d.source_url}
+        title="Source docs"
+        defaultRelation="basis"
+      />
 
       <div className="flex items-center gap-2">
         <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">

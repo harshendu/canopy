@@ -4,6 +4,7 @@ from sqlmodel import col, select
 from app.api.deps import (
     ContributorWriter,
     CurrentUser,
+    Impersonator,
     PlannerWriter,
     SessionDep,
     current_engineer,
@@ -97,14 +98,15 @@ async def get_task(session: SessionDep, _: CurrentUser, task_id: int) -> Task:
 
 @router.get("/{task_id}/links", response_model=TaskExternalLinksRead)
 async def get_task_links(
-    session: SessionDep, _: CurrentUser, task_id: int
+    session: SessionDep, user: CurrentUser, impersonator: Impersonator, task_id: int
 ) -> TaskExternalLinksRead:
     """A task's external resource links: its Jira issue, the GitHub PRs implementing it, and the
     design docs (GitHub/Drive) scoped to it. Canopy links out; it never stores the resources."""
     task = await session.get(Task, task_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    return await collect_task_links(session, task_id)
+    # an impersonating admin never sees the impersonated person's personal docs
+    return await collect_task_links(session, task_id, None if impersonator else user)
 
 
 @router.get("/{task_id}/history", response_model=list[TaskStatusHistoryRead])

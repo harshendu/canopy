@@ -162,7 +162,7 @@ async def test_flagship_task_surfaces_external_links(db_session):
     # The GitHub PRs that implement it.
     assert {pr.number for pr in links.pull_requests} == {412, 415}
     # A design doc that lives in GitHub (source=repo).
-    assert any(d.source.value == "repo" for d in links.docs)
+    assert any(d.source == "repo" for d in links.docs)
 
 
 @pytest.mark.asyncio
@@ -317,8 +317,20 @@ def _check_references(ds: Dataset) -> None:
             assert sp.adr_title is None or sp.adr_title in {a.title for a in p.adrs}
         for owned in (*p.risks, *p.mitigations, *p.outcomes):
             eng(owned.owner)
+        adr_titles = {a.title for a in p.adrs}
+        spec_titles = {sp.title for sp in p.specs}
+        milestone_names = {m.name for m in p.milestones}
         for doc in p.docs:
             assert doc.task_name is None or doc.task_name in names
+            assert doc.personal_for is None or doc.personal_for in users, doc.title
+            for link in doc.links:
+                pool = {
+                    "task": names,
+                    "decision": adr_titles,
+                    "spec": spec_titles,
+                    "milestone": milestone_names,
+                }[link.entity_type]
+                assert link.name in pool, (p.key, doc.title, link)
         for b in p.blockers:
             assert b.task_name in names
             eng(b.owner)

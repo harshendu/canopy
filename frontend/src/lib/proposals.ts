@@ -139,12 +139,14 @@ const ENTITY_FIELDS: Partial<Record<ProposalEntityType, Record<string, FieldMeta
     },
   },
   doc_reference: {
-    kind: {
-      label: "Doc type",
-      kind: "enum",
-      options: ["prd", "design", "tech_design", "architecture", "release", "qa", "runbook", "other"],
-    },
+    // Doc kinds are an open catalog (any kind is allowed), so the reviewer types one.
+    kind: { label: "Doc type", kind: "text" },
     title: { label: "Title", kind: "text" },
+    visibility: {
+      label: "Shared in Claude with",
+      kind: "enum",
+      options: ["org", "users", "public", "owner", "unknown"],
+    },
   },
 };
 

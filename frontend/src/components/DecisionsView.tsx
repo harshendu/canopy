@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
+import LinkedDocs from "./LinkedDocs";
 import type {
   ADR,
   ADRCommentKind,
@@ -405,14 +406,15 @@ function AdrDetailPanel({
           </ul>
         </div>
       )}
-      {adr.rfc_url && (
-        <div className="text-xs">
-          <span className="text-slate-400">RFC: </span>
-          <a href={adr.rfc_url} className="text-canopy-700 underline" target="_blank" rel="noreferrer">
-            {adr.rfc_url}
-          </a>
-        </div>
-      )}
+      <LinkedDocs
+        entityType="decision"
+        entityId={adrId}
+        projectId={projectId}
+        mayLink={mayPlan}
+        legacyUrl={adr.rfc_url}
+        title="Design docs behind this decision"
+        defaultRelation="basis"
+      />
 
       {/* Lifecycle control — planners only */}
       {mayPlan && (
