@@ -52,6 +52,10 @@ export type IconName =
   | "chevron-left"
   | "chevron-right"
   | "chevron-down"
+  | "chevron-up"
+  | "grip"
+  | "lock"
+  | "plus"
   | "sidebar"
   | "menu"
   | "arrow-right"
@@ -334,6 +338,29 @@ const PATHS: Record<IconName, ReactNode> = {
   "chevron-left": <path d="m15 18-6-6 6-6" />,
   "chevron-right": <path d="m9 18 6-6-6-6" />,
   "chevron-down": <path d="m6 9 6 6 6-6" />,
+  "chevron-up": <path d="m18 15-6-6-6 6" />,
+  grip: (
+    <>
+      <circle cx="9" cy="6" r="1" />
+      <circle cx="15" cy="6" r="1" />
+      <circle cx="9" cy="12" r="1" />
+      <circle cx="15" cy="12" r="1" />
+      <circle cx="9" cy="18" r="1" />
+      <circle cx="15" cy="18" r="1" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </>
+  ),
+  plus: (
+    <>
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </>
+  ),
   sidebar: (
     <>
       <rect width="18" height="18" x="3" y="3" rx="2" />

@@ -612,7 +612,10 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
 ### C1a. Task detail panel — owner, estimates, tags, progress, blockers, risks, external links **[updated]**
 - **UI:** click a task bar in the **Gantt** (or a card on the **Board**) to open a right-side
   **detail panel**. A planner-only **Delete** button sits next to the panel's close (✕) — deletes
-  the task after a confirm, cascading its dependencies/history/blockers (see §C1). It edits the task's **owner** (an "Owner" select over the team's engineers —
+  the task after a confirm, cascading its dependencies/history/blockers (see §C1). Its **status**
+  is a select over the workflow's columns for a canopy-owned task (a board move, §C9.3 — recorded
+  in the history), or a locked "Status owned by <tracker>" chip with a link for a mirrored one. It
+  edits the task's **owner** (an "Owner" select over the team's engineers —
   the click-through home of individual ownership), **progress** + **duration**, a **3-point
   estimate** (aggressive / practical / buffered, with the computed PERT mean + spread + a
   confidence badge), **tags**, the task's **blockers** (raise/resolve with category + severity +
@@ -762,12 +765,15 @@ card's status differs.
   **stamped on each history row** so a later rename or remap never rewrites the past.
 
 ### C9.2 Read the board
-- **UI:** project → **Board** tab → the workflow's columns **in order, empty ones included**
-  (a status found on a card that the workflow doesn't name — e.g. a mirrored status — shows as an
-  extra column after its category's columns). Cards are **ranked** within a column; each shows its
-  key, name, **age in status**, the owner's initials chip and, for a mirrored card, its tracker.
-  Columns show WIP vs their limit; a card **aging** beyond the team's **cycle-time P85** is
-  highlighted amber.
+- **UI:** project → **Execution → Board** → the workflow's columns **in order, empty ones
+  included** (a status found on a card that the workflow doesn't name — e.g. a mirrored status —
+  shows as an extra column after its category's columns; Cancelled starts collapsed). Cards are
+  **ranked** within a column; each shows its key, name, **age in status** (amber "aging" beyond
+  the team's **cycle-time P85**), blocked / critical-path flags, deadline, tags, the owner's
+  initials chip and, for a mirrored card, a lock + its tracker with a link out. Column headers
+  show WIP vs the limit (red when over). **Toolbar:** owner / tag / blocked / aging filters,
+  **swimlanes** (none · owner · parent), the cycle-time P85, and — for planners — **Edit
+  columns**. A mirrored project says so above the board.
 - **API:** `GET /api/v1/projects/{id}/board` — lanes (`status`, `category`, `position`, `wip`,
   `wip_limit`, `over_limit`, `in_workflow`) with cards (`key`, `status_owner`, `movable`,
   `external_url`, `rank`, `blocked`, `is_critical`, `deadline`, `tags`, `age_days`, `aging`), plus
@@ -779,6 +785,16 @@ card's status differs.
   created → done (§X).
 
 ### C9.3 Move a card
+- **UI:** **drag** a card (mouse/pen after a few pixels; touch with press-and-hold; keyboard:
+  focus the grip, Space/Enter to lift, arrows to move between and within columns, Space to drop,
+  Escape to cancel — announced to screen readers) within its column (reorder) or to another
+  column (status change); or use the card's **Move to…** menu, or the **status select** in the
+  task panel (§C1a — a mirrored task shows a locked "Status owned by <tracker>" chip with a link
+  instead). Moves are **optimistic** (the card moves at once, rolls back with the server's message
+  on a refusal; a WIP warning shows a non-blocking notice). A mirrored card can be reordered but
+  not dropped into another column. **Add card** at a column's foot (planners) creates a task with
+  that status. Move affordances follow who may move what (below) and hide when
+  `tracking.native` is off.
 - **API:** `POST /api/v1/tasks/{id}/move` `{to_status?, after_task_id?, before_task_id?,
   position: top|bottom, expected_status?}` · **MCP:** `move_task`. Omitting `to_status` only
   reorders (allowed for mirrored cards too — rank is canopy's). Every status change goes through
@@ -799,9 +815,16 @@ card's status differs.
   never placed sorts by creation order.
 - **Live refresh:** creating or moving a task publishes a `board` event (§K).
 
-### C9.4 Not built yet
-- The board UI is still read-only: moving, the per-column WIP limits and the workflow editor are
-  API/MCP-only until the drag-and-drop board lands (see Known UI gaps).
+### C9.4 Edit the columns (workflow editor)
+- **UI:** Board → **Edit columns** (planners) → a panel showing where the columns come from
+  ("inherited from the team / workspace", or this project's own), with each column's name,
+  category and WIP limit, reorder, add/remove (removing a column that still holds cards asks
+  where they go → `move_tasks_to`), the WIP enforcement, **Save** (`PUT
+  /projects/{id}/workflow`) and **Use team/workspace columns** (`DELETE`, when the project has
+  its own). Server validation messages (e.g. a missing done column) show inline.
+- Built with `@dnd-kit` (lazy-loaded with the board); pure helpers (optimistic move, `canMove`,
+  swimlanes, filters, drop placement, editor validation) in `frontend/src/lib/board.ts` /
+  `lib/workflow.ts`, unit-tested with Vitest.
 
 ---
 
@@ -2322,8 +2345,6 @@ markdown ADR) and a Drive folder of checkout and payments docs.
 ## Known UI gaps (currently API/MCP-only)
 These flows work via the API and the Claude plugin but have no React form yet — candidates for the UI
 backlog:
-- **Moving cards, per-column WIP limits and editing the workflow** (§C9) — `POST /tasks/{id}/move`,
-  `PUT .../workflow` / MCP `move_task`, `set_workflow`; the board UI still renders read-only.
 - **Teams' delivery methods and sprints** (§C11) — the team board, sprint planning / start /
   complete, the sprint report and velocity are API/MCP-only (`get_board(team_id)`, `plan_sprint`,
   `get_velocity`, …) until the team page lands.

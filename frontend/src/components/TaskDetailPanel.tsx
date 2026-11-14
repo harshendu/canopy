@@ -10,9 +10,25 @@ import type {
   Engineer,
   Task,
   TaskExternalLinks,
+  WorkflowRead,
 } from "../api/types";
+import {
+  CANOPY_OWNER,
+  boardQueryKey,
+  canMove,
+  fold,
+  trackerName,
+  trackingFailure,
+  viewerForRole,
+  workflowPath,
+  workflowQueryKey,
+} from "../lib/board";
 import { spreadConfidence, spreadTone } from "../lib/estimates";
+import { canContribute, isPlanner } from "../lib/permissions";
+import { useCurrentUser } from "../lib/useCurrentUser";
 import { featureOn, useFeatures } from "../lib/useFeatures";
+import { useMoveCard } from "../lib/useMoveCard";
+import { Icon } from "./icons";
 import RiskRegister from "./RiskRegister";
 import TagEditor from "./TagEditor";
 
@@ -79,10 +95,9 @@ export default function TaskDetailPanel({
             </div>
             <h2 className="text-lg font-semibold">{task.data?.name ?? `Task #${taskId}`}</h2>
             {task.data && (
-              <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
-                {task.data.status && (
-                  <span className="rounded bg-slate-100 px-1.5 py-0.5">{task.data.status}</span>
-                )}
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                {task.data.key && <span className="font-mono text-slate-400">{task.data.key}</span>}
+                <TaskStatusField task={task.data} projectId={projectId} mayPlan={mayPlan} />
                 {task.data.is_critical ? (
                   <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">critical</span>
                 ) : (
@@ -141,6 +156,142 @@ export default function TaskDetailPanel({
           )}
         </div>
       </aside>
+    </>
+  );
+}
+
+/** The task's status. A canopy-owned task changes status here through the same move as the
+ *  board (`POST /tasks/{id}/move`, guarded by the status it was read with — never a PATCH); a
+ *  mirrored task's status belongs to its tracker, so it shows locked with a link out. */
+function TaskStatusField({
+  task,
+  projectId,
+  mayPlan,
+}: {
+  task: Task;
+  projectId: number;
+  mayPlan: boolean;
+}) {
+  const features = useFeatures();
+  const { data: me } = useCurrentUser();
+  const [failure, setFailure] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const source = { kind: "project", id: projectId } as const;
+  const canopyOwned = task.status_owner === CANOPY_OWNER;
+
+  const engineers = useQuery({
+    queryKey: ["engineers"],
+    queryFn: () => api.get<Engineer[]>("/team/engineers"),
+  });
+  const myEngineerId = me ? (engineers.data?.find((e) => e.user_id === me.id)?.id ?? null) : null;
+  const viewer = viewerForRole(
+    {
+      can_plan: mayPlan,
+      engineer_id: myEngineerId,
+      native_enabled: featureOn(features, "tracking.native"),
+    },
+    me ? { planner: isPlanner(me.role), contributor: canContribute(me.role) } : null,
+  );
+  const editable =
+    task.type !== "summary" &&
+    canopyOwned &&
+    canMove({ movable: true, assignee_engineer_id: task.assignee_engineer_id }, viewer, {
+      changesStatus: true,
+    });
+
+  const workflow = useQuery({
+    queryKey: workflowQueryKey(source),
+    queryFn: () => api.get<WorkflowRead>(workflowPath(source)),
+    enabled: editable,
+  });
+  // Shared with the External links section below — the mirrored item's page.
+  const links = useQuery({
+    queryKey: ["task-links", task.id],
+    queryFn: () => api.get<TaskExternalLinks>(`/tasks/${task.id}/links`),
+    enabled: !canopyOwned,
+  });
+  const move = useMoveCard(boardQueryKey(source), {
+    onSuccess: (res) =>
+      setWarning(
+        res.warnings.includes("wip_limit_exceeded")
+          ? `“${res.task.status}” is now over its WIP limit.`
+          : null,
+      ),
+    onError: (err) => setFailure(trackingFailure(err).message),
+  });
+
+  if (task.type === "summary") return null;
+
+  if (!canopyOwned) {
+    const tracker = trackerName(task.status_owner);
+    const url = links.data?.jira?.url;
+    return (
+      <>
+        <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">
+          <Icon name="lock" size={11} />
+          {task.status ?? "no status"}
+        </span>
+        <span className="inline-flex items-center gap-1 rounded bg-blue-50 px-1.5 py-0.5 text-blue-700">
+          Status owned by {tracker}
+          {url && (
+            <a href={url} target="_blank" rel="noreferrer" className="font-medium hover:underline">
+              · open in {tracker} ↗
+            </a>
+          )}
+        </span>
+      </>
+    );
+  }
+
+  if (!editable) {
+    return task.status ? (
+      <span className="rounded bg-slate-100 px-1.5 py-0.5">{task.status}</span>
+    ) : null;
+  }
+
+  const columns = workflow.data?.columns ?? [];
+  const current = columns.find((c) => fold(c.name) === fold(task.status ?? ""))?.name;
+  return (
+    <>
+      <label className="inline-flex items-center">
+        <span className="sr-only">Status</span>
+        <select
+          value={current ?? task.status ?? ""}
+          disabled={move.isPending || !workflow.data}
+          onChange={(e) => {
+            setFailure(null);
+            setWarning(null);
+            move.mutate({
+              taskId: task.id,
+              projectId,
+              to_status: e.target.value,
+              expected_status: task.status ?? "",
+            });
+          }}
+          className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-700 focus:border-canopy-500 focus:outline-none disabled:opacity-60"
+        >
+          {!current && (
+            <option value={task.status ?? ""} disabled>
+              {task.status ? `${task.status} (not a column)` : "No status"}
+            </option>
+          )}
+          {columns.map((c) => (
+            <option key={c.name} value={c.name}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {failure && (
+        <span role="alert" className="basis-full text-red-700">
+          {failure}
+        </span>
+      )}
+      {warning && (
+        <span role="status" className="basis-full text-amber-700">
+          {warning}
+        </span>
+      )}
     </>
   );
 }

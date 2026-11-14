@@ -184,6 +184,13 @@ export interface Task {
   is_critical: boolean;
   total_float: number;
   status: string | null;
+  /** What the status means — every flow metric reads this, never the display name (§C9). */
+  status_category: StatusCategory | null;
+  /** "canopy", or the provider key of the tracker that owns this task's status (e.g. "jira").
+   *  Only canopy-owned status changes in canopy — via a move, never a PATCH. */
+  status_owner: string;
+  /** Human key: `<prefix>-<n>` for canopy-owned work, the tracker's key when mirrored. */
+  key: string | null;
   sprint: string | null;
   deadline: string | null;
   assignee_engineer_id: number | null;
@@ -709,6 +716,17 @@ export interface RetrospectiveDetail extends Retrospective {
   comments: RetrospectiveComment[];
 }
 
+// --- Kanban board, moves + workflows (USER_FLOWS §C9) ---
+/** What a status means: `done` is throughput, `cancelled` leaves WIP but never counts as
+ *  throughput, `in_progress` is started work, `todo` is not started. */
+export type StatusCategory = "todo" | "in_progress" | "done" | "cancelled";
+/** `warn` lets a move into a full column through (with a warning); `block` refuses it. */
+export type WipEnforcement = "off" | "warn" | "block";
+/** `native`: canopy owns every task's status; `mirrored`: a tracker owns the tasks it knows. */
+export type TrackingMode = "native" | "mirrored";
+
+/** A card. The fields after `aging` are optional: the scenario board renders a projection
+ *  that may omit them (the live board always sends them — see `lib/board.ts:normalizeBoard`). */
 export interface BoardTaskItem {
   id: number;
   name: string;
@@ -717,13 +735,45 @@ export interface BoardTaskItem {
   is_done: boolean;
   age_days: number;
   aging: boolean;
+  project_id?: number | null;
+  key?: string | null;
+  status_category?: StatusCategory | null;
+  /** "canopy", or the provider key of the tracker that owns this card's status. */
+  status_owner?: string;
+  /** The card's status can be changed in canopy (it is canopy-owned). */
+  movable?: boolean;
+  /** The tracker item behind a mirrored card. */
+  external_url?: string | null;
+  rank?: number;
+  parent_id?: number | null;
+  blocked?: boolean;
+  is_critical?: boolean;
+  deadline?: string | null;
+  tags?: string[];
 }
 
+/** A column: the workflow's columns arrive in order, empty ones included. `in_workflow=false`
+ *  marks an extra column for a status the workflow doesn't name (e.g. a mirrored status). */
 export interface BoardLane {
   status: string;
   is_done: boolean;
   wip: number;
   tasks: BoardTaskItem[];
+  category?: StatusCategory | null;
+  position?: number;
+  wip_limit?: number | null;
+  over_limit?: boolean;
+  in_workflow?: boolean;
+}
+
+/** What the caller may do on the board. */
+export interface BoardViewer {
+  /** May move any canopy-owned card and edit the workflow. */
+  can_plan: boolean;
+  /** May move cards assigned to this engineer, or pull an unassigned one. */
+  engineer_id: number | null;
+  /** Feature `tracking.native` (canopy-owned status) is on. */
+  native_enabled: boolean;
 }
 
 export interface BoardResponse {
@@ -731,6 +781,65 @@ export interface BoardResponse {
   lanes: BoardLane[];
   cycle_time_p85_days: number | null;
   aging_count: number;
+  mode?: TrackingMode;
+  wip_enforcement?: WipEnforcement;
+  viewer?: BoardViewer | null;
+}
+
+/** `POST /tasks/{id}/move`: omit `to_status` to only reorder. Placement is between
+ *  `after_task_id` and `before_task_id` (either may be omitted), else the `position` end. */
+export interface TaskMoveRequest {
+  to_status?: string;
+  after_task_id?: number;
+  before_task_id?: number;
+  position?: "top" | "bottom";
+  /** Guards a lost update: 409 `stale` when the card's status no longer matches. */
+  expected_status?: string;
+}
+
+export interface TaskMoveResponse {
+  task: Task;
+  changed: boolean;
+  /** e.g. `wip_limit_exceeded` (enforcement `warn` let an over-limit move through). */
+  warnings: string[];
+}
+
+/** Where a workflow's columns are defined. */
+export type WorkflowScope = "project" | "team" | "template" | "default";
+
+export interface WorkflowColumn {
+  name: string;
+  category: StatusCategory;
+  position: number;
+  wip_limit: number | null;
+}
+
+export interface WorkflowRead {
+  id: number | null;
+  scope: WorkflowScope;
+  team_id: number | null;
+  project_id: number | null;
+  name: string;
+  wip_enforcement: WipEnforcement;
+  /** True when the asked-for project/team has no workflow of its own and uses this one. */
+  inherited: boolean;
+  columns: WorkflowColumn[];
+}
+
+export interface WorkflowColumnInput {
+  name: string;
+  category: StatusCategory;
+  wip_limit?: number | null;
+  /** Set to rename an existing column; its canopy-owned tasks follow it. */
+  previous_name?: string | null;
+}
+
+export interface WorkflowUpdate {
+  name: string;
+  wip_enforcement: WipEnforcement;
+  columns: WorkflowColumnInput[];
+  /** Where the canopy-owned tasks of a removed column go: `{"Old column": "New column"}`. */
+  move_tasks_to: Record<string, string>;
 }
 
 export interface Blocker {

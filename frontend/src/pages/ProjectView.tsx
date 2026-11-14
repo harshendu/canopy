@@ -48,7 +48,7 @@ import { featureOn, useFeatures } from "../lib/useFeatures";
 
 // Heavy (React Flow / Recharts) — code-split.
 const DependencyGraph = lazy(() => import("../components/DependencyGraph"));
-const FlowBoard = lazy(() => import("../components/FlowBoard"));
+const KanbanBoard = lazy(() => import("../components/board/KanbanBoard"));
 const ArchitectureView = lazy(() => import("../components/ArchitectureView"));
 const DecisionsView = lazy(() => import("../components/DecisionsView"));
 const RiskView = lazy(() => import("../components/RiskView"));
@@ -567,7 +567,11 @@ export default function ProjectView() {
 
       {activeTab === "board" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading board…</p>}>
-          <FlowBoard projectId={id} onTaskClick={setSelectedTaskId} />
+          <KanbanBoard
+            source={{ kind: "project", id }}
+            onTaskClick={setSelectedTaskId}
+            onTaskCreated={replanAfterEdit}
+          />
         </Suspense>
       )}
 
