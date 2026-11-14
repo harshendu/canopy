@@ -3,13 +3,15 @@ A tracker connection created with a canopy project binds it (USER_FLOWS §J1/§C
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
 from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
-from app.connectors.tracker import is_tracker
+from app.connectors.tracker import is_tracker, tracker_class, tracker_enabled, tracker_label
 from app.core.crypto import encrypt_token
-from app.models.base import ReadStrategy, TrackingMode, WriteStrategy, utcnow
+from app.models.base import Provider, ReadStrategy, TrackingMode, WriteStrategy, utcnow
 from app.models.integration import (
     Connection,
     ExternalRef,
@@ -71,6 +73,23 @@ async def list_connections(session: SessionDep, user: CurrentUser) -> list[Conne
     ]
 
 
+def _scope_from_config(provider: Provider, config: dict) -> dict[str, Any]:
+    """The binding scope a new tracker connection's config describes: every key of the
+    tracker's `scope_schema` found in it (plus Jira's `jira_project_key` → `project_key`),
+    validated. `project_id` there is canopy's project to bind, never a scope key."""
+    scope = tracker_sync.legacy_scope(config)
+    cls = tracker_class(provider)
+    if cls is None:
+        return scope
+    for name in cls.scope_schema.model_fields:
+        if name != "project_id" and name not in scope and config.get(name) not in (None, ""):
+            scope[name] = config[name]
+    try:
+        return tracking_service.validated_scope(cls, scope)
+    except tracking_service.TrackingConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 def _project_id(config: dict) -> int | None:
     try:
         return int(config.get("project_id"))  # type: ignore[arg-type]
@@ -86,6 +105,12 @@ async def create_connection(
     form's project picker) also binds that project to it — mirrored from the tracker's project
     in the config — the same as a switch that keeps the project's existing work separate."""
     target_id = _project_id(payload.config) if is_tracker(payload.provider) else None
+    if target_id is not None and not tracker_enabled(payload.provider):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{tracker_label(payload.provider)} is not enabled on this instance "
+            "(TRACKERS_ENABLED) — it can't mirror a project",
+        )
     project = await session.get(Project, target_id) if target_id is not None else None
     if project is not None and project.id is not None:
         bound = await tracking_service.active_binding(session, project.id)
@@ -94,8 +119,8 @@ async def create_connection(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "code": "project_already_bound",
-                    "message": f"{project.key} is already mirrored from {bound.provider} — "
-                    "switch its tracking instead",
+                    "message": f"{project.key} is already mirrored from "
+                    f"{tracker_label(bound.provider)} — switch its tracking instead",
                 },
             )
     connection = Connection(
@@ -117,7 +142,7 @@ async def create_connection(
                 target_type="project",
                 target_id=project.id,
                 scope_kind="project",
-                scope=tracker_sync.legacy_scope(payload.config),
+                scope=_scope_from_config(payload.provider, payload.config),
                 mapping=tracker_sync.legacy_mapping(payload.config),
                 sync_iterations=bool(payload.config.get("board_id")),
             )

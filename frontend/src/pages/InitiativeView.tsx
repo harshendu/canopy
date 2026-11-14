@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -18,13 +18,15 @@ import DeliveryMetaBar from "../components/DeliveryMetaBar";
 import RiskRegister from "../components/RiskRegister";
 import LeadershipNotesPanel from "../components/LeadershipNotesPanel";
 import { leadTeamLabel } from "../lib/initiativeAccess";
-import JiraLinksPanel from "../components/JiraLinksPanel";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
 import { QueryError } from "../components/QueryError";
 import { Icon } from "../components/icons";
 import { useCurrentUser } from "../lib/useCurrentUser";
+import { featureOn, useFeatures } from "../lib/useFeatures";
 import { canWriteProjects, isPlanner } from "../lib/permissions";
+
+const TrackerLinksPanel = lazy(() => import("../components/TrackerLinksPanel"));
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -41,6 +43,7 @@ export default function InitiativeView() {
   const id = Number(initiativeId);
   const qc = useQueryClient();
   const { data: me } = useCurrentUser();
+  const features = useFeatures();
 
   const rollup = useQuery({
     queryKey: ["initiative-rollup", id],
@@ -355,7 +358,11 @@ export default function InitiativeView() {
         )}
       </div>
 
-      <JiraLinksPanel targetType="initiative" targetId={id} />
+      {featureOn(features, "integrations") && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading linked tracker items…</p>}>
+          <TrackerLinksPanel targetType="initiative" targetId={id} mayLink={mayPlan} />
+        </Suspense>
+      )}
     </div>
   );
 }

@@ -355,3 +355,28 @@ async def test_admin_lists_the_trackers_this_instance_uses(client, db_session, m
     monkeypatch.setattr(settings, "TRACKERS_ENABLED", "jira,linear")
     listed = (await client.get("/api/v1/admin/integrations", headers=admin)).json()
     assert {row["provider"] for row in listed} == {"jira", "github", "gdrive", "linear"}
+
+
+async def test_a_linear_connection_with_a_project_binds_it_with_its_scope_keys(
+    client, db_session, monkeypatch
+):
+    admin = await _admin(client, db_session)
+    project = await _project(client, admin, "SRCH")
+    body = {
+        "provider": "linear",
+        "name": "Linear",
+        "config": {"project_id": project, "team_key": "ENG", "label": "search",
+                   "linear_project_id": "lp-1", "workspace_url_key": "example"},
+    }
+    # Not enabled: it can't mirror a project.
+    refused = await client.post("/api/v1/connectors/connections", json=body, headers=admin)
+    assert refused.status_code == 400 and "not enabled" in refused.json()["detail"]
+    monkeypatch.setattr(settings, "TRACKERS_ENABLED", ALL)
+    created = await client.post("/api/v1/connectors/connections", json=body, headers=admin)
+    assert created.status_code == 201, created.text
+    tracking = (await client.get(f"/api/v1/projects/{project}/tracking", headers=admin)).json()
+    assert tracking["mode"] == "mirrored" and tracking["binding"]["label"] == "Linear"
+    # The tracker's own scope keys come over; canopy's project_id never becomes one.
+    assert tracking["binding"]["scope"] == {
+        "team_key": "ENG", "linear_project_id": "lp-1", "label": "search",
+    }

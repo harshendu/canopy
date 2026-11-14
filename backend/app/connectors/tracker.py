@@ -176,6 +176,12 @@ def is_tracker(provider: Provider | str) -> bool:
     return tracker_class(provider) is not None
 
 
+def tracker_label(provider: Provider | str) -> str:
+    """How people call a tracker ("Jira", "Linear") — for messages; the key otherwise."""
+    cls = tracker_class(provider)
+    return cls.label if cls is not None and cls.label else str(provider)
+
+
 def enabled_tracker_keys() -> list[str]:
     """Providers listed in `TRACKERS_ENABLED` that are registered trackers (empty = native
     only: no tracker can be bound)."""

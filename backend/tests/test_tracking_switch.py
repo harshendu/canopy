@@ -200,7 +200,7 @@ async def test_back_to_native_releases_tasks_and_remaps_unknown_statuses(client,
         (doing_id, "remap", "Doing → In Progress"),
         (known_id, "release", "jira"),
     ]
-    assert any("leave jira" in w for w in preview["warnings"])
+    assert any("leave Jira" in w for w in preview["warnings"])
     applied = (
         await client.post(url, json={"to_mode": "native", "dry_run": False}, headers=admin)
     ).json()
@@ -432,6 +432,7 @@ async def test_switching_off_a_legacy_bound_project_stops_its_connection(client,
     project_id, connection_id = project.id, connection.id
     before = (await client.get(f"/api/v1/projects/{project_id}/tracking", headers=admin)).json()
     assert before["binding"] is None and before["legacy_connection_id"] == connection_id
+    assert (before["legacy_provider"], before["legacy_label"]) == ("jira", "Jira")
 
     applied = await client.post(
         f"/api/v1/projects/{project_id}/tracking/switch",

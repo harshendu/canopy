@@ -11,7 +11,9 @@ export type ADRStatus =
 export type Reversibility = "one_way" | "two_way";
 export type ADRCommentKind = "comment" | "approve" | "request_changes" | "reject";
 export type DecisionRule = "owner_decides" | "consensus" | "lazy_consensus";
-export type Provider = "jira" | "github" | "gdrive";
+/** A connection's provider: "github", "gdrive", or a work tracker's key as `GET /meta/trackers`
+ *  lists it ("jira", "linear", "generic", …) — label it from that catalog, never assume Jira. */
+export type Provider = string;
 
 // --- Delivery metadata ---
 export type ProjectHealth = "on_track" | "at_risk" | "off_track";
@@ -48,6 +50,9 @@ export interface Project {
   health: ProjectHealth | null;
   status_note: string | null;
   status_updated_at: string | null;
+  /** native: canopy owns every status; mirrored: a bound tracker owns the work it knows (§C12). */
+  tracking_mode?: TrackingMode;
+  task_key_prefix?: string | null;
 }
 
 export interface Initiative {
@@ -758,6 +763,8 @@ export interface BoardTaskItem {
   tags?: string[];
   sprint_id?: number | null;
   story_points?: number | null;
+  /** Working days — the estimate of teams that size sprints in days. */
+  duration?: number | null;
 }
 
 /** A column: the workflow's columns arrive in order, empty ones included. `in_workflow=false`
@@ -1099,8 +1106,15 @@ export interface DraftTask {
   estimate_days: number;
   story_points: number | null;
   sort_order: number;
+  /** Legacy Jira stamp (kept alongside the tracker-neutral one below). */
   jira_issue_id: string | null;
   jira_key: string | null;
+  /** The tracker item finalising created for this draft task (any tracker). */
+  external_provider?: string | null;
+  external_id?: string | null;
+  external_key?: string | null;
+  /** The canopy task a native finalise created (a re-finalise updates it). */
+  task_id?: number | null;
 }
 
 export interface DraftPlanDetail extends DraftPlan {
@@ -1110,14 +1124,22 @@ export interface DraftPlanDetail extends DraftPlan {
 export interface DraftPushTaskResult {
   draft_task_id: number;
   name: string;
+  /** created | updated | failed */
   action: string;
   jira_key: string | null;
   error: string | null;
+  /** The tracker item's key, or the native task's key. */
+  external_key?: string | null;
+  /** The canopy task (native finalise). */
+  task_id?: number | null;
 }
 
-export interface DraftPushResult {
+/** `POST /draft-plans/{id}/finalize`: canopy tasks (native) or the bound tracker's items. */
+export interface DraftFinalizeResult {
   plan_id: number;
-  connection_id: number;
+  mode: "native" | "tracker";
+  provider: string | null;
+  connection_id: number | null;
   created: number;
   updated: number;
   failed: number;
@@ -1128,31 +1150,6 @@ export interface ExportToDriveResult {
   file_id: string;
   name: string;
   link: string | null;
-}
-
-export type JiraLinkTarget = "project" | "initiative";
-
-export interface JiraLink {
-  id: number;
-  connection_id: number;
-  jira_issue_id: string;
-  jira_key: string;
-  jira_issue_type: string | null;
-  target_type: string;
-  target_id: number;
-  last_synced_at: string | null;
-  created_at: string;
-}
-
-export interface JiraLinkSyncResult {
-  link: JiraLink;
-  projects_created: number;
-  projects_linked: number;
-  tasks_created: number;
-  tasks_updated: number;
-  skipped: number;
-  created_project_ids: number[];
-  notes: string[];
 }
 
 // --- Scenario simulation ---
@@ -1436,6 +1433,9 @@ export interface TaskExternalLinks {
 }
 
 // --- Tracker links + tracker catalog (neutral successors of the Jira links) ---
+/** What a tracker link maps an item's subtree into. */
+export type TrackerLinkTarget = "project" | "initiative";
+
 export interface TrackerLink {
   id: number;
   connection_id: number;
@@ -1454,7 +1454,7 @@ export interface TrackerLink {
 export interface TrackerLinkCreate {
   connection_id: number;
   root_key: string;
-  target_type: string;
+  target_type: TrackerLinkTarget;
   target_id: number;
 }
 
@@ -1496,6 +1496,125 @@ export interface TrackerInfo {
 export interface TrackerCatalog {
   trackers: TrackerInfo[];
   default_tracking_mode: TrackingMode;
+}
+
+// --- Project tracking: native or mirrored, the binding, switching (USER_FLOWS §C12) ---
+/** One of a tracker's statuses — a mirrored board's columns, in the tracker's order. */
+export interface TrackerStatus {
+  name: string;
+  category: StatusCategory;
+  position: number;
+}
+
+/** Where a project mirrors its work from: a tracker connection and a scope inside it. */
+export interface TrackerBinding {
+  id: number;
+  connection_id: number;
+  connection_name: string | null;
+  provider: string;
+  /** The tracker's display name, e.g. "Jira". */
+  label: string;
+  scope_kind: string;
+  /** Validated against the tracker's `scope_schema` (e.g. `{project_key, board_id}`). */
+  scope: Record<string, unknown>;
+  /** Type/field mapping (epic types, estimate field…). */
+  mapping: Record<string, unknown>;
+  status_map: TrackerStatus[];
+  /** Mirror the tracker's sprints/cycles. */
+  sync_iterations: boolean;
+  active: boolean;
+  last_synced_at: string | null;
+  /** When it stopped feeding the project (past bindings only). */
+  detached_at: string | null;
+  created_at: string;
+}
+
+/** `GET /projects/{id}/tracking`. */
+export interface ProjectTracking {
+  project_id: number;
+  mode: TrackingMode;
+  /** The active binding; null for a native project (or a mirrored one not bound yet). */
+  binding: TrackerBinding | null;
+  /** Bound only through a pre-binding connection's `config.project_id` (no binding row). */
+  legacy_connection_id: number | null;
+  /** That legacy connection's provider and the tracker's label (null otherwise). */
+  legacy_provider?: string | null;
+  legacy_label?: string | null;
+  /** Trackers the project used before, newest first. */
+  history: TrackerBinding[];
+  /** The bound (or legacy) tracker's capabilities. */
+  capabilities: TrackerCapabilities | null;
+  canopy_owned: number;
+  tracker_owned: number;
+  /** A planner who may edit this project. */
+  can_edit: boolean;
+  /** Provider keys a project may be bound to on this instance. */
+  trackers_enabled: string[];
+}
+
+/** `PUT /projects/{id}/tracking` — adjust the active binding in place. A new scope resets the
+ *  sync watermark and status map, so the next sync is a full one. */
+export interface ProjectTrackingUpdate {
+  scope?: Record<string, unknown>;
+  mapping?: Record<string, unknown>;
+  sync_iterations?: boolean;
+}
+
+/** What happens to the work a project already has when it gets a tracker. */
+export type TrackingStrategy = "keep_separate" | "match" | "publish";
+
+export interface TrackingSwitchRequest {
+  to_mode: TrackingMode;
+  connection_id?: number | null;
+  scope: Record<string, unknown>;
+  mapping: Record<string, unknown>;
+  sync_iterations: boolean;
+  strategy: TrackingStrategy;
+  /** Preview (true) or apply exactly the previewed plan (false, human-only). */
+  dry_run: boolean;
+}
+
+/** What a switch does to one task. */
+export interface TrackingSwitchAction {
+  task_id: number;
+  name: string;
+  key: string | null;
+  /** keep | adopt | publish | release | remap */
+  action: string;
+  detail: string | null;
+}
+
+export interface TrackingPublishResult {
+  created: number;
+  skipped: number;
+  failed: number;
+  errors: string[];
+}
+
+export interface TrackingSwitchResult {
+  project_id: number;
+  from_mode: TrackingMode;
+  to_mode: TrackingMode;
+  from_provider: string | null;
+  to_provider: string | null;
+  strategy: TrackingStrategy;
+  dry_run: boolean;
+  applied: boolean;
+  /** Tasks per action. */
+  counts: Record<string, number>;
+  actions: TrackingSwitchAction[];
+  warnings: string[];
+  binding?: TrackerBinding | null;
+  published?: TrackingPublishResult | null;
+  synced_created?: number | null;
+  synced_updated?: number | null;
+}
+
+export interface TrackingSyncResult {
+  provider: string;
+  created: number;
+  updated: number;
+  skipped: number;
 }
 
 // --- Change proposals (agent-staged writes, human-reviewed) ---
@@ -1740,7 +1859,12 @@ export interface ProjectAccess {
   leads: InitiativeLead[];
   owner_name: string | null;
   pod_name: string | null;
+  /** The initiative's team (who leads it). */
   team_name: string | null;
+  /** The team that runs the project — its pod's team, else its initiative's — whose board,
+   *  workflow and sprints it uses (§C11). */
+  team_id?: number | null;
+  running_team_name?: string | null;
 }
 
 // --- Leadership notes + business review (USER_FLOWS §BR) ---

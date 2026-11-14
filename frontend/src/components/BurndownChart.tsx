@@ -16,7 +16,7 @@ export default function BurndownChart({ data }: { data: BurndownResponse }) {
     return (
       <p className="text-sm text-slate-500">
         No completion history yet — burndown is driven by task status transitions: board moves
-        for tasks canopy tracks, and tracker syncs for tasks mirrored from Jira.
+        for tasks canopy tracks, and syncs for tasks mirrored from a tracker.
       </p>
     );
   }

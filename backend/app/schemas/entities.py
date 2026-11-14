@@ -745,6 +745,8 @@ class ProjectTrackingRead(BaseModel):
     binding: TrackerBindingRead | None
     # Bound only through a pre-binding connection's `config.project_id` (no binding row yet).
     legacy_connection_id: int | None = None
+    legacy_provider: str | None = None
+    legacy_label: str | None = None
     history: list[TrackerBindingRead]  # trackers this project used before (detached)
     capabilities: dict[str, bool] | None = None  # the bound tracker's
     canopy_owned: int  # tasks whose status canopy owns

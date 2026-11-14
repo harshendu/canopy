@@ -128,6 +128,7 @@ function normalizeCard(t: BoardTaskItem, projectId: number): Card {
     tags: t.tags ?? [],
     sprint_id: t.sprint_id ?? null,
     story_points: t.story_points ?? null,
+    duration: t.duration ?? null,
   };
 }
 
@@ -636,6 +637,8 @@ export interface TrackingFailure {
   url: string | null;
   /** For `column_in_use`: the removed columns that still hold cards. */
   columns: string[];
+  /** For `connection_in_use`: the projects still mirrored from the connection. */
+  projectIds: number[];
 }
 
 /** Read a failed call's body — FastAPI's `{detail: {code, message, …}}`, a plain
@@ -648,6 +651,7 @@ export function trackingFailure(err: unknown): TrackingFailure {
     provider: null,
     url: null,
     columns: [],
+    projectIds: [],
   };
   let body: unknown;
   try {
@@ -673,6 +677,9 @@ export function trackingFailure(err: unknown): TrackingFailure {
       url: typeof d.url === "string" ? d.url : null,
       columns: Array.isArray(d.columns)
         ? d.columns.filter((c): c is string => typeof c === "string")
+        : [],
+      projectIds: Array.isArray(d.project_ids)
+        ? d.project_ids.filter((p): p is number => typeof p === "number")
         : [],
     };
   }

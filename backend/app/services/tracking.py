@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.connectors import get_connector
-from app.connectors.tracker import WorkTracker, tracker_class, tracker_enabled
+from app.connectors.tracker import WorkTracker, tracker_class, tracker_enabled, tracker_label
 from app.core.events import publish
 from app.models.base import (
     CANOPY_OWNER,
@@ -373,8 +373,8 @@ async def plan_switch(
         plan.actions.append(action)
     if releasing and from_provider:
         plan.warnings.append(
-            f"{len(releasing)} task(s) leave {from_provider}: canopy owns their status from "
-            "now on; their links are kept as history."
+            f"{len(releasing)} task(s) leave {tracker_label(from_provider)}: canopy owns their "
+            "status from now on; their links are kept as history."
         )
     return plan
 

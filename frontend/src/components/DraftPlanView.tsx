@@ -1,16 +1,37 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
+import {
+  TRACKERS_KEY,
+  finalizeDraftPlan,
+  getProjectTracking,
+  getTrackers,
+  trackingKey,
+} from "../api/trackers";
 import type {
   Connection,
+  DraftFinalizeResult,
   DraftPlan,
   DraftPlanDetail,
-  DraftPushResult,
+  Task,
   TaskType,
 } from "../api/types";
-import { useCurrentUser } from "../lib/useCurrentUser";
+import { trackingFailure } from "../lib/board";
+import {
+  finalizeBlocker,
+  finalizeConfirm,
+  finalizeLabel,
+  finalizeModeOf,
+  finalizeSplit,
+  type FinalizeBlocker,
+  type FinalizeMode,
+} from "../lib/drafts";
 import { isPlanner } from "../lib/permissions";
+import { trackingLabel } from "../lib/tracking";
+import { useCurrentUser } from "../lib/useCurrentUser";
+import { featureOn, useFeatures } from "../lib/useFeatures";
 
 function typeLabel(type: TaskType): string {
   if (type === "summary") return "epic";
@@ -21,17 +42,30 @@ function typeLabel(type: TaskType): string {
 function StatusBadge({ status }: { status: string }) {
   const tone =
     status === "synced"
-      ? "bg-canopy-100 text-canopy-700"
+      ? "bg-canopy-50 text-canopy-700"
       : status === "archived"
         ? "bg-slate-100 text-slate-500"
         : "bg-amber-100 text-amber-700";
   return <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${tone}`}>{status}</span>;
 }
 
-export default function DraftPlanView({ projectId }: { projectId: number }) {
+/** How finalising works for this project: its mode, the tracker it writes to, what stops it. */
+interface FinalizeTarget {
+  mode: FinalizeMode;
+  trackerLabel: string;
+  blocker: FinalizeBlocker | null;
+}
+
+/**
+ * Draft plans (USER_FLOWS §C10): stage a proposed plan, review it, then finalise it into real
+ * work — canopy tasks in a native project, or the bound tracker's tickets (content only, never
+ * status) in a mirrored one. The project's tracking mode decides.
+ */
+export default function DraftPlanView({ projectId, mayPlan: mayPlanProp }: { projectId: number; mayPlan?: boolean }) {
   const qc = useQueryClient();
   const { data: me } = useCurrentUser();
-  const mayPlan = isPlanner(me?.role);
+  const features = useFeatures();
+  const mayPlan = mayPlanProp ?? isPlanner(me?.role);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [title, setTitle] = useState("");
   const [source, setSource] = useState("");
@@ -40,6 +74,27 @@ export default function DraftPlanView({ projectId }: { projectId: number }) {
     queryKey: ["draft-plans", projectId],
     queryFn: () => api.get<DraftPlan[]>(`/projects/${projectId}/draft-plans`),
   });
+  const tracking = useQuery({ queryKey: trackingKey(projectId), queryFn: () => getProjectTracking(projectId) });
+  const catalog = useQuery({ queryKey: TRACKERS_KEY, queryFn: getTrackers, staleTime: 5 * 60 * 1000 });
+  const t = tracking.data;
+  const connections = useQuery({
+    queryKey: ["connections"],
+    queryFn: () => api.get<Connection[]>("/connectors/connections"),
+    enabled: featureOn(features, "integrations") && t?.mode === "mirrored",
+  });
+
+  let target: FinalizeTarget | null = null;
+  if (t) {
+    const connectionId = t.binding?.connection_id ?? t.legacy_connection_id;
+    const connection = (connections.data ?? []).find((c) => c.id === connectionId) ?? null;
+    const mode = finalizeModeOf(t);
+    const trackerLabel = trackingLabel(t, connection?.provider ?? null, catalog.data) ?? "tracker";
+    target = {
+      mode,
+      trackerLabel,
+      blocker: finalizeBlocker({ mode, tracking: t, trackerLabel, capabilities: t.capabilities, connection }),
+    };
+  }
 
   const createPlan = useMutation({
     mutationFn: () =>
@@ -50,7 +105,7 @@ export default function DraftPlanView({ projectId }: { projectId: number }) {
     onSuccess: (plan) => {
       setTitle("");
       setSource("");
-      qc.invalidateQueries({ queryKey: ["draft-plans", projectId] });
+      void qc.invalidateQueries({ queryKey: ["draft-plans", projectId] });
       setSelectedId(plan.id);
     },
   });
@@ -60,17 +115,31 @@ export default function DraftPlanView({ projectId }: { projectId: number }) {
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="font-semibold">Plan drafts → Jira</h2>
+        <h2 className="font-semibold">Draft plans</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Stage a proposed plan here and review it, then create the Jira tickets from it. canopy
-          writes ticket <strong>content</strong> (summary / description / story points) — never
-          status. After pushing, run a Jira sync to pull the new issues back in as tasks.
+          {target?.mode === "tracker" ? (
+            <>
+              Stage a proposed plan here and review it, then create the {target.trackerLabel} tickets from
+              it. canopy writes ticket <strong>content</strong> (summary / description / story points) —
+              never status — and the next sync pulls the new items back as tasks.
+            </>
+          ) : (
+            <>
+              Stage a proposed plan here and review it, then create its tasks. Nothing reaches the board
+              or the schedule until you do; finalising again updates the tasks it made.
+            </>
+          )}
         </p>
+        {tracking.isError && (
+          <p role="alert" className="mt-2 text-sm text-red-700">
+            Couldn’t read how this project is tracked: {trackingFailure(tracking.error).message}
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="space-y-2">
-          {planList.length === 0 && (
+          {plans.data && planList.length === 0 && (
             <p className="text-sm text-slate-500">No drafts yet — create one to start planning.</p>
           )}
           <ul className="space-y-2">
@@ -78,6 +147,7 @@ export default function DraftPlanView({ projectId }: { projectId: number }) {
               <li key={p.id}>
                 <button
                   onClick={() => setSelectedId(selectedId === p.id ? null : p.id)}
+                  aria-expanded={selectedId === p.id}
                   className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${
                     selectedId === p.id
                       ? "border-canopy-500 bg-canopy-50"
@@ -91,7 +161,12 @@ export default function DraftPlanView({ projectId }: { projectId: number }) {
                   {p.source && <div className="mt-0.5 text-xs text-slate-400">{p.source}</div>}
                 </button>
                 {selectedId === p.id && (
-                  <DraftPlanDetailPanel planId={p.id} projectId={projectId} mayPlan={mayPlan} />
+                  <DraftPlanDetailPanel
+                    planId={p.id}
+                    projectId={projectId}
+                    mayPlan={mayPlan}
+                    target={target}
+                  />
                 )}
               </li>
             ))}
@@ -133,10 +208,12 @@ function DraftPlanDetailPanel({
   planId,
   projectId,
   mayPlan,
+  target,
 }: {
   planId: number;
   projectId: number;
   mayPlan: boolean;
+  target: FinalizeTarget | null;
 }) {
   const qc = useQueryClient();
   const [name, setName] = useState("");
@@ -144,22 +221,25 @@ function DraftPlanDetailPanel({
   const [estimate, setEstimate] = useState(1);
   const [points, setPoints] = useState<number | "">("");
   const [parentId, setParentId] = useState<number | "">("");
-  const [connId, setConnId] = useState<number | "">("");
-  const [pushResult, setPushResult] = useState<DraftPushResult | null>(null);
-  const [pushError, setPushError] = useState<string | null>(null);
+  const [result, setResult] = useState<DraftFinalizeResult | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
 
   const detail = useQuery({
     queryKey: ["draft-plan", planId],
     queryFn: () => api.get<DraftPlanDetail>(`/draft-plans/${planId}`),
   });
-  const connections = useQuery({
-    queryKey: ["connections"],
-    queryFn: () => api.get<Connection[]>(`/connectors/connections`),
+  const madeTasks = (detail.data?.tasks ?? []).some((t) => t.task_id != null);
+  // The keys of the tasks a native finalise made (same cache as the project's task list).
+  const projectTasks = useQuery({
+    queryKey: ["tasks", projectId],
+    queryFn: () => api.get<Task[]>(`/tasks?project_id=${projectId}`),
+    enabled: madeTasks,
   });
+  const taskKey = new Map((projectTasks.data ?? []).map((t) => [t.id, t.key] as const));
 
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["draft-plan", planId] });
-    qc.invalidateQueries({ queryKey: ["draft-plans", projectId] });
+    void qc.invalidateQueries({ queryKey: ["draft-plan", planId] });
+    void qc.invalidateQueries({ queryKey: ["draft-plans", projectId] });
   };
 
   const addTask = useMutation({
@@ -186,84 +266,79 @@ function DraftPlanDetailPanel({
     onSuccess: invalidate,
   });
 
-  const jiraConns = (connections.data ?? []).filter(
-    (c) => c.provider === "jira" && c.active && Number(c.config.project_id) === projectId,
-  );
-  const resolvedConnId = connId === "" && jiraConns.length === 1 ? jiraConns[0].id : connId;
-  const resolvedConn = jiraConns.find((c) => c.id === resolvedConnId);
-  // The direct push path is only available when the provider's writes are `direct`. Under
-  // `mcp`/`disabled`, canopy refuses (Claude creates the tickets and records them back instead).
-  const writeDirect = resolvedConn?.write_strategy === "direct";
-  const canPush = mayPlan && jiraConns.length > 0 && resolvedConnId !== "" && writeDirect;
-
-  const push = useMutation({
-    mutationFn: () =>
-      api.post<DraftPushResult>(`/draft-plans/${planId}/push-to-jira`, {
-        connection_id: resolvedConnId === "" ? null : resolvedConnId,
-      }),
+  const finalize = useMutation({
+    mutationFn: () => finalizeDraftPlan(planId),
     onSuccess: (res) => {
-      setPushResult(res);
-      setPushError(null);
+      setResult(res);
+      setFailure(null);
       invalidate();
+      if (res.mode === "native") {
+        // The tasks joined the plan and the project replanned.
+        for (const key of ["tasks", "gantt", "board", "burndown", "tracking"]) {
+          void qc.invalidateQueries({ queryKey: [key, projectId] });
+        }
+      }
     },
-    onError: (e: Error) => setPushError(e.message),
+    onError: (e) => setFailure(trackingFailure(e).message),
   });
 
   if (!detail.data) return <div className="mt-1 text-xs text-slate-400">Loading…</div>;
-  const tasks = detail.data.tasks;
+  const plan = detail.data;
+  const tasks = plan.tasks;
   const summaries = tasks.filter((t) => t.type === "summary");
+  const split = target ? finalizeSplit(tasks, target.mode) : null;
+  const label = target && split ? finalizeLabel(target.mode, target.trackerLabel, split) : "Finalise";
 
-  // Pre-flight before the outbound Jira write (the one place canopy writes *to* Jira). A task
-  // already stamped with a jira_key updates; the rest create. State the split before the
-  // irreversible external write instead of only reporting it after (§C10.3 diff-preview gap).
-  const confirmPush = () => {
-    const updates = tasks.filter((t) => t.jira_key).length;
-    const creates = tasks.length - updates;
-    const msg = [
-      `Push "${detail.data!.title}" to Jira?`,
-      "",
-      `• create ${creates} new ticket(s)`,
-      `• update ${updates} existing ticket(s)`,
-      "",
-      "This writes to Jira directly. Status is never written; new issues sync back as tasks.",
-    ].join("\n");
-    if (window.confirm(msg)) push.mutate();
+  // Pre-flight before the write: what is created and what is updated, stated before it happens
+  // (a tracker write is irreversible — §C10.3).
+  const confirmFinalize = () => {
+    if (!target || !split) return;
+    if (window.confirm(finalizeConfirm(plan.title, target.mode, target.trackerLabel, split))) {
+      setFailure(null);
+      finalize.mutate();
+    }
   };
 
   return (
-    <div className="mt-1 space-y-3 rounded-lg border border-canopy-200 bg-white p-3 text-sm">
-      {detail.data.description && <p className="text-slate-600">{detail.data.description}</p>}
+    <div className="mt-1 space-y-3 rounded-lg border border-canopy-500/30 bg-white p-3 text-sm">
+      {plan.description && <p className="text-slate-600">{plan.description}</p>}
 
       <ul className="space-y-1">
         {tasks.length === 0 && <li className="text-xs text-slate-400">No tasks yet.</li>}
-        {tasks.map((t) => (
-          <li key={t.id} className="flex items-center gap-2">
-            <span
-              className={
-                t.type === "summary" ? "font-semibold" : t.parent_id != null ? "pl-4" : undefined
-              }
-            >
-              {t.name}
-            </span>
-            <span className="text-xs text-slate-400">
-              {typeLabel(t.type)} · {t.estimate_days}d
-              {t.story_points != null ? ` · ${t.story_points} pts` : ""}
-            </span>
-            {t.jira_key && (
-              <span className="rounded bg-canopy-100 px-1.5 py-0.5 text-xs text-canopy-700">
-                {t.jira_key}
-              </span>
-            )}
-            {mayPlan && (
-              <button
-                onClick={() => delTask.mutate(t.id)}
-                className="ml-auto text-xs text-red-500 hover:text-red-700"
+        {tasks.map((t) => {
+          const ticket = t.external_key ?? t.jira_key;
+          return (
+            <li key={t.id} className="flex flex-wrap items-center gap-2">
+              <span
+                className={
+                  t.type === "summary" ? "font-semibold" : t.parent_id != null ? "pl-4" : undefined
+                }
               >
-                remove
-              </button>
-            )}
-          </li>
-        ))}
+                {t.name}
+              </span>
+              <span className="text-xs text-slate-400">
+                {typeLabel(t.type)} · {t.estimate_days}d
+                {t.story_points != null ? ` · ${t.story_points} pts` : ""}
+              </span>
+              {ticket && (
+                <span className="rounded bg-canopy-50 px-1.5 py-0.5 text-xs text-canopy-700">{ticket}</span>
+              )}
+              {t.task_id != null && (
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+                  {taskKey.get(t.task_id) ?? `task #${t.task_id}`}
+                </span>
+              )}
+              {mayPlan && (
+                <button
+                  onClick={() => delTask.mutate(t.id)}
+                  className="ml-auto text-xs text-red-600 hover:text-red-800"
+                >
+                  remove
+                </button>
+              )}
+            </li>
+          );
+        })}
       </ul>
 
       {mayPlan && (
@@ -333,67 +408,69 @@ function DraftPlanDetailPanel({
       {mayPlan && (
         <div className="space-y-2 rounded border border-slate-200 p-2">
           <div className="flex flex-wrap items-center gap-2">
-            {jiraConns.length > 1 && (
-              <select
-                value={connId}
-                onChange={(e) => setConnId(e.target.value === "" ? "" : Number(e.target.value))}
-                className="rounded border border-slate-300 px-2 py-1 text-sm"
-              >
-                <option value="">Pick a Jira connection…</option>
-                {jiraConns.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            )}
             <button
-              onClick={confirmPush}
-              disabled={!canPush || push.isPending}
+              onClick={confirmFinalize}
+              disabled={!target || target.blocker !== null || tasks.length === 0 || finalize.isPending}
               className="rounded bg-canopy-700 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
             >
-              {push.isPending
-                ? "Pushing…"
-                : detail.data.status === "synced"
-                  ? "Update Jira tickets"
-                  : "Create Jira tickets"}
+              {finalize.isPending ? (target?.mode === "tracker" ? "Pushing…" : "Creating…") : label}
             </button>
-            {jiraConns.length === 0 && (
-              <span className="text-xs text-slate-400">
-                No Jira connection is configured for this project.
-              </span>
-            )}
-            {jiraConns.length > 0 && resolvedConnId !== "" && !writeDirect && (
-              <span className="text-xs text-amber-700">
-                Jira writes are {resolvedConn?.write_strategy}-managed — create the tickets via
-                Claude, then record them back (canopy won't push directly).
+            {split && tasks.length > 0 && (
+              <span className="text-xs text-slate-500">
+                {split.creates} new · {split.updates} already {target?.mode === "tracker" ? "in " + target.trackerLabel : "created"}
               </span>
             )}
           </div>
-          {pushError && <p className="text-xs text-red-600">Push failed: {pushError}</p>}
-          {pushResult && (
-            <div className="space-y-1 text-xs">
+          {target?.blocker && (
+            <p className="text-xs text-amber-800">
+              {target.blocker.message}{" "}
+              {target.blocker.fix === "tracking" && (
+                <Link to={`/projects/${projectId}?tab=tracking`} className="font-medium text-canopy-700 hover:underline">
+                  Open Tracking
+                </Link>
+              )}
+              {target.blocker.fix === "connectors" && (
+                <Link to="/connectors" className="font-medium text-canopy-700 hover:underline">
+                  Open Connectors
+                </Link>
+              )}
+            </p>
+          )}
+          {failure && (
+            <p role="alert" className="text-xs text-red-700">
+              Couldn’t finalise: {failure}
+            </p>
+          )}
+          {result && (
+            <div role="status" className="space-y-1 text-xs">
               <div className="text-slate-600">
-                {pushResult.created} created · {pushResult.updated} updated · {pushResult.failed}{" "}
-                failed
+                {result.mode === "native" ? "canopy tasks" : `${target?.trackerLabel ?? "Tracker"} tickets`}:{" "}
+                {result.created} created · {result.updated} updated · {result.failed} failed
               </div>
               <ul className="space-y-0.5">
-                {pushResult.results.map((r) => (
-                  <li
-                    key={r.draft_task_id}
-                    className={r.action === "failed" ? "text-red-600" : "text-slate-500"}
-                  >
-                    {r.name}: {r.action}
-                    {r.jira_key ? ` (${r.jira_key})` : ""}
-                    {r.error ? ` — ${r.error}` : ""}
-                  </li>
-                ))}
+                {result.results.map((r) => {
+                  const key = r.external_key ?? r.jira_key;
+                  return (
+                    <li key={r.draft_task_id} className={r.action === "failed" ? "text-red-700" : "text-slate-500"}>
+                      {r.name}: {r.action}
+                      {key ? ` (${key})` : ""}
+                      {r.error ? ` — ${r.error}` : ""}
+                    </li>
+                  );
+                })}
               </ul>
-              {pushResult.failed === 0 && (
-                <p className="text-slate-400">
-                  Now run a Jira sync (Connectors) to pull these in as canopy tasks.
-                </p>
-              )}
+              {result.failed === 0 &&
+                (result.mode === "native" ? (
+                  <p className="text-slate-500">They’re on the board and the Gantt now.</p>
+                ) : (
+                  <p className="text-slate-500">
+                    The next sync pulls these in as tasks —{" "}
+                    <Link to={`/projects/${projectId}?tab=tracking`} className="font-medium text-canopy-700 hover:underline">
+                      sync now from Tracking
+                    </Link>
+                    .
+                  </p>
+                ))}
             </div>
           )}
         </div>

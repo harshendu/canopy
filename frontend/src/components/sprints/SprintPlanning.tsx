@@ -54,7 +54,7 @@ interface PlanItem {
   assignee: number | null;
   status: string | null;
   points: number | null;
-  /** Duration in working days — sprint tasks only (board cards don't carry it). */
+  /** Duration in working days — the estimate of teams that size sprints in days. */
   days: number | null;
   closed: boolean;
 }
@@ -356,7 +356,7 @@ export default function SprintPlanning({
           assignee: c.assignee_engineer_id,
           status: c.status,
           points: c.story_points,
-          days: null,
+          days: c.duration,
           closed: isClosedCategory(c.status_category),
         })),
       ),

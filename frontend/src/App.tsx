@@ -19,14 +19,12 @@ import Initiatives from "./pages/Initiatives";
 import InitiativeView from "./pages/InitiativeView";
 import ScenarioList from "./pages/ScenarioList";
 import ScenarioWorkspace from "./pages/ScenarioWorkspace";
-import Connectors from "./pages/Connectors";
 import Decisions from "./pages/Decisions";
 import MyWorkspace from "./pages/MyWorkspace";
 import MyToday from "./pages/MyToday";
 import Reviews from "./pages/Reviews";
 import ReviewWorkspace from "./pages/ReviewWorkspace";
 import AdminUsers from "./pages/AdminUsers";
-import AdminIntegrations from "./pages/AdminIntegrations";
 import AdminFeatures from "./pages/AdminFeatures";
 import DemoData from "./pages/DemoData";
 import Team from "./pages/Team";
@@ -39,6 +37,9 @@ import { GetStarted } from "./components/GetStarted";
 const Portfolio = lazy(() => import("./pages/Portfolio")); // Recharts — load on demand
 const BusinessReview = lazy(() => import("./pages/BusinessReview"));
 const TeamView = lazy(() => import("./pages/TeamView")); // board, sprints, charts — on demand
+// Configuration pages, rendered from the tracker catalog — on demand.
+const Connectors = lazy(() => import("./pages/Connectors"));
+const AdminIntegrations = lazy(() => import("./pages/AdminIntegrations"));
 
 function Loading() {
   return <div className="p-6 text-sm text-slate-400">Loading…</div>;
@@ -151,7 +152,14 @@ export default function App() {
         <Route path="/decisions" element={<Decisions />} />
         <Route path="/admin/users" element={<AdminUsers />} />
         <Route path="/admin/features" element={<AdminFeatures />} />
-        <Route path="/admin/integrations" element={<AdminIntegrations />} />
+        <Route
+          path="/admin/integrations"
+          element={
+            <Suspense fallback={<Loading />}>
+              <AdminIntegrations />
+            </Suspense>
+          }
+        />
         <Route path="/admin/demo" element={<DemoData />} />
         <Route path="/team" element={<Team />} />
         <Route
@@ -162,7 +170,14 @@ export default function App() {
             </Suspense>
           }
         />
-        <Route path="/connectors" element={<Connectors />} />
+        <Route
+          path="/connectors"
+          element={
+            <Suspense fallback={<Loading />}>
+              <Connectors />
+            </Suspense>
+          }
+        />
         <Route path="/agent-setup" element={<AgentSetup />} />
       </Route>
     </Routes>

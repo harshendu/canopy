@@ -22,7 +22,12 @@ from app.api.deps import (
     is_planner,
 )
 from app.connectors import get_connector
-from app.connectors.tracker import WorkTracker, enabled_tracker_keys, tracker_class
+from app.connectors.tracker import (
+    WorkTracker,
+    enabled_tracker_keys,
+    tracker_class,
+    tracker_label,
+)
 from app.core.events import publish
 from app.models.base import CANOPY_OWNER, TokenScope, TrackingMode
 from app.models.integration import Connection, TrackerBinding
@@ -79,12 +84,13 @@ async def _tracking_read(
     assert project.id is not None
     binding = await tracking_service.active_binding(session, project.id)
     legacy_connection_id: int | None = None
+    legacy_provider: str | None = None
     provider: str | None = str(binding.provider) if binding is not None else None
     if binding is None:
         legacy = await tracker_sync.binding_for_project(session, project.id)
         if legacy is not None:
             legacy_connection_id = legacy.connection_id
-            provider = legacy.provider.value
+            provider = legacy_provider = legacy.provider.value
     cls = tracker_class(provider) if provider else None
     tasks = await tracking_service.project_tasks(session, project.id)
     canopy_owned = sum(1 for t in tasks if t.status_owner == CANOPY_OWNER)
@@ -93,6 +99,8 @@ async def _tracking_read(
         mode=project.tracking_mode,
         binding=await binding_read(session, binding) if binding is not None else None,
         legacy_connection_id=legacy_connection_id,
+        legacy_provider=legacy_provider,
+        legacy_label=tracker_label(legacy_provider) if legacy_provider else None,
         history=[
             await binding_read(session, b)
             for b in await tracking_service.past_bindings(session, project.id)
@@ -272,8 +280,8 @@ async def publish_tracking(
     if not isinstance(writer, WorkTracker) or not writer.capabilities.create_items:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=reason if credential is None else f"{connection.provider.value} can't "
-            "create items",
+            detail=reason if credential is None else f"{tracker_label(connection.provider)} "
+            "can't create items",
         )
     published = await tracking_service.publish_canopy_tasks(session, project, binding, writer)
     await publish({"type": "tracking", "project_id": project_id, "mode": project.tracking_mode})
@@ -312,8 +320,8 @@ async def sync_tracking(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "code": "not_directly_readable",
-                "message": f"canopy doesn't read {connection.provider.value} directly here — "
-                "its items arrive by MCP or file ingest",
+                "message": f"canopy doesn't read {tracker_label(connection.provider)} directly "
+                "here — its items arrive by MCP or file ingest",
             },
         )
     result = await tracker_sync.sync_binding(tracker, view, full=full)

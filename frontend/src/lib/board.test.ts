@@ -67,6 +67,7 @@ function card(id: number, overrides: Partial<Card> = {}): Card {
     tags: [],
     sprint_id: null,
     story_points: null,
+    duration: null,
     ...overrides,
   };
 }
@@ -149,6 +150,7 @@ describe("normalizeBoard", () => {
       tags: [],
       blocked: false,
       rank: 0,
+      duration: null,
     });
   });
 
@@ -169,7 +171,7 @@ describe("normalizeBoard", () => {
           category: "in_progress",
           in_workflow: false,
           tasks: [
-            { id: 1, name: "a", status: "In Review", assignee_engineer_id: 7, is_done: false, age_days: 9, aging: true, status_owner: "jira", key: "SHOP-1" },
+            { id: 1, name: "a", status: "In Review", assignee_engineer_id: 7, is_done: false, age_days: 9, aging: true, status_owner: "jira", key: "SHOP-1", duration: 3 },
           ],
         },
       ],
@@ -178,7 +180,7 @@ describe("normalizeBoard", () => {
     expect(b.mode).toBe("mirrored");
     expect(b.viewer).toEqual(ENGINEER);
     expect(b.lanes[0]).toMatchObject({ over_limit: true, in_workflow: false, category: "in_progress" });
-    expect(b.lanes[0].tasks[0]).toMatchObject({ movable: false, key: "SHOP-1", status_owner: "jira" });
+    expect(b.lanes[0].tasks[0]).toMatchObject({ movable: false, key: "SHOP-1", status_owner: "jira", duration: 3 });
   });
 });
 
@@ -575,6 +577,14 @@ describe("trackingFailure", () => {
   it("reads the removed columns of a column_in_use refusal", () => {
     const f = trackingFailure(apiError({ detail: { code: "column_in_use", message: "m", columns: ["QA", 3] } }));
     expect(f.columns).toEqual(["QA"]);
+    expect(f.projectIds).toEqual([]);
+  });
+
+  it("reads the projects a connection still feeds", () => {
+    const f = trackingFailure(
+      apiError({ detail: { code: "connection_in_use", message: "Projects are still mirrored", project_ids: [4, "x", 9] } }),
+    );
+    expect(f).toMatchObject({ code: "connection_in_use", message: "Projects are still mirrored", projectIds: [4, 9] });
   });
 
   it("reads plain, validation and non-JSON bodies", () => {

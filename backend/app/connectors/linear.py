@@ -137,7 +137,7 @@ class LinearScope(BaseModel):
     """Where in Linear a binding points."""
 
     team_key: str | None = None  # the team whose issues the project mirrors, e.g. "ENG"
-    project_id: str | None = None  # narrow to one Linear project (its id)
+    linear_project_id: str | None = None  # narrow to one Linear project (its id)
     label: str | None = None  # narrow to issues carrying this label
 
 
@@ -164,7 +164,7 @@ class LinearTracker(WorkTracker):
     scope_schema: ClassVar[type[BaseModel]] = LinearScope
     # Linear signs the raw body: `Linear-Signature: <hex HMAC-SHA256>`.
     webhook_signature_header: ClassVar[str | None] = "Linear-Signature"
-    scope_selector_keys: ClassVar[tuple[str, ...]] = ("team_key", "project_id", "label")
+    scope_selector_keys: ClassVar[tuple[str, ...]] = ("team_key", "linear_project_id", "label")
 
     # --------------------------------------------------------------------- #
     # HTTP
@@ -208,8 +208,8 @@ class LinearTracker(WorkTracker):
         team = self._team_key(scope)
         if team:
             out["team"] = {"key": {"eq": team}}
-        if scope.get("project_id"):
-            out["project"] = {"id": {"eq": str(scope.get("project_id"))}}
+        if scope.get("linear_project_id"):
+            out["project"] = {"id": {"eq": str(scope.get("linear_project_id"))}}
         if scope.get("label"):
             out["labels"] = {"name": {"eq": str(scope.get("label"))}}
         if since:
@@ -438,8 +438,8 @@ class LinearTracker(WorkTracker):
                 payload["estimate"] = round(draft.estimate)
             if draft.parent is not None:
                 payload["parentId"] = draft.parent.external_id
-            if scope.get("project_id"):
-                payload["projectId"] = str(scope.get("project_id"))
+            if scope.get("linear_project_id"):
+                payload["projectId"] = str(scope.get("linear_project_id"))
             data = await self._gql(client, CREATE_MUTATION, {"input": payload})
         issue = ((data.get("issueCreate") or {}).get("issue")) or {}
         if not issue.get("id"):

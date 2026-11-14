@@ -4,11 +4,11 @@ import type { IconName } from "../components/icons";
  * The project cockpit's two-level navigation, kept pure (no React) so the grouping, feature-gating,
  * and `?tab=` deep-link resolution are unit-testable — `ProjectView` just renders what these return.
  *
- * The 17 leaf views map onto the backend's own feature domains (`app/services/features.py`:
+ * The 19 leaf views map onto the backend's own feature domains (`app/services/features.py`:
  * planning / tracking / architecture / governance / integrations), plus an at-a-glance **Overview**
  * entry. Leaf keys are unchanged from the old flat tab bar, so every existing `?tab=<leaf>` deep
  * link (the preview drawer, the Drift Sentinel, shared URLs) keeps working and just auto-selects the
- * parent group.
+ * parent group — a renamed leaf keeps its old key as an alias (`TAB_ALIASES`).
  */
 
 export type ProjectTab =
@@ -22,8 +22,9 @@ export type ProjectTab =
   | "architecture"
   | "drift"
   | "roadmap"
+  | "tracking"
   | "drafts"
-  | "jiralinks"
+  | "trackerlinks"
   | "burndown"
   | "delivery"
   | "risk"
@@ -71,8 +72,20 @@ export const PROJECT_GROUPS: ProjectGroupDef[] = [
     icon: "governance",
     tabs: ["risk", "raid", "specs", "docs", "retros"],
   },
-  { key: "integrations", label: "Integrations", icon: "jiralinks", tabs: ["drafts", "jiralinks"] },
+  {
+    key: "integrations",
+    label: "Integrations",
+    icon: "links",
+    // How the project is tracked (native or mirrored) is core to read, so the group never
+    // vanishes; changing it is gated inside the view.
+    tabs: ["tracking", "drafts", "trackerlinks"],
+  },
 ];
+
+/** Old leaf keys that still deep-link to the leaf that replaced them. */
+export const TAB_ALIASES: Readonly<Record<string, ProjectTab>> = {
+  jiralinks: "trackerlinks",
+};
 
 /** The feature gate each leaf sits behind (absent = core, always on). Mirrors the backend catalog. */
 export const TAB_FEATURES: Partial<Record<ProjectTab, string>> = {
@@ -84,7 +97,7 @@ export const TAB_FEATURES: Partial<Record<ProjectTab, string>> = {
   architecture: "architecture",
   drift: "architecture.drift",
   drafts: "planning.draft_plans",
-  jiralinks: "integrations",
+  trackerlinks: "integrations",
   burndown: "tracking.burndown",
   delivery: "tracking.delivery",
   risk: "governance.risk",
@@ -103,8 +116,9 @@ export const TAB_LABELS: Record<ProjectTab, string> = {
   architecture: "Architecture",
   drift: "Drift",
   roadmap: "Roadmap",
-  drafts: "Plan → Jira",
-  jiralinks: "Jira Links",
+  tracking: "Tracking",
+  drafts: "Draft plans",
+  trackerlinks: "Tracker links",
   burndown: "Burndown",
   delivery: "Delivery",
   risk: "Risk score",
@@ -124,8 +138,9 @@ export const TAB_ICONS: Record<ProjectTab, IconName> = {
   architecture: "architecture",
   drift: "drift",
   roadmap: "roadmap",
+  tracking: "tracking",
   drafts: "drafts",
-  jiralinks: "jiralinks",
+  trackerlinks: "links",
   burndown: "burndown",
   delivery: "delivery",
   risk: "risk",
@@ -183,12 +198,14 @@ export interface ResolvedTab {
 
 /**
  * Resolve a requested `?tab=` value (+ the effective feature map) into the active group + leaf.
- * A known, enabled leaf selects that leaf and its parent group; anything else — "overview", absent,
- * unknown, or a gated-off leaf — falls back to the Overview (never a jarring snap to the Gantt).
+ * A known (or aliased), enabled leaf selects that leaf and its parent group; anything else —
+ * "overview", absent, unknown, or a gated-off leaf — falls back to the Overview (never a jarring
+ * snap to the Gantt).
  */
 export function resolveProjectTab(requested: string | null, isOn: IsFeatureOn): ResolvedTab {
-  if (requested && requested in TAB_GROUP) {
-    const tab = requested as ProjectTab;
+  const key = requested && Object.hasOwn(TAB_ALIASES, requested) ? TAB_ALIASES[requested] : requested;
+  if (key && Object.hasOwn(TAB_GROUP, key)) {
+    const tab = key as ProjectTab;
     if (tabEnabled(tab, isOn)) return { group: TAB_GROUP[tab], tab };
   }
   return { group: "overview", tab: null };

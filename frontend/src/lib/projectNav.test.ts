@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   PROJECT_GROUPS,
+  TAB_ALIASES,
   TAB_GROUP,
   TAB_LABELS,
   defaultTabForGroup,
@@ -14,11 +15,26 @@ const ALL_ON = () => true;
 const ALL_OFF = () => false;
 
 describe("PROJECT_GROUPS / TAB_GROUP", () => {
-  it("places every one of the 18 leaf views under exactly one group", () => {
+  it("places every one of the 19 leaf views under exactly one group", () => {
     const tabs = PROJECT_GROUPS.flatMap((g) => g.tabs);
-    expect(tabs).toHaveLength(18);
-    expect(new Set(tabs).size).toBe(18); // no duplicates
+    expect(tabs).toHaveLength(19);
+    expect(new Set(tabs).size).toBe(19); // no duplicates
     for (const tab of tabs) expect(TAB_GROUP[tab]).toBeTruthy();
+  });
+
+  it("names the tracker surfaces neutrally", () => {
+    expect(TAB_LABELS.tracking).toBe("Tracking");
+    expect(TAB_LABELS.trackerlinks).toBe("Tracker links");
+    expect(TAB_LABELS.drafts).toBe("Draft plans");
+    expect(PROJECT_GROUPS.find((g) => g.key === "integrations")?.tabs).toEqual([
+      "tracking",
+      "drafts",
+      "trackerlinks",
+    ]);
+  });
+
+  it("only aliases onto real leaves", () => {
+    for (const target of Object.values(TAB_ALIASES)) expect(TAB_GROUP[target]).toBeTruthy();
   });
 
   it("labels every mapped leaf", () => {
@@ -48,8 +64,21 @@ describe("resolveProjectTab", () => {
     expect(resolveProjectTab("docs", ALL_ON).tab).toBe("docs");
   });
 
+  it("keeps a renamed leaf's old deep link working", () => {
+    expect(resolveProjectTab("jiralinks", ALL_ON)).toEqual({ group: "integrations", tab: "trackerlinks" });
+    expect(resolveProjectTab("trackerlinks", ALL_ON)).toEqual({ group: "integrations", tab: "trackerlinks" });
+    // The alias obeys the gate of the leaf it lands on.
+    expect(resolveProjectTab("jiralinks", ALL_OFF)).toEqual({ group: "overview", tab: null });
+  });
+
+  it("opens Tracking even with every gate off (reading it is core)", () => {
+    expect(resolveProjectTab("tracking", ALL_OFF)).toEqual({ group: "integrations", tab: "tracking" });
+  });
+
   it("falls back to Overview for unknown or gated-off tabs (never snaps to Gantt)", () => {
     expect(resolveProjectTab("bogus", ALL_ON)).toEqual({ group: "overview", tab: null });
+    // Inherited object keys are not leaves.
+    expect(resolveProjectTab("toString", ALL_ON)).toEqual({ group: "overview", tab: null });
     // risk requires governance.risk; with everything off it is not reachable
     expect(resolveProjectTab("risk", ALL_OFF)).toEqual({ group: "overview", tab: null });
     // core leaves stay reachable even with every gate off
@@ -71,15 +100,17 @@ describe("visibleProjectNav", () => {
   });
 
   it("hides a group only when all of its leaves are gated off; core-bearing groups stay", () => {
-    const keys = visibleProjectNav(ALL_OFF).map((v) => v.group.key);
-    // Overview (always), Schedule (gantt/deps/roadmap are core) and Execution (activity is core) survive
+    const nav = visibleProjectNav(ALL_OFF);
+    const keys = nav.map((v) => v.group.key);
+    // Overview (always), Schedule (gantt/deps/roadmap are core), Execution (activity is core) and
+    // Integrations (tracking is core) survive
     expect(keys).toContain("overview");
     expect(keys).toContain("schedule");
     expect(keys).toContain("execution");
+    expect(nav.find((v) => v.group.key === "integrations")?.tabs).toEqual(["tracking"]);
     // fully-gated domains collapse
     expect(keys).not.toContain("architecture");
     expect(keys).not.toContain("governance");
-    expect(keys).not.toContain("integrations");
   });
 
   it("keeps only the enabled leaves inside a partially-gated group", () => {
@@ -94,6 +125,7 @@ describe("defaultTabForGroup", () => {
     expect(defaultTabForGroup("schedule", ALL_ON)).toBe("gantt");
     expect(defaultTabForGroup("execution", ALL_ON)).toBe("board");
     expect(defaultTabForGroup("governance", ALL_ON)).toBe("risk");
+    expect(defaultTabForGroup("integrations", ALL_ON)).toBe("tracking");
     expect(defaultTabForGroup("overview", ALL_ON)).toBeNull();
   });
 

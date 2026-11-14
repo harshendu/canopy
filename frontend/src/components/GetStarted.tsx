@@ -25,8 +25,8 @@ export function GetStarted({ canManage }: { canManage: boolean }) {
     },
     {
       to: "/connectors",
-      title: "Connect Jira, GitHub & Drive",
-      body: "Sync epics/stories from Jira, read PRs from GitHub, and link design docs from Drive. Canopy reads these — a mirrored ticket’s status stays with Jira, while tasks canopy tracks itself move on its board.",
+      title: "Connect a tracker, GitHub & Drive",
+      body: "Mirror epics/stories from a work tracker (Jira, Linear…), read PRs from GitHub, and link design docs from Drive. Canopy reads these — a mirrored ticket’s status stays with its tracker, while tasks canopy tracks itself move on its board.",
       icon: "connectors" as const,
     },
     {

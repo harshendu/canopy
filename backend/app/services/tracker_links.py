@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.connectors import get_connector
-from app.connectors.tracker import WorkTracker, is_tracker, tracker_enabled
+from app.connectors.tracker import WorkTracker, is_tracker, tracker_enabled, tracker_label
 from app.core.events import publish
 from app.models.base import Provider, utcnow
 from app.models.integration import Connection, JiraLink, TrackerBinding
@@ -35,16 +35,15 @@ async def _tracker(session: AsyncSession, connection_id: int) -> tuple[Connectio
         raise TrackerLinkError("Connection not found")
     if not is_tracker(connection.provider):
         raise TrackerLinkError(f"{connection.provider.value} is not a work tracker")
+    label = tracker_label(connection.provider)
     if not tracker_enabled(connection.provider):
-        raise TrackerLinkError(
-            f"{connection.provider.value} is not enabled on this instance (TRACKERS_ENABLED)"
-        )
+        raise TrackerLinkError(f"{label} is not enabled on this instance (TRACKERS_ENABLED)")
     connector = get_connector(connection, session)
     assert isinstance(connector, WorkTracker)
     if not connector.capabilities.direct_read or not connector.capabilities.hierarchy:
-        raise TrackerLinkError(f"{connection.provider.value} can't be linked directly")
+        raise TrackerLinkError(f"{label} items can't be linked directly")
     if not connection.authorized:
-        raise TrackerLinkError(f"The {connection.provider.value} connection is not authorized yet")
+        raise TrackerLinkError(f"The {label} connection is not authorized yet")
     return connection, connector
 
 
@@ -105,7 +104,7 @@ async def _map(
     root_key = str(scope.get("root_key") or "")
     items = await connector.fetch_subtree(scope, root_key)
     if not items:
-        raise TrackerLinkError(f"{binding.provider} item {root_key} not found")
+        raise TrackerLinkError(f"{tracker_label(binding.provider)} item {root_key} not found")
     result = await tracker_sync.map_subtree(
         session,
         provider=Provider(str(binding.provider)),
@@ -131,7 +130,7 @@ async def create_or_sync(
     scope = Scope(kind="subtree", values={"root_key": root_key})
     root = await connector.fetch_item(scope, root_key)
     if root is None:
-        raise TrackerLinkError(f"{connection.provider.value} item {root_key} not found")
+        raise TrackerLinkError(f"{tracker_label(connection.provider)} item {root_key} not found")
     binding = await upsert_subtree_binding(
         session,
         connection_id=connection_id,

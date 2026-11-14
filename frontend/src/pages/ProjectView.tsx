@@ -27,7 +27,6 @@ import ExportMenu from "../components/ExportMenu";
 import DeliveryMetaBar from "../components/DeliveryMetaBar";
 import ProjectOverview from "../components/ProjectOverview";
 import RiskRegister from "../components/RiskRegister";
-import JiraLinksPanel from "../components/JiraLinksPanel";
 import TaskDetailPanel from "../components/TaskDetailPanel";
 import HolidaysEditor from "../components/HolidaysEditor";
 import { PageHeader } from "../components/PageHeader";
@@ -58,6 +57,8 @@ const RetrosView = lazy(() => import("../components/RetrosView"));
 const ActivityView = lazy(() => import("../components/ActivityView"));
 const BurndownChart = lazy(() => import("../components/BurndownChart"));
 const DraftPlanView = lazy(() => import("../components/DraftPlanView"));
+const TrackingPanel = lazy(() => import("../components/tracking/TrackingPanel"));
+const TrackerLinksPanel = lazy(() => import("../components/TrackerLinksPanel"));
 
 export default function ProjectView() {
   const { projectId } = useParams();
@@ -289,7 +290,9 @@ export default function ProjectView() {
                   ·{" "}
                 </>
               ) : (
-                access.data.team_name && <>{access.data.team_name} team · </>
+                (access.data.running_team_name ?? access.data.team_name) && (
+                  <>{access.data.running_team_name ?? access.data.team_name} team · </>
+                )
               )}
               {access.data.pod_name && <>{access.data.pod_name} pod · </>}
               {access.data.initiative_name && <>{access.data.initiative_name} · </>}
@@ -630,13 +633,23 @@ export default function ProjectView() {
 
       {activeTab === "roadmap" && <RoadmapView projectId={id} />}
 
-      {activeTab === "drafts" && (
-        <Suspense fallback={<p className="text-sm text-slate-500">Loading drafts…</p>}>
-          <DraftPlanView projectId={id} />
+      {activeTab === "tracking" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading tracking…</p>}>
+          <TrackingPanel projectId={id} />
         </Suspense>
       )}
 
-      {activeTab === "jiralinks" && <JiraLinksPanel targetType="project" targetId={id} />}
+      {activeTab === "drafts" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading drafts…</p>}>
+          <DraftPlanView projectId={id} mayPlan={mayPlan} />
+        </Suspense>
+      )}
+
+      {activeTab === "trackerlinks" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading tracker links…</p>}>
+          <TrackerLinksPanel targetType="project" targetId={id} mayLink={mayPlan} />
+        </Suspense>
+      )}
 
       {activeTab === "burndown" &&
         (burndown.data ? (
