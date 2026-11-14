@@ -21,7 +21,6 @@ from app.api.v1 import (
     features,
     gantt,
     initiatives,
-    jira_links,
     leadership,
     me,
     meta,
@@ -89,10 +88,6 @@ api_router.include_router(
 )
 api_router.include_router(
     tracker_links.router, tags=["tracker-links"], dependencies=[FeatureGate("integrations")]
-)
-# Pre-tracker alias of /tracker-links, kept for one release.
-api_router.include_router(
-    jira_links.router, tags=["jira-links"], dependencies=[FeatureGate("integrations")]
 )
 api_router.include_router(
     docs.router, tags=["docs"], dependencies=[FeatureGate("governance.docs")]

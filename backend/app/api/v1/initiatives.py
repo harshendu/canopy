@@ -4,6 +4,7 @@ health (risk / drift / progress / decision backlog) across an initiative's sub-p
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import delete as sa_delete
 from sqlmodel import col, select
 
 from app.api.deps import ArchitectWriter, CurrentUser, FeatureGate, SessionDep
@@ -11,6 +12,7 @@ from app.api.v1.projects import open_project_risk_counts, summarize_project
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
 from app.models.base import ADRStatus, ProjectHealth, StatusCategory, TaskType, utcnow
+from app.models.integration import TrackerBinding
 from app.models.leadership import InitiativeLead
 from app.models.org import Pod, Team
 from app.models.outcome import Outcome
@@ -229,6 +231,13 @@ async def delete_initiative(
     ).scalars().all()
     for project in projects:
         project.initiative_id = None
+    # Tracker bindings and links into it would sync into a missing initiative: they go too.
+    await session.execute(
+        sa_delete(TrackerBinding).where(
+            col(TrackerBinding.target_type) == "initiative",
+            col(TrackerBinding.target_id) == initiative_id,
+        )
+    )
     await session.delete(initiative)
     await session.commit()
 

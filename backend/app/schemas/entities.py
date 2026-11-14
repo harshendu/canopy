@@ -208,7 +208,6 @@ class TaskRead(BaseModel):
     status_category: str | None = None
     status_owner: str = "canopy"
     key: str | None = None
-    sprint: str | None
     sprint_id: int | None = None
     story_points: float | None = None
     deadline: date | None
@@ -348,7 +347,6 @@ class EngineerCreate(BaseModel):
     user_id: int | None = None
     skill_tags: list[str] = []
     github_login: str | None = None
-    jira_account_id: str | None = None
     timezone: str | None = None
     committed_hours_per_week: float | None = None
 
@@ -362,7 +360,6 @@ class EngineerUpdate(BaseModel):
     user_id: int | None = None
     skill_tags: list[str] | None = None
     github_login: str | None = None
-    jira_account_id: str | None = None
     timezone: str | None = None
     committed_hours_per_week: float | None = None
 
@@ -378,7 +375,6 @@ class EngineerRead(BaseModel):
     user_id: int | None = None
     skill_tags: list[str] = []
     github_login: str | None = None
-    jira_account_id: str | None = None
     timezone: str | None = None
     committed_hours_per_week: float | None = None
 
@@ -617,6 +613,10 @@ class ConnectionCreate(BaseModel):
     token: str | None = None  # plaintext; encrypted before storage
     refresh_token: str | None = None
     config: dict = {}
+    # A tracker connection only: the canopy project it mirrors — creating the connection binds
+    # it (scope from the config, e.g. Jira's `jira_project_key`), like a switch that keeps the
+    # project's existing work separate (USER_FLOWS §J1/§C12).
+    project_id: int | None = None
 
 
 class ConnectionRead(BaseModel):
@@ -650,39 +650,6 @@ class PullRequestRead(BaseModel):
 
 
 # --- Jira ticket linking (link a Jira ticket → canopy project/initiative) ---
-class JiraLinkCreate(BaseModel):
-    connection_id: int  # the Jira connection to read the ticket(s) through
-    jira_key: str  # the root Jira ticket to link, e.g. "PROJ-123"
-    target_type: Literal["project", "initiative"]
-    target_id: int
-
-
-class JiraLinkRead(BaseModel):
-    model_config = _read
-    id: int
-    connection_id: int
-    jira_issue_id: str
-    jira_key: str
-    jira_issue_type: str | None
-    target_type: str
-    target_id: int
-    last_synced_at: datetime | None
-    created_at: datetime
-
-
-class JiraLinkSyncResult(BaseModel):
-    """What a link create / resync mapped into canopy (idempotent via ExternalRef)."""
-
-    link: JiraLinkRead
-    projects_created: int = 0
-    projects_linked: int = 0
-    tasks_created: int = 0
-    tasks_updated: int = 0
-    skipped: int = 0
-    created_project_ids: list[int] = []
-    notes: list[str] = []
-
-
 class TrackerLinkCreate(BaseModel):
     connection_id: int  # the tracker connection to read the item(s) through
     root_key: str  # the root item to link, e.g. "PROJ-123" (Jira) or "ENG-42" (Linear)
@@ -743,10 +710,6 @@ class ProjectTrackingRead(BaseModel):
     mode: str  # native | mirrored
     # The active binding; None for a native project (or a mirrored one not bound yet).
     binding: TrackerBindingRead | None
-    # Bound only through a pre-binding connection's `config.project_id` (no binding row yet).
-    legacy_connection_id: int | None = None
-    legacy_provider: str | None = None
-    legacy_label: str | None = None
     history: list[TrackerBindingRead]  # trackers this project used before (detached)
     capabilities: dict[str, bool] | None = None  # the bound tracker's
     canopy_owned: int  # tasks whose status canopy owns
@@ -1661,8 +1624,6 @@ class DraftTaskRead(BaseModel):
     estimate_days: int
     story_points: float | None
     sort_order: int
-    jira_issue_id: str | None
-    jira_key: str | None
     external_provider: str | None = None
     external_id: str | None = None
     external_key: str | None = None
@@ -1673,16 +1634,10 @@ class DraftPlanDetail(DraftPlanRead):
     tasks: list[DraftTaskRead] = []
 
 
-class DraftPushRequest(BaseModel):
-    # The Jira connection to push to. Omit to auto-resolve the project's Jira connection.
-    connection_id: int | None = None
-
-
 class DraftPushTaskResult(BaseModel):
     draft_task_id: int
     name: str
     action: str  # created | updated | failed
-    jira_key: str | None = None
     error: str | None = None
     external_key: str | None = None  # the tracker item's key (any tracker)
     task_id: int | None = None  # the canopy task (native finalise)
@@ -1699,15 +1654,6 @@ class DraftFinalizeResult(BaseModel):
     mode: Literal["native", "tracker"]
     provider: str | None = None
     connection_id: int | None = None
-    created: int
-    updated: int
-    failed: int
-    results: list[DraftPushTaskResult]
-
-
-class DraftPushResult(BaseModel):
-    plan_id: int
-    connection_id: int
     created: int
     updated: int
     failed: int
@@ -1777,15 +1723,12 @@ class FileIngestResult(IngestResult):
 
 # --- Draft push write-back (write_strategy=mcp: Claude creates tickets, records ids here) ---
 class DraftPushRecord(BaseModel):
-    """One item Claude created in a tracker for a draft task (write_strategy=mcp). Either the
-    generic `external_id`/`external_key` (+ `provider`) or the legacy `jira_*` pair."""
+    """One item Claude created in a tracker for a draft task (write_strategy=mcp)."""
 
     draft_task_id: int
-    external_id: str | None = None
+    external_id: str
     external_key: str | None = None
-    provider: str | None = None
-    jira_issue_id: str | None = None
-    jira_key: str | None = None
+    provider: str | None = None  # defaults to the tracker the plan's project is bound to
 
 
 class DraftRecordPushRequest(BaseModel):
@@ -1879,11 +1822,6 @@ class DocCoverageRead(BaseModel):
 
 
 # --- A task's external resource links (Jira issue + GitHub PRs + design docs) ---
-class JiraIssueLink(BaseModel):
-    key: str  # human key, e.g. "SHOP-101"
-    url: str | None  # browse URL, when the connection exposes a site (None for OAuth API bases)
-
-
 class TrackerItemLink(BaseModel):
     """The tracker item behind a task (any tracker)."""
 
@@ -1898,7 +1836,6 @@ class TaskExternalLinksRead(BaseModel):
     the GitHub PRs implementing it, and the design docs (GitHub/Drive) scoped to it."""
 
     tracker: TrackerItemLink | None = None
-    jira: JiraIssueLink | None = None  # deprecated alias of `tracker` when it is Jira
     pull_requests: list[PullRequestRead]
     docs: list[DocReferenceRead]
 

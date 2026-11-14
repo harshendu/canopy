@@ -147,8 +147,6 @@ class Task(TimestampMixin, table=True):
     board_rank: int = Field(default=0, sa_type=BigInteger)
     # Human key: the external key for a mirrored task (e.g. SHOP-101), `<prefix>-<n>` for native.
     key: str | None = Field(default=None, index=True)
-    # Legacy: the sprint's name, kept in step with `sprint_id` for one release (then dropped).
-    sprint: str | None = None
     # The sprint this task is planned into (at most one; `TaskSprintHistory` keeps the moves).
     sprint_id: int | None = Field(default=None, foreign_key="sprint.id", index=True)
     # Estimate in story points (a team with `estimate_unit=points` plans sprints with it).

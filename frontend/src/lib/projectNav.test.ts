@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   PROJECT_GROUPS,
-  TAB_ALIASES,
   TAB_GROUP,
   TAB_LABELS,
   defaultTabForGroup,
@@ -33,10 +32,6 @@ describe("PROJECT_GROUPS / TAB_GROUP", () => {
     ]);
   });
 
-  it("only aliases onto real leaves", () => {
-    for (const target of Object.values(TAB_ALIASES)) expect(TAB_GROUP[target]).toBeTruthy();
-  });
-
   it("labels every mapped leaf", () => {
     for (const tab of Object.keys(TAB_GROUP) as ProjectTab[]) {
       expect(TAB_LABELS[tab]).toBeTruthy();
@@ -64,11 +59,11 @@ describe("resolveProjectTab", () => {
     expect(resolveProjectTab("docs", ALL_ON).tab).toBe("docs");
   });
 
-  it("keeps a renamed leaf's old deep link working", () => {
-    expect(resolveProjectTab("jiralinks", ALL_ON)).toEqual({ group: "integrations", tab: "trackerlinks" });
+  it("opens Tracker links, and a retired leaf key lands on the overview", () => {
     expect(resolveProjectTab("trackerlinks", ALL_ON)).toEqual({ group: "integrations", tab: "trackerlinks" });
-    // The alias obeys the gate of the leaf it lands on.
-    expect(resolveProjectTab("jiralinks", ALL_OFF)).toEqual({ group: "overview", tab: null });
+    expect(resolveProjectTab("trackerlinks", ALL_OFF)).toEqual({ group: "overview", tab: null });
+    // `jiralinks` was the Jira-only name (an alias for one release).
+    expect(resolveProjectTab("jiralinks", ALL_ON)).toEqual({ group: "overview", tab: null });
   });
 
   it("opens Tracking even with every gate off (reading it is core)", () => {

@@ -1,9 +1,11 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import delete
 from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, FeatureGate, PlannerWriter, SessionDep
+from app.models.integration import EngineerIdentity
 from app.models.project import Project
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.schemas.entities import (
@@ -81,6 +83,10 @@ async def update_engineer(
 async def delete_engineer(session: SessionDep, _: PlannerWriter, engineer_id: int) -> None:
     engineer = await session.get(Engineer, engineer_id)
     if engineer is not None:
+        # Their tracker accounts go with them (a bare delete trips the FK on Postgres/MySQL).
+        await session.execute(
+            delete(EngineerIdentity).where(col(EngineerIdentity.engineer_id) == engineer_id)
+        )
         await session.delete(engineer)
         await session.commit()
 

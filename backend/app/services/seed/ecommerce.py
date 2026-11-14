@@ -536,7 +536,6 @@ def demo_connections(flagship_project_id: int) -> list[DemoConnection]:
         DemoConnection("jira", "Jira — jira.example.com", {
             "demo": True,
             "base_url": "https://jira.example.com",
-            "project_id": flagship_project_id,
             "jira_project_key": "SHOP",
             "email": _email("demo"),
             "board_id": 1,

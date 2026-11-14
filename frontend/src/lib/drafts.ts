@@ -15,10 +15,10 @@ export function finalizeModeOf(tracking: Pick<ProjectTracking, "mode">): Finaliz
 /** Whether a draft task already became real work in this mode — a re-finalise updates it
  *  (the canopy task it created, or the tracker item it created) instead of duplicating. */
 export function alreadyFinalized(
-  task: Pick<DraftTask, "task_id" | "external_id" | "jira_issue_id">,
+  task: Pick<DraftTask, "task_id" | "external_id">,
   mode: FinalizeMode,
 ): boolean {
-  return mode === "native" ? task.task_id != null : Boolean(task.external_id || task.jira_issue_id);
+  return mode === "native" ? task.task_id != null : Boolean(task.external_id);
 }
 
 export interface FinalizeSplit {
@@ -27,7 +27,7 @@ export interface FinalizeSplit {
 }
 
 export function finalizeSplit(
-  tasks: readonly Pick<DraftTask, "task_id" | "external_id" | "jira_issue_id">[],
+  tasks: readonly Pick<DraftTask, "task_id" | "external_id">[],
   mode: FinalizeMode,
 ): FinalizeSplit {
   const updates = tasks.filter((t) => alreadyFinalized(t, mode)).length;
@@ -81,14 +81,14 @@ export interface FinalizeBlocker {
  *  tracker that creates items and a connection that writes directly with a credential. */
 export function finalizeBlocker(input: {
   mode: FinalizeMode;
-  tracking: Pick<ProjectTracking, "binding" | "legacy_connection_id">;
+  tracking: Pick<ProjectTracking, "binding">;
   trackerLabel: string;
   capabilities: TrackerCapabilities | null;
   connection: Pick<Connection, "write_strategy" | "authorized" | "user_connected"> | null;
 }): FinalizeBlocker | null {
   const { mode, tracking, trackerLabel: label, capabilities, connection } = input;
   if (mode === "native") return null;
-  if (!tracking.binding && tracking.legacy_connection_id === null) {
+  if (!tracking.binding) {
     return { message: "This mirrored project has no tracker bound yet — bind one on its Tracking tab.", fix: "tracking" };
   }
   if (capabilities && !capabilities.create_items) {

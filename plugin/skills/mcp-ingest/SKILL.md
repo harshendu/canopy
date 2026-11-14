@@ -41,7 +41,7 @@ judgment before it lands.
    metric reads it. Epics become summary tasks; children are parented via
    `parent_external_id`. Status is mirrored **read-only** (the tracker stays the owner).
    Re-ingesting updates, never duplicates; new tasks trigger a replan. Pass `project_id` when
-   the connection feeds several projects. (`ingest_jira_issues` is the deprecated alias.)
+   the connection feeds several projects.
 
 ## Ingest GitHub PRs → cache
 `canopy:ingest_github_pull_requests(connection_id, pull_requests)` with

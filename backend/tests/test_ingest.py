@@ -16,15 +16,18 @@ from app.models.project import Project, Task
 from app.models.user import User
 from app.schemas.entities import IngestIssue, IngestPullRequest
 from app.services import ingest
+from tests.helpers import bind_project
 
 
 async def _project_and_jira(session) -> tuple[Project, Connection]:
     project = Project(key="PLAT", name="Platform")
     session.add(project)
     await session.flush()
-    conn = Connection(provider=Provider.jira, name="jira", config={"project_id": project.id})
+    conn = Connection(provider=Provider.jira, name="jira", config={})
     session.add(conn)
     await session.flush()
+    assert project.id is not None
+    await bind_project(session, conn, project.id, {"project_key": "PLAT"})
     return project, conn
 
 
@@ -66,11 +69,11 @@ async def test_ingest_issues_idempotent_with_parents(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ingest_issues_requires_configured_project(db_session) -> None:
+async def test_ingest_issues_requires_a_bound_project(db_session) -> None:
     conn = Connection(provider=Provider.jira, name="jira", config={})
     db_session.add(conn)
     await db_session.flush()
-    with pytest.raises(ValueError, match="project_id"):
+    with pytest.raises(ValueError, match="feeds no project"):
         await ingest.ingest_issues(db_session, conn, [_issue("1", "X-1", "Story", "t")])
 
 
@@ -174,7 +177,8 @@ async def test_record_draft_push_stamps_and_syncs(client, db_session) -> None:
     await db_session.commit()
 
     arch = await _headers(client, "arch@e.com")
-    body = {"results": [{"draft_task_id": task.id, "jira_issue_id": "10001", "jira_key": "PLAT-9"}]}
+    result = {"draft_task_id": task.id, "external_id": "10001", "external_key": "PLAT-9"}
+    body = {"results": [{**result, "provider": "jira"}]}
     # Agent-scope tokens are allowed (internal write-back, unlike the human-only direct push).
     agent = await _agent_headers(client, arch)
     resp = await client.post(
@@ -185,10 +189,20 @@ async def test_record_draft_push_stamps_and_syncs(client, db_session) -> None:
 
     await db_session.refresh(task)
     await db_session.refresh(plan)
-    assert task.jira_issue_id == "10001" and task.jira_key == "PLAT-9"
+    assert (task.external_provider, task.external_id, task.external_key) == (
+        "jira",
+        "10001",
+        "PLAT-9",
+    )
     assert plan.status == "synced"
 
     # Idempotent: re-recording the same ids is safe.
     assert (
         await client.post(f"/api/v1/draft-plans/{plan.id}/record-push", json=body, headers=agent)
     ).status_code == 200
+    # The project is bound to no tracker, so a record must name one — and only a tracker.
+    for bad in (result, {**result, "provider": "github"}):
+        refused = await client.post(
+            f"/api/v1/draft-plans/{plan.id}/record-push", json={"results": [bad]}, headers=agent
+        )
+        assert refused.status_code == 400, refused.text

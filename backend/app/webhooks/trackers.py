@@ -4,7 +4,7 @@ Same intake contract as every webhook here: verify the HMAC over the raw body **
 parsing (the tracker's own `verify_webhook`, against `<PROVIDER>_WEBHOOK_SECRET`), fail closed
 (403 while the secret is unset, 401 on a missing/forged signature), match the payload to the
 connections whose bindings it belongs to (`webhook_scope_hint`), then enqueue `process_webhook`
-— never process inline. `/webhooks/jira` keeps its own route (and header) for existing installs.
+— never process inline. Jira posts to `/webhooks/jira` (signed `X-Hub-Signature: sha256=…`).
 """
 
 from __future__ import annotations

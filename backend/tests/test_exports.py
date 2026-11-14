@@ -154,11 +154,8 @@ async def test_export_to_drive_rejects_non_drive_connection(client, db_session):
                 "provider": "jira",
                 "name": "jira",
                 "token": "x",
-                "config": {
-                    "base_url": "https://x",
-                    "project_id": project_id,
-                    "jira_project_key": "P",
-                },
+                "project_id": project_id,
+                "config": {"base_url": "https://x", "jira_project_key": "P"},
             },
             headers=headers,
         )

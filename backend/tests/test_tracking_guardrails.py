@@ -3,7 +3,11 @@ behaviour so the port onto the tracker interface can be proven to change nothing
 
 The "unmodified-Jira gate" is this file plus: test_jira_mapping, test_jira_linking,
 test_jira_history, test_ingest, test_drafts, test_webhook_security, test_integration_policy and
-test_user_connections. They must keep passing with import-path edits only.
+test_user_connections. They kept passing with import-path edits only through the port; since
+the legacy surfaces retired (Phase 6: `config.project_id`, `jiralink`, `engineer.jira_account_id`,
+the connector's pre-tracker wrappers, the `/jira-links` and `push-to-jira` aliases and the
+Jira-only webhook module), they set the same state up through bindings, identities and the
+neutral services — what they assert is unchanged.
 """
 
 from __future__ import annotations
@@ -16,13 +20,13 @@ from sqlmodel import func, select
 
 import app.workers.worker as worker
 from app.connectors.jira import JiraConnector
-from app.core.crypto import encrypt_token
 from app.models.base import Provider
 from app.models.integration import Connection
 from app.models.project import Project, Task
 from app.services import ingest
 from app.services import sync as sync_service
 from tests.conftest import TestSession
+from tests.helpers import jira_connection
 
 
 async def _project(session: Any, key: str = "PLAT") -> Project:
@@ -33,20 +37,7 @@ async def _project(session: Any, key: str = "PLAT") -> Project:
 
 
 async def _jira_connection(session: Any, project: Project) -> Connection:
-    connection = Connection(
-        provider=Provider.jira,
-        name="jira",
-        encrypted_token=encrypt_token("api-token"),
-        config={
-            "base_url": "https://example.atlassian.net",
-            "email": "a@b.com",
-            "project_id": project.id,
-            "jira_project_key": "PLAT",
-        },
-    )
-    session.add(connection)
-    await session.commit()
-    return connection
+    return await jira_connection(session, project.id, commit=True)
 
 
 def _issue(ext_id: str, key: str, status: str, updated: str) -> dict[str, Any]:

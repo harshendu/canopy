@@ -23,10 +23,9 @@ const CAPS: TrackerCapabilities = {
   oauth: true,
 };
 
-const fresh = { task_id: null, external_id: null, jira_issue_id: null };
-const native = { task_id: 12, external_id: null, jira_issue_id: null };
-const pushed = { task_id: null, external_id: "10001", jira_issue_id: null };
-const legacyPushed = { task_id: null, external_id: null, jira_issue_id: "10002" };
+const fresh = { task_id: null, external_id: null };
+const native = { task_id: 12, external_id: null };
+const pushed = { task_id: null, external_id: "10001" };
 
 describe("finalize mode + split", () => {
   it("follows the project's tracking mode", () => {
@@ -38,10 +37,9 @@ describe("finalize mode + split", () => {
     expect(alreadyFinalized(native, "native")).toBe(true);
     expect(alreadyFinalized(native, "tracker")).toBe(false);
     expect(alreadyFinalized(pushed, "tracker")).toBe(true);
-    expect(alreadyFinalized(legacyPushed, "tracker")).toBe(true);
     expect(alreadyFinalized(pushed, "native")).toBe(false);
     expect(finalizeSplit([fresh, native, pushed], "native")).toEqual({ creates: 2, updates: 1 });
-    expect(finalizeSplit([fresh, native, pushed, legacyPushed], "tracker")).toEqual({ creates: 2, updates: 2 });
+    expect(finalizeSplit([fresh, native, pushed], "tracker")).toEqual({ creates: 2, updates: 1 });
     expect(finalizeSplit([], "native")).toEqual({ creates: 0, updates: 0 });
   });
 });
@@ -84,23 +82,22 @@ describe("finalizeBlocker", () => {
     detached_at: null,
     created_at: "2026-11-01T09:00:00",
   };
-  const bound = { binding, legacy_connection_id: null };
+  const bound = { binding };
   const conn = { write_strategy: "direct" as const, authorized: true, user_connected: false };
 
   it("never blocks a native finalise", () => {
     expect(
-      finalizeBlocker({ mode: "native", tracking: { binding: null, legacy_connection_id: null }, trackerLabel: "", capabilities: null, connection: null }),
+      finalizeBlocker({ mode: "native", tracking: { binding: null }, trackerLabel: "", capabilities: null, connection: null }),
     ).toBeNull();
   });
 
   it("needs a binding, item creation, direct writes and a credential", () => {
     const input = { mode: "tracker" as const, tracking: bound, trackerLabel: "Jira", capabilities: CAPS, connection: conn };
     expect(finalizeBlocker(input)).toBeNull();
-    expect(finalizeBlocker({ ...input, tracking: { binding: null, legacy_connection_id: null } })).toMatchObject({
+    expect(finalizeBlocker({ ...input, tracking: { binding: null } })).toMatchObject({
       fix: "tracking",
       message: expect.stringContaining("no tracker bound"),
     });
-    expect(finalizeBlocker({ ...input, tracking: { binding: null, legacy_connection_id: 4 } })).toBeNull();
     expect(finalizeBlocker({ ...input, capabilities: { ...CAPS, create_items: false } })).toMatchObject({
       fix: null,
       message: expect.stringContaining("can't create items"),

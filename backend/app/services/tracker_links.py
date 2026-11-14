@@ -19,7 +19,7 @@ from app.connectors import get_connector
 from app.connectors.tracker import WorkTracker, is_tracker, tracker_enabled, tracker_label
 from app.core.events import publish
 from app.models.base import Provider, utcnow
-from app.models.integration import Connection, JiraLink, TrackerBinding
+from app.models.integration import Connection, TrackerBinding
 from app.models.project import Initiative, Project
 from app.services import tracker_sync
 from app.services.tracker_types import Scope
@@ -179,34 +179,3 @@ async def list_links(
         .order_by(col(TrackerBinding.id))
     )
     return list(rows.scalars().all())
-
-
-async def mirror_jira_link(session: AsyncSession, link: JiraLink) -> None:
-    """Keep a legacy `JiraLink` (the `/jira-links` alias) mirrored as a subtree binding, so
-    `/tracker-links` lists every link while the alias lives."""
-    binding = await upsert_subtree_binding(
-        session,
-        connection_id=link.connection_id,
-        provider=Provider.jira,
-        root_id=link.jira_issue_id,
-        root_key=link.jira_key,
-        root_type=link.jira_issue_type,
-        target_type=link.target_type,
-        target_id=link.target_id,
-    )
-    binding.last_synced_at = link.last_synced_at
-
-
-async def unmirror_jira_link(session: AsyncSession, link: JiraLink) -> None:
-    rows = (
-        await session.execute(
-            select(TrackerBinding).where(
-                TrackerBinding.connection_id == link.connection_id,
-                TrackerBinding.scope_kind == "subtree",
-            )
-        )
-    ).scalars().all()
-    for binding in rows:
-        if str((binding.scope or {}).get("root_id")) == link.jira_issue_id:
-            binding.active = False
-            binding.detached_at = utcnow()

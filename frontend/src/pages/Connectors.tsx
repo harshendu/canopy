@@ -9,6 +9,7 @@ import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
 import {
   buildConnectorConfig,
+  splitMirrorProject,
   connectorFields,
   missingRequired,
   providerOptions,
@@ -100,6 +101,7 @@ export default function Connectors() {
         name,
         token: token || null,
         config: vars.config,
+        project_id: vars.mirrorId,
       }),
     onSuccess: (conn, { mirrorId: bound }) => {
       setName("");
@@ -138,7 +140,8 @@ export default function Connectors() {
       return;
     }
     setError(null);
-    create.mutate({ config, mirrorId });
+    const body = splitMirrorProject(config, isTracker);
+    create.mutate({ config: body.config, mirrorId: body.projectId });
   };
 
   const sync = useMutation({

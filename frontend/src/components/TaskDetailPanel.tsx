@@ -19,7 +19,6 @@ import {
   boardQueryKey,
   canMove,
   fold,
-  trackerItemOf,
   trackerName,
   trackingFailure,
   viewerForRole,
@@ -230,7 +229,7 @@ function TaskStatusField({
   if (task.type === "summary") return null;
 
   if (!canopyOwned) {
-    const item = links.data ? trackerItemOf(links.data) : null;
+    const item = links.data?.tracker ?? null;
     const tracker = item?.label ?? trackerName(task.status_owner);
     const url = item?.url;
     return (
@@ -379,7 +378,13 @@ function TaskSprintField({
           </select>
         ) : (
           <span className="mt-1 block text-sm text-slate-700">
-            {current ? label(current) : (task.sprint ?? "Backlog (no sprint)")}
+            {current
+              ? label(current)
+              : task.sprint_id == null
+                ? "Backlog (no sprint)"
+                : sprints.data
+                  ? `Sprint #${task.sprint_id}`
+                  : "Loading…"}
           </span>
         )}
       </label>
@@ -599,7 +604,7 @@ function ExternalLinksSection({ taskId }: { taskId: number }) {
   const data = links.data;
   if (!data) return <p className="text-xs text-slate-400">Loading…</p>;
 
-  const item = trackerItemOf(data);
+  const item = data.tracker;
   const empty = !item && data.pull_requests.length === 0 && data.docs.length === 0;
   if (empty)
     return <p className="text-xs text-slate-400">No linked tracker item, pull requests, or docs.</p>;
