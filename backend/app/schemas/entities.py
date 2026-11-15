@@ -223,6 +223,8 @@ class TaskRead(BaseModel):
     delegated_at: datetime | None = None
     active_claim_id: int | None = None
     implements_adr_id: int | None = None
+    # A mirrored task canopy cleared to move: the status its tracker should show next (§17).
+    clearance_status: str | None = None
     tags: list[str] = []
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
@@ -902,6 +904,8 @@ class BoardTaskRead(BaseModel):
     claim: BoardClaimRead | None = None
     gate: BoardGateRead | None = None
     parked: bool = False
+    # A mirrored card canopy cleared to move: the status its tracker should show next (§17).
+    awaiting_move: str | None = None
 
 
 class BoardLaneRead(BaseModel):

@@ -6,6 +6,9 @@
   fencing that stops a lost session from writing anything.
 - `app/services/gates.py` is the only writer of a gate's `status` and `decision` — deciding is
   human-only, and every decision routes the task.
+- `app/services/work_service.py` is the only writer of a mirrored task's **clearance**
+  (`Task.clearance_status` / `clearance_at`, §17) — canopy clears moves it may not make, and
+  only the work service decides what was cleared.
 
 These static checks fail when new code writes those fields some other way."""
 
@@ -96,6 +99,23 @@ def test_active_claim_pointer_is_only_written_by_the_work_service() -> None:
             ):
                 offenders.append(f"{where}:{call.lineno}")
     assert offenders == [], f"Task.active_claim_id written outside work_service.py: {offenders}"
+
+
+def test_clearance_is_only_written_by_the_work_service() -> None:
+    offenders: list[str] = []
+    for path in _modules(WORK_SERVICE):
+        tree = ast.parse(path.read_text())
+        where = str(path.relative_to(APP))
+        for target, line in _assigned_attributes(tree):
+            if target.attr in ("clearance_status", "clearance_at"):
+                offenders.append(f"{where}:{line}")
+        for call in _calls(tree):
+            if any(k.arg in ("clearance_status", "clearance_at") for k in call.keywords) and (
+                (isinstance(call.func, ast.Attribute) and call.func.attr == "values")
+                or (isinstance(call.func, ast.Name) and call.func.id == "Task")
+            ):
+                offenders.append(f"{where}:{call.lineno}")
+    assert offenders == [], f"Task.clearance_* written outside work_service.py: {offenders}"
 
 
 def test_gate_status_and_decision_are_only_written_by_the_gate_service() -> None:

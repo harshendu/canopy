@@ -70,6 +70,7 @@ from app.schemas.work import (
     StageRead,
     SubmitRequest,
     SubmitResponse,
+    UsageReport,
     WorkEventRead,
 )
 from app.services import policy_service, stage_policy, work_brief, work_queue, work_service
@@ -139,6 +140,7 @@ async def gate_read(session: SessionDep, gate: Gate, caller: Caller | None = Non
     read.age_hours = round(max(0.0, (utcnow() - gate.created_at).total_seconds()) / 3600, 1)
     read.may_decide = may
     read.waiting_for_evidence = gate.status == GateStatus.approved.value and gate.routed_at is None
+    read.tracker_transition = work_service.tracker_transition(task) if task is not None else None
     return read
 
 
@@ -245,7 +247,8 @@ async def create_claim(
     task = await _task(session, claim.task_id)
     await work_service.notify(task.project_id, task.id, claim_id=claim.id)
     brief = await work_brief.build_brief(session, task, claim=claim)
-    return ClaimResponse(claim=ClaimRead.model_validate(claim), brief=brief)
+    return ClaimResponse(claim=ClaimRead.model_validate(claim), brief=brief,
+                         tracker_transition=work_service.tracker_transition(task))
 
 
 @router.get("/work/claims", response_model=list[ClaimRead])
@@ -436,7 +439,8 @@ async def submit(
     await work_service.notify(result.task.project_id, result.task.id, claim_id=claim_id)
     return SubmitResponse(
         claim=ClaimRead.model_validate(result.claim), task=TaskRead.model_validate(result.task),
-        moved_to=result.moved_to,
+        moved_to=result.moved_to, cleared_to=result.cleared_to,
+        tracker_transition=work_service.tracker_transition(result.task),
         gate=await gate_read(session, result.gate, caller) if result.gate is not None else None,
         evaluation=result.evaluation, warnings=result.warnings,
     )
@@ -455,7 +459,7 @@ async def release(
         as_planner = not holder and not caller.is_agent and await _may_plan(session, caller, task)
         await work_service.release_work(
             session, claim, caller, reason=payload.reason, note=payload.note,
-            needs_human=payload.needs_human, as_planner=as_planner,
+            needs_human=payload.needs_human, as_planner=as_planner, usage=payload.usage,
         )
     except WorkError as exc:
         await session.rollback()
@@ -463,6 +467,23 @@ async def release(
     await session.commit()
     await session.refresh(claim)
     await work_service.notify(task.project_id, task.id, claim_id=claim.id)
+    return claim
+
+
+@router.post("/work/claims/{claim_id}/usage", response_model=ClaimRead)
+async def report_usage(
+    session: SessionDep, caller: CallerDep, claim_id: int, payload: UsageReport
+) -> WorkClaim:
+    """A runner reports what the session under this claim cost (turns, tokens, USD) — also
+    after the session ended the claim. The claim's own token only; within a day of the end."""
+    try:
+        claim = await work_service.get_claim(session, claim_id)
+        work_service.record_usage(claim, caller, payload.model_dump())
+    except WorkError as exc:
+        await session.rollback()
+        raise http(exc) from exc
+    await session.commit()
+    await session.refresh(claim)
     return claim
 
 
@@ -568,6 +589,7 @@ async def execution(
         events=[WorkEventRead.model_validate(e) for e in events],
         exit_contract=work_brief.exit_contract(pipeline, stage) if stage is not None else None,
         readiness=readiness,
+        tracker_transition=work_service.tracker_transition(task),
     )
 
 

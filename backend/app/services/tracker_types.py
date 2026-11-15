@@ -33,6 +33,9 @@ class TrackerCapabilities:
     update_items: bool = False
     estimates: bool = False  # story points on pushed items
     oauth: bool = False
+    # Post a comment on an item — content only: an approved plan onto its mirrored ticket
+    # (docs/AGENT_EXECUTION.md §17), triggered only by a person's decision in canopy.
+    comments: bool = False
 
 
 @dataclass(frozen=True)

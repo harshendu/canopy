@@ -308,3 +308,21 @@ jobs:
           kill "$pid" || true
           cat per_caller.log
           test "$anonymous" = "401" && test "$forged" = "401"
+
+  runner:
+    name: Reference SDK runner unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runners/sdk
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # The unit tests fake canopy, git and the session, so the Agent SDK isn't needed here.
+      - run: pip install "httpx>=0.28.1" pytest "ruff==0.17.0"
+      - run: ruff check --isolated --select F,E9,B,I --line-length 100 .
+      - run: python -m pytest -q

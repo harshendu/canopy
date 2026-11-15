@@ -71,6 +71,7 @@ function card(id: number, overrides: Partial<Card> = {}): Card {
     claim: null,
     gate: null,
     parked: false,
+    awaiting_move: null,
     ...overrides,
   };
 }

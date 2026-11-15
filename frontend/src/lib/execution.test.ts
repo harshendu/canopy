@@ -12,6 +12,7 @@ import {
   isParked,
   reasonText,
   refusalText,
+  trackerMoveText,
   waitedPhrase,
 } from "./execution";
 
@@ -114,5 +115,21 @@ describe("refusalText", () => {
       refusalText(new Error('{"detail":{"code":"not_an_approver","message":"You can\'t decide"}}')),
     ).toBe("You can't decide");
     expect(refusalText(new Error("Bad Gateway"))).toBe("Bad Gateway");
+  });
+});
+
+describe("mirrored projects", () => {
+  it("says what to move where, and words the clearance events", () => {
+    expect(trackerMoveText({ key: "SHOP-12", provider: "jira", to_status: "In Review" })).toBe(
+      "Move SHOP-12 to In Review in Jira",
+    );
+    expect(eventText({ kind: "cleared", data: { to: "In Review" } })).toMatch(/Cleared to move to In Review/);
+    expect(eventText({ kind: "tracker_moved", data: { from: "To Do", to: "In Progress" } })).toBe(
+      "The tracker moved it To Do → In Progress",
+    );
+    expect(eventText({ kind: "moved_without_clearance", data: { from: "In Review", to: "Done" } })).toMatch(
+      /In Review → Done in the tracker without canopy's clearance/,
+    );
+    expect(reasonText("awaiting_tracker_move")).toMatch(/waiting for its tracker/);
   });
 });

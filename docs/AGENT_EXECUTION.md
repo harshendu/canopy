@@ -1,8 +1,9 @@
 # Agent execution — canopy as the work queue, state store and policy keeper for delivery agents
 
-> **Status: being built in the phases of §21.** Phases 0–2 have landed (PR signals and
+> **Status: being built in the phases of §21.** Phases 0–3 have landed (PR signals and
 > attribution; the work queue, gates and worker verbs; stage policy, rules, reviewer/QA roles and
-> the agent-flow measures). This document designs how agent sessions (Claude Code first, any MCP
+> the agent-flow measures; mirrored projects, outbound notifications and the reference runner —
+> [`AGENT_RUNNERS.md`](./AGENT_RUNNERS.md)). This document designs how agent sessions (Claude Code first, any MCP
 > client in principle) pull delegated tasks from canopy, work them with the context canopy
 > already holds, and move them through gated stages to done — with humans deciding at the points
 > that matter, in the canopy UI.
@@ -1382,7 +1383,8 @@ work advances.
 
 - **Policy attaches to the tracker's statuses.** A mirrored project's columns are its binding's
   status map (§C9.1). A `StagePolicy` owned by the binding (`owner_type = binding`) keys a
-  policy to one of those statuses, edited on the Tracking tab.
+  policy to one of those statuses, edited in the Agents view's pipeline panel like a native
+  project's.
 - **Claiming moves nothing.** The claim is canopy's; the board shows the claim badge on a card
   whose status the tracker still owns.
 - **`submit_work` clears; it does not move.** canopy evaluates the policy and answers

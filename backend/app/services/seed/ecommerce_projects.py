@@ -283,6 +283,10 @@ _ONEPAGE = ProjectSpec(
         # Delegated, waiting for a session (this project keeps the default pipeline, which
         # only warns about unfinished predecessors).
         AgentWorkSpec("A/B test vs legacy checkout", "ready", components=("web-checkout",)),
+        # A Jira-owned ticket delegated to agents (mirrored work advances by clearance, §17):
+        # held back by its open blocker — the payments team's tokenization API.
+        AgentWorkSpec("Integrate tokenized payments", "ready",
+                      components=("payment-gateway", "checkout-api")),
     ),
 )
 

@@ -88,10 +88,12 @@ async def save_policies(
     session: AsyncSession, user: User, view: WorkflowView, policies: dict[str, Any],
     *, team_id: int | None, project_id: int | None, template: str | None = None,
 ) -> stage_policy.Pipeline:
-    """Replace the policies of `view`'s columns (raises `stage_policy.PolicyError`)."""
-    assert view.id is not None
-    pipeline = await policy_store.save(session, workflow_id=view.id, columns=view.columns,
-                                       policies=policies, user_id=user.id)
+    """Replace the policies of `view`'s columns — a workflow's, or a mirrored project's tracker
+    binding's (raises `stage_policy.PolicyError`)."""
+    owner = policy_store.owner_of(view)
+    assert owner is not None
+    pipeline = await policy_store.save(session, workflow_id=owner[1], owner_type=owner[0],
+                                       columns=view.columns, policies=policies, user_id=user.id)
     await record_policy_change(session, user, view, pipeline, team_id=team_id,
                                project_id=project_id, template=template)
     return pipeline

@@ -90,6 +90,7 @@ from app.models.integration import (
     TrackerBinding,
 )
 from app.models.leadership import InitiativeLead, LeadershipNote
+from app.models.notify import OutboundWebhook
 from app.models.org import Pod, Team, TeamMember
 from app.models.outcome import Outcome
 from app.models.policy import DeliveryRule, StagePolicy
@@ -1310,6 +1311,21 @@ async def _build_rules(session: AsyncSession, refs: _Refs) -> None:
             created_by_user_id=owner.id if owner is not None else None))
 
 
+async def _build_webhooks(session: AsyncSession, refs: _Refs) -> None:
+    """Example outbound webhooks (§AE10), switched off — the Notifications pages show the
+    setup without sending anything to placeholder URLs."""
+    owner = refs.users.get(refs.ds.agent_owner_email or "")
+    for spec in refs.ds.webhooks:
+        where = _rule_scope(refs, spec.scope)
+        if where is None:
+            continue
+        level, scope_id = where
+        await _add(session, OutboundWebhook(
+            scope_level=level.value, scope_id=scope_id, name=spec.name, url=spec.url,
+            format=spec.format, events=list(spec.events), enabled=spec.enabled,
+            created_by_user_id=owner.id if owner is not None else None))
+
+
 async def load_seed_data(
     session: AsyncSession, keep_user_ids: set[int], dataset: Dataset | None = None
 ) -> dict[str, int]:
@@ -1332,6 +1348,7 @@ async def load_seed_data(
     await _build_rules(session, refs)
     await _build_agent_work(session, refs)
     await _build_stage_policies(session, refs)
+    await _build_webhooks(session, refs)
     await session.commit()
     return await seed_summary(session)
 
@@ -1361,5 +1378,6 @@ async def seed_summary(session: AsyncSession) -> dict[str, int]:
         "activity_events": ActivityEvent, "status_history": TaskStatusHistory,
         "documents": DocReference, "proposals": Proposal, "work_claims": WorkClaim,
         "gates": Gate, "stage_policies": StagePolicy, "rules": DeliveryRule,
+        "webhooks": OutboundWebhook,
     }
     return {name: await _count(session, model) for name, model in models.items()}

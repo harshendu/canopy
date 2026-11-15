@@ -132,6 +132,7 @@ function normalizeCard(t: BoardTaskItem, projectId: number): Card {
     claim: t.claim ?? null,
     gate: t.gate ?? null,
     parked: t.parked ?? false,
+    awaiting_move: t.awaiting_move ?? null,
   };
 }
 

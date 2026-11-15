@@ -56,6 +56,7 @@ async def test_seed_loader_builds_a_full_coherent_dataset(db_session):
     assert counts["proposals"] == 2  # open change proposals awaiting review
     assert counts["stage_policies"] >= 4  # the agentic-delivery template on PAYMENTS
     assert counts["rules"] == len(seed.get_dataset().rules)
+    assert counts["webhooks"] == len(seed.get_dataset().webhooks)
 
 
 @pytest.mark.asyncio
@@ -118,6 +119,19 @@ async def test_seed_agent_work_covers_every_state(db_session):
     work = await work_service.load_project_work(db_session, projects["PAYMENTS"])
     assert [s.status_name for s in work.pipeline.stages if s.worked_by] == [
         "In Progress", "In Review", "QA", "Sign-off"]
+
+    # The flagship is mirrored from Jira, and a Jira-owned ticket can be delegated (§17); this
+    # one waits on its open blocker, so nothing is offered or cleared.
+    jira_task = await task("ONEPAGE", "Integrate tokenized payments")
+    assert jira_task.status_owner == "jira" and jira_task.clearance_status is None
+    onepage = await work_service.find_work(db_session, caller, "implementer",
+                                           project_id=projects["ONEPAGE"].id)
+    assert jira_task.id not in {item.task.id for item in onepage.ready}
+    assert onepage.reasons.get("blocked")
+    # No webhook is switched on in the demo, so nothing was queued to send.
+    from app.models.notify import OutboxMessage
+
+    assert (await db_session.execute(select(OutboxMessage))).scalars().all() == []
 
 
 @pytest.mark.asyncio
@@ -454,6 +468,16 @@ def _check_references(ds: Dataset) -> None:
         if r.source_adr is not None:
             assert level == "project", r.key
             assert r.source_adr in {a.title for a in projects[key].adrs}, (r.key, r.source_adr)
+
+    # Webhooks live at real scopes and hear real events.
+    from app.services.notify import EVENTS, FORMATS
+
+    for h in ds.webhooks:
+        level, _, key = h.scope.partition(":")
+        assert level != "team" or key in teams, h.scope
+        assert level != "project" or key in projects, h.scope
+        assert set(h.events) <= set(EVENTS) and h.format in FORMATS, h.name
+        assert h.url.startswith("https://"), h.url
 
     # Hand-offs name real tasks and stay inside one initiative (the API enforces the same).
     for (pk, t_pred), (sk, t_succ) in ds.cross_project_handoffs:

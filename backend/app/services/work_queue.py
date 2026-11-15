@@ -38,6 +38,8 @@ REASON_NOT_PERMITTED = "not_permitted"
 REASON_ROLE_NOT_ALLOWED = "role_not_allowed"
 REASON_NO_OWNER = "no_accountable_owner"
 REASON_SAME_ACTOR = "same_actor"
+# A mirrored task canopy cleared to move: nothing is offered until its tracker shows the move.
+REASON_AWAITING_TRACKER = "awaiting_tracker_move"
 
 # Attempts that count toward parking: the session didn't finish the stage's work.
 UNFINISHED_OUTCOMES = frozenset(
@@ -76,6 +78,8 @@ class TaskFacts:
     in_active_sprint: bool | None = None  # None = no sprint constraint applies
     # Unfinished attempts per stage (casefolded name) since the last reset.
     stage_attempts: dict[str, int] = field(default_factory=dict)
+    # A mirrored task canopy cleared to move but whose tracker doesn't show it yet (§17).
+    awaiting_move: str | None = None
 
 
 @dataclass
@@ -157,6 +161,8 @@ def readiness(
         return Readiness.no(REASON_CLAIMED, stage=name)
     if task.open_gates:
         return Readiness.no(REASON_GATE_OPEN, stage=name)
+    if task.awaiting_move:
+        return Readiness.no(REASON_AWAITING_TRACKER, stage=name, detail=task.awaiting_move)
     if task.open_blockers:
         return Readiness.no(REASON_BLOCKED, stage=name)
     if pull and entry_failures:

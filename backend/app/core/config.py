@@ -97,6 +97,22 @@ class Settings(BaseSettings):
     # than this (hours) while intake is on means nobody is running workers for its role.
     WORK_CLAIM_OVERRUN_HOURS: int = 8
     WORK_UNCLAIMED_HOURS: int = 24
+    # A mirrored ticket canopy cleared to move but whose tracker doesn't show it after this long
+    # raises `clearance_waiting` (docs/AGENT_EXECUTION.md §17).
+    WORK_CLEARANCE_HOURS: int = 24
+
+    # --- Outbound notifications (webhooks, Slack, email — USER_FLOWS §AE9) ---
+    # Email the people who may decide a gate when it opens, waits past its reminder or escalates.
+    NOTIFY_EMAIL_GATES: bool = False
+    SMTP_HOST: str = ""  # empty = no email
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "canopy@localhost"
+    SMTP_STARTTLS: bool = True
+    # Outbound webhooks go to public https destinations only; true allows http and private
+    # addresses (local development — never in production).
+    OUTBOUND_WEBHOOKS_ALLOW_PRIVATE: bool = False
 
     # --- OAuth 2.0 (3LO) ---
     # The provider redirects here after consent; must match the app registration.

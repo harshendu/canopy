@@ -39,7 +39,7 @@ async def stored_policies(
     policies of the workflow the project's columns come from ({} for the built-in default)."""
     from app.services import policy_store
 
-    return await policy_store.policies_for(session, view.id)
+    return await policy_store.policies_of_view(session, view)
 
 
 async def resolve_pipeline(session: AsyncSession, project: Project) -> Pipeline:

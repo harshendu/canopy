@@ -204,6 +204,8 @@ class WorkflowView:
     wip_enforcement: str
     columns: list[flow.ColumnDef] = field(default_factory=list)
     inherited: bool = False
+    # A tracker view's binding (scope "tracker"): its stage policies are the binding's.
+    binding_id: int | None = None
 
     def column(self, name: str | None) -> flow.ColumnDef | None:
         if name is None:
@@ -346,6 +348,7 @@ async def tracker_view(session: AsyncSession, project: Project) -> WorkflowView 
             for i, c in enumerate(sorted(columns, key=lambda c: c.position))
         ],
         inherited=False,
+        binding_id=binding.row.id,
     )
 
 

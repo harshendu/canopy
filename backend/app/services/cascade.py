@@ -38,6 +38,7 @@ from app.models.draft import DraftPlan, DraftTask
 from app.models.gate import Gate
 from app.models.integration import ExternalRef, PullRequest, TrackerBinding
 from app.models.leadership import LeadershipNote
+from app.models.notify import OutboundWebhook, OutboxMessage
 from app.models.outcome import Outcome
 from app.models.policy import DeliveryRule, StagePolicy
 from app.models.project import (
@@ -268,9 +269,24 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
         delete(StagePolicy).where(
             col(StagePolicy.owner_type) == "workflow", col(StagePolicy.owner_id).in_(workflow_ids)
         ),
+        # a mirrored project's policies belong to its tracker bindings (deleted below)
+        delete(StagePolicy).where(
+            col(StagePolicy.owner_type) == "binding",
+            col(StagePolicy.owner_id).in_(
+                select(col(TrackerBinding.id)).where(
+                    col(TrackerBinding.target_type) == "project",
+                    col(TrackerBinding.target_id) == pid,
+                )
+            ),
+        ),
         delete(DeliveryRule).where(
             col(DeliveryRule.scope_level) == "project", col(DeliveryRule.scope_id) == pid
         ),
+        # outbound notifications: the project's webhooks and whatever it queued
+        delete(OutboundWebhook).where(
+            col(OutboundWebhook.scope_level) == "project", col(OutboundWebhook.scope_id) == pid
+        ),
+        delete(OutboxMessage).where(col(OutboxMessage.project_id) == pid),
         delete(WorkflowStatus).where(col(WorkflowStatus.workflow_id).in_(workflow_ids)),
         delete(Workflow).where(col(Workflow.project_id) == pid),
         # agent work: gates (→ claims, artifacts) → artifacts (→ claims) → claims, the event

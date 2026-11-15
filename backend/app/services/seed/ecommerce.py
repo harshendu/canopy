@@ -45,6 +45,7 @@ from app.services.seed.catalog import (
     ScenarioMilestonePull,
     ScenarioSpec,
     TeamSpec,
+    WebhookSpec,
 )
 from app.services.seed.ecommerce_projects import PROJECTS
 
@@ -698,6 +699,14 @@ RULES: tuple[RuleSpec, ...] = (
 )
 
 
+WEBHOOKS: tuple[WebhookSpec, ...] = (
+    WebhookSpec("team:SHOP", "Shopping Experience decisions", "https://hooks.slack.example.com/"
+                "services/T000/B000/demo", ("gate.opened", "gate.escalated"), format="slack"),
+    WebhookSpec("project:PAYMENTS", "Payments runner", "https://runner.shop.example.com/canopy",
+                ("work.ready", "gate.decided")),
+)
+
+
 ECOMMERCE = Dataset(
     key="ecommerce",
     name="Online retail — e-commerce",
@@ -730,4 +739,5 @@ ECOMMERCE = Dataset(
     proposals=PROPOSALS,
     agent_owner_email=_email("rahul"),
     rules=RULES,
+    webhooks=WEBHOOKS,
 )

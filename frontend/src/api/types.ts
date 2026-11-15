@@ -799,6 +799,8 @@ export interface BoardTaskItem {
   claim?: BoardClaim | null;
   gate?: BoardGate | null;
   parked?: boolean;
+  /** A mirrored card canopy cleared to move: the status its tracker should show next (§17). */
+  awaiting_move?: string | null;
 }
 
 /** The session working a card. */
@@ -2116,6 +2118,7 @@ export interface Gate {
   may_decide: boolean;
   /** Approved, but the next column's checks aren't met yet (e.g. the PR isn't merged). */
   waiting_for_evidence: boolean;
+  tracker_transition?: TrackerTransition | null;
 }
 
 export interface WorkEvent {
@@ -2169,6 +2172,17 @@ export interface TaskExecution {
   events: WorkEvent[];
   exit_contract: Record<string, unknown> | null;
   readiness: { intake: AgentIntake; by_role: Record<string, RoleReadiness> } | null;
+  tracker_transition?: TrackerTransition | null;
+}
+
+/** A move canopy cleared on a mirrored ticket but may not make itself (§17): someone makes it
+ *  in the tracker (or the tracker's automation does), and canopy sees it on the next sync. */
+export interface TrackerTransition {
+  key: string | null;
+  provider: string;
+  from_status: string | null;
+  to_status: string;
+  cleared_at: string | null;
 }
 
 export interface DelegationResponse {
@@ -2287,7 +2301,7 @@ export interface StageColumn {
 }
 
 export interface PipelineRead {
-  scope: "project" | "team" | "template" | "default";
+  scope: "project" | "team" | "template" | "default" | "tracker";
   inherited: boolean;
   workflow_id: number | null;
   team_id: number | null;
@@ -2391,4 +2405,55 @@ export interface AgentFlow {
   unassisted_share: number | null;
   agent_tasks_done: number;
   cost_per_task_usd: number | null;
+}
+
+// --- Outbound notifications (USER_FLOWS §AE9) ---
+
+export type WebhookEvent = "work.ready" | "gate.opened" | "gate.reminder" | "gate.escalated" | "gate.decided";
+
+export interface OutboundWebhook {
+  id: number;
+  scope_level: RuleScope;
+  scope_id: number;
+  scope_name: string | null;
+  name: string;
+  /** The full URL only for people who may edit it (a Slack URL is a credential). */
+  url: string;
+  format: "json" | "slack";
+  events: WebhookEvent[];
+  has_secret: boolean;
+  enabled: boolean;
+  last_delivery_at: string | null;
+  last_status: string | null;
+  consecutive_failures: number;
+  can_edit: boolean;
+  created_at: string;
+}
+
+export interface WebhookCatalog {
+  events: WebhookEvent[];
+  formats: ("json" | "slack")[];
+  email_enabled: boolean;
+  signature_header: string;
+}
+
+export interface WebhookDelivery {
+  id: number;
+  event: string;
+  channel: string;
+  status: "pending" | "sent" | "failed";
+  attempts: number;
+  task_id: number | null;
+  response_status: number | null;
+  last_error: string | null;
+  created_at: string;
+  sent_at: string | null;
+  next_attempt_at: string;
+}
+
+export interface WebhookTestResult {
+  delivered: boolean;
+  status: string;
+  response_status: number | null;
+  error: string | null;
 }

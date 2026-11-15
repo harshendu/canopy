@@ -15,6 +15,7 @@ import {
   gateLabel,
   isParked,
   refusalText,
+  trackerMoveText,
   waitedPhrase,
 } from "../lib/execution";
 import { evidenceChecks, type EvidenceCheck } from "../lib/policy";
@@ -89,6 +90,15 @@ export default function GateReview() {
                   From an agent session acting for {gate.requester_name}.
                 </p>
               )}
+            </section>
+          )}
+          {gate.tracker_transition && (
+            <section className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+              <h2 className="font-semibold">{trackerMoveText(gate.tracker_transition)}</h2>
+              <p className="mt-1">
+                This ticket's status belongs to its tracker, so canopy cleared the move instead of making it. Make it
+                there (or let the tracker's automation); canopy picks it up on the next sync.
+              </p>
             </section>
           )}
           {gate.reasons.length > 0 && (

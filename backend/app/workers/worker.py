@@ -115,12 +115,24 @@ async def reap_work_claims(ctx: dict[str, Any]) -> dict[str, int]:
     """Agent work (docs/AGENT_EXECUTION.md §6.3, §9.4): expire claims whose lease lapsed — the
     task returns to the queue, or parks once its attempts are used up — and widen who may
     decide gates that have waited past their threshold. Never approves anything."""
-    from app.services import gates, work_service
+    from app.services import gates, notify, work_service
 
     async with async_session_factory() as session:
         expired = await work_service.reap_expired(session)
         escalated = await gates.sweep(session)
-    return {"expired": expired, "escalated": escalated}
+        # Reminders past due, and work that became ready without a canopy action.
+        queued = await notify.sweep(session)
+        delivered = await notify.deliver_due(session)
+    return {"expired": expired, "escalated": escalated, "queued": queued, **delivered}
+
+
+async def deliver_outbox(ctx: dict[str, Any]) -> dict[str, int]:
+    """Send what the outbox holds (webhooks, Slack, email, comments on mirrored tickets) —
+    kicked after a change queues something, and every minute as the safety net."""
+    from app.services import notify
+
+    async with async_session_factory() as session:
+        return await notify.deliver_due(session)
 
 
 async def startup(ctx: dict[str, Any]) -> None:
@@ -151,6 +163,7 @@ class WorkerSettings:
         capture_risk_snapshots,
         poll_file_drops,
         reap_work_claims,
+        deliver_outbox,
     ]
     cron_jobs: ClassVar = [
         cron(tracker_incremental_sync, minute=_poll_minutes, run_at_startup=False),
@@ -161,6 +174,8 @@ class WorkerSettings:
         cron(poll_file_drops, minute=_drop_minutes, run_at_startup=False),
         # Agent work: lapsed leases back to the queue, waiting gates escalated.
         cron(reap_work_claims, minute=_reaper_minutes, run_at_startup=False),
+        # Outbound notifications: whatever is due (the change that queued it also kicks this).
+        cron(deliver_outbox, run_at_startup=False),
     ]
     on_startup = startup
     on_shutdown = shutdown

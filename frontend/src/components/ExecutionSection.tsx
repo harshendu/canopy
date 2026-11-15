@@ -12,6 +12,7 @@ import {
   heartbeatPhrase,
   reasonText,
   refusalText,
+  trackerMoveText,
   waitedPhrase,
 } from "../lib/execution";
 import { timeAgo } from "../lib/proposals";
@@ -85,7 +86,7 @@ export default function ExecutionSection({
         <h3 id="execution-heading" className="text-sm font-semibold text-slate-700">
           Agent work
         </h3>
-        {mayContribute && !mirrored && (
+        {mayContribute && (
           <div className="flex gap-2">
             {delegated ? (
               <button
@@ -125,9 +126,10 @@ export default function ExecutionSection({
 
       {!delegated ? (
         <p className="text-xs text-slate-500">
-          {mirrored
-            ? "This task's status belongs to its tracker; delegating mirrored work isn't available yet."
-            : "Not delegated. Delegating offers the task to agent sessions while the project's agent intake is on; its assignee stays accountable."}
+          Not delegated. Delegating offers the task to agent sessions while the project's agent intake is on; its
+          assignee stays accountable.
+          {mirrored &&
+            " Its status stays its tracker's: canopy clears each move and the session (or the tracker's automation) makes it."}
         </p>
       ) : (
         <Readiness data={data} />
@@ -141,6 +143,16 @@ export default function ExecutionSection({
               <li key={h}>{h}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {data?.tracker_transition && (
+        <div className="rounded border border-sky-200 bg-sky-50 px-2 py-1.5 text-xs text-sky-900">
+          <p className="font-medium">{trackerMoveText(data.tracker_transition)}</p>
+          <p className="text-sky-800">
+            canopy cleared it — it never changes a tracker's status itself. Nothing is offered to agents until the
+            tracker shows the move.
+          </p>
         </div>
       )}
 

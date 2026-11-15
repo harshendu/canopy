@@ -96,6 +96,7 @@ describe("policy wording", () => {
     expect(policyPath("team", { teamId: 2 })).toBe("/teams/2/workflow/policy");
     expect(policyPath("template", {})).toBe("/workflows/template/policy");
     expect(policyPath("default", { projectId: 3 })).toBeNull();
+    expect(policyPath("tracker", { projectId: 3 })).toBe("/projects/3/workflow/policy");
   });
 
   it("formats shares and durations", () => {

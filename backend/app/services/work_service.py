@@ -176,8 +176,12 @@ def record_event(
 
 
 async def notify(project_id: int, task_id: int | None = None, **extra: Any) -> None:
-    """Live refresh for boards, task panels, the Agents view and the inbox (§K)."""
+    """Live refresh for boards, task panels, the Agents view and the inbox (§K) — and, when the
+    change queued outbound notifications, a nudge to the worker that delivers them."""
     await publish({"type": "work", "project_id": project_id, "task_id": task_id, **extra})
+    from app.services import notify as outbound
+
+    await outbound.kick()
 
 
 # --------------------------------------------------------------------------- #
@@ -309,6 +313,7 @@ async def load_project_work(
             open_blockers=blockers_open.get(task.id, 0),
             in_active_sprint=None if sprint_ids is None else task.sprint_id in sprint_ids,
             stage_attempts=stage_attempts(claims, resets.get(task.id), pipeline),
+            awaiting_move=awaiting_move(task),
         )
     wip_full: set[str] = set()
     view = await resolve_workflow(session, project)
@@ -613,7 +618,12 @@ async def _try_claim(
         .execution_options(synchronize_session=False)
     )
     await session.refresh(task)
-    if pull:
+    if pull and is_mirrored(task):
+        # canopy doesn't write a tracker's status: the claim is canopy's, and the session moves
+        # the ticket into the stage itself (§17) — the expected move, not an unsanctioned one.
+        clear_for_tracker(session, task, stage.status_name, caller=caller, claim=claim,
+                          reason="claimed")
+    elif pull:
         try:
             await move_task(
                 session, task, to_status=stage.status_name, author=caller.name,
@@ -736,6 +746,23 @@ async def get_claim(session: AsyncSession, claim_id: int) -> WorkClaim:
     if claim is None:
         raise WorkError("not_found", "Claim not found", 404)
     return claim
+
+
+USAGE_REPORT_WINDOW = timedelta(hours=24)
+
+
+def record_usage(claim: WorkClaim, caller: Caller, usage: dict[str, Any],
+                 now: datetime | None = None) -> None:
+    """A runner reports what its session cost after the fact (the session may have ended the
+    claim itself): merged into the claim's usage, by the claim's own token, within a day."""
+    ensure_holder(claim, caller)
+    now = now or utcnow()
+    ended = claim.finished_at or now
+    if now - ended > USAGE_REPORT_WINDOW:
+        raise WorkError("usage_too_late", "Report a claim's usage within a day of it ending",
+                        409)
+    clean = {k: v for k, v in usage.items() if v is not None}
+    claim.usage = {**(claim.usage or {}), **clean, "reported_by": "runner"}
 
 
 def ensure_holder(claim: WorkClaim, caller: Caller) -> None:
@@ -1142,6 +1169,8 @@ class SubmitResult:
     moved_to: str | None = None
     gate: Gate | None = None
     warnings: list[str] = field(default_factory=list)
+    # A mirrored task: canopy cleared the move instead of making it (§17).
+    cleared_to: str | None = None
 
 
 async def submit_work(
@@ -1256,24 +1285,32 @@ async def submit_work(
     if returning:
         rework = await gates.rework_rounds(session, task, target.status_name)
         rework_exhausted = rework + 1 > target.max_rework
-    try:
-        await move_task(session, task, to_status=target.status_name, author=caller.name,
-                        actor_kind=caller.actor_kind, work_claim_id=claim.id)
-    except TrackingError as exc:
-        raise WorkError(exc.code, exc.message, exc.status_code, **exc.extra) from exc
+    mirrored = is_mirrored(task)
+    if mirrored:
+        # The tracker owns the status: canopy clears the move and the session (or the tracker's
+        # automation) makes it; nothing is offered until the tracker shows it (§17).
+        clear_for_tracker(session, task, target.status_name, caller=caller, claim=claim,
+                          reason="returned" if returning else "handed_off")
+    else:
+        try:
+            await move_task(session, task, to_status=target.status_name, author=caller.name,
+                            actor_kind=caller.actor_kind, work_claim_id=claim.id)
+        except TrackingError as exc:
+            raise WorkError(exc.code, exc.message, exc.status_code, **exc.extra) from exc
     record_event(
         session,
         kind=WorkEventKind.returned if returning else WorkEventKind.advanced,
         project_id=task.project_id, task_id=task.id, caller=caller, claim_id=claim.id,
         artifact_id=artifact.id,
         data={"from": stage.status_name, "to": target.status_name, "stage": target.status_name,
-              "verdict": verdict},
+              "verdict": verdict, **({"cleared": True} if mirrored else {})},
     )
     await end_claim(session, claim, state=ClaimState.completed,
                     outcome=ClaimOutcome.returned if returning else ClaimOutcome.advanced,
                     reason="handed_off", caller=caller, usage=usage)
     out = SubmitResult(claim=claim, task=task, evaluation=evaluation,
-                       moved_to=target.status_name,
+                       moved_to=None if mirrored else target.status_name,
+                       cleared_to=target.status_name if mirrored else None,
                        warnings=[w["check"] for w in evaluation.get("warnings", [])])
     if rework_exhausted:
         out.gate = await gates.open_gate(
@@ -1288,6 +1325,9 @@ async def submit_work(
     elif target.is_decision_column:
         out.gate = await gates.open_column_gate(session, task, target, caller=caller,
                                                 claim=claim, evidence=evaluation)
+    from app.services import notify as outbound
+
+    await outbound.queue_ready_for_task(session, task)
     return out
 
 
@@ -1328,6 +1368,7 @@ async def release_work(
     note: str | None = None,
     needs_human: bool = False,
     as_planner: bool = False,
+    usage: dict[str, Any] | None = None,
 ) -> Gate | None:
     """Give the task back (a note for the next session), or — with `needs_human` — say a person
     is needed: the attempt is `failed` and an escalation gate opens. A planner may release
@@ -1345,7 +1386,8 @@ async def release_work(
         else (ClaimState.released, ClaimOutcome.released)
     )
     await end_claim(session, claim, state=state, outcome=outcome,
-                    reason="released_by_planner" if as_planner else reason[:120], caller=caller)
+                    reason="released_by_planner" if as_planner else reason[:120], caller=caller,
+                    usage=usage)
     from app.services import gates
 
     if needs_human:
@@ -1360,6 +1402,9 @@ async def release_work(
         stage = pipeline.stage(claim.stage)
         if stage is not None:
             await park_if_exhausted(session, task, stage)
+    from app.services import notify as outbound
+
+    await outbound.queue_ready_for_task(session, task)
     return None
 
 
@@ -1478,14 +1523,6 @@ async def set_delegation(
     assert task.id is not None
     if task.type == TaskType.summary:
         raise WorkError("not_a_leaf", "Phases (summary tasks) can't be delegated", 422)
-    if delegation is not None and task.status_owner != CANOPY_OWNER:
-        raise WorkError(
-            "status_externally_owned",
-            "This task's status belongs to its tracker; delegating mirrored work arrives with "
-            "mirrored-project support",
-            409,
-            provider=task.status_owner,
-        )
     if delegation is not None and delegation != Delegation.agent.value:
         raise WorkError("bad_delegation", "delegation must be 'agent' or null", 422)
     previous = task.delegation
@@ -1496,6 +1533,7 @@ async def set_delegation(
     if delegation:
         hints = await readiness_hints(session, task)
     else:
+        drop_clearance(task)
         await supersede_claims(session, task, "undelegated", caller)
         from app.services import gates
 
@@ -1503,6 +1541,11 @@ async def set_delegation(
     if previous != delegation:
         record_event(session, kind=WorkEventKind.delegated, project_id=task.project_id,
                      task_id=task.id, caller=caller, data={"delegation": delegation})
+    if delegation:
+        # After the delegation event, so the announcement is stamped with this readiness.
+        from app.services import notify as outbound
+
+        await outbound.queue_ready_for_task(session, task)
     return hints
 
 
@@ -1532,6 +1575,10 @@ async def set_intake(
                      task_id=None, caller=caller,
                      data={"from": project.agent_intake, "to": value, "stopped": stopped})
     project.agent_intake = value
+    if value == AgentIntake.on.value:
+        from app.services import notify as outbound
+
+        await outbound.queue_ready(session, project)
     return stopped
 
 
@@ -1550,6 +1597,103 @@ async def take_over(session: AsyncSession, task: Task, caller: Caller) -> None:
         record_event(session, kind=WorkEventKind.delegated, project_id=task.project_id,
                      task_id=task.id, caller=caller,
                      data={"delegation": None, "taken_over": True})
+
+
+# --------------------------------------------------------------------------- #
+# Mirrored projects (§17): canopy clears, the tracker moves
+# --------------------------------------------------------------------------- #
+
+
+def is_mirrored(task: Task) -> bool:
+    """The task's status belongs to a tracker (canopy never writes it)."""
+    return task.status_owner != CANOPY_OWNER
+
+
+def awaiting_move(task: Task) -> str | None:
+    """The status canopy cleared a mirrored task to, while its tracker doesn't show it yet."""
+    target = task.clearance_status
+    if target is None or (task.status or "").casefold() == target.casefold():
+        return None
+    return target
+
+
+def tracker_transition(task: Task) -> dict[str, Any] | None:
+    """What a session (or a person) should do in the tracker for a cleared task: move this
+    ticket to this status. None when nothing is pending."""
+    target = awaiting_move(task)
+    if target is None:
+        return None
+    return {
+        "key": task.key, "provider": task.status_owner, "from_status": task.status,
+        "to_status": target, "cleared_at": task.clearance_at.isoformat() + "Z"
+        if task.clearance_at is not None else None,
+    }
+
+
+def clear_for_tracker(
+    session: AsyncSession,
+    task: Task,
+    to_status: str,
+    *,
+    caller: Caller | None = None,
+    claim: WorkClaim | None = None,
+    gate_id: int | None = None,
+    reason: str,
+) -> None:
+    """Record that canopy cleared a mirrored task to move to `to_status` (its checks passed, or
+    a person approved): the session or the tracker's automation makes the move, and the next
+    inbound sync that shows it consumes the clearance."""
+    task.clearance_status = to_status
+    task.clearance_at = utcnow()
+    record_event(
+        session, kind=WorkEventKind.cleared, project_id=task.project_id, task_id=task.id,
+        caller=caller, claim_id=claim.id if claim is not None else None, gate_id=gate_id,
+        data={"from": task.status, "to": to_status, "reason": reason,
+              "key": task.key, "provider": task.status_owner},
+        actor_kind=None if caller is not None else ActorKind.system.value,
+    )
+
+
+def drop_clearance(task: Task) -> None:
+    task.clearance_status = None
+    task.clearance_at = None
+
+
+async def on_tracker_move(
+    session: AsyncSession, task: Task, previous: str | None, now_status: str | None
+) -> None:
+    """The tracker showed a mirrored task moving (an inbound sync or webhook). The move canopy
+    cleared is expected; any other move of delegated work is `moved_without_clearance`: canopy
+    can't stop a ticket moving in its tracker, so it records it (an alert), ends the running
+    claim (the board follows reality) and closes gates that held the task in its old column."""
+    expected = task.clearance_status
+    drop_clearance(task)
+    if task.delegation != Delegation.agent.value:
+        return
+    if expected is not None and (now_status or "").casefold() == expected.casefold():
+        record_event(session, kind=WorkEventKind.tracker_moved, project_id=task.project_id,
+                     task_id=task.id, actor_kind=ActorKind.system.value,
+                     data={"from": previous, "to": now_status, "cleared": True})
+        from app.services import notify as outbound
+
+        await outbound.queue_ready_for_task(session, task)
+        return
+    project = await session.get(Project, task.project_id)
+    if project is None or project.agent_intake == AgentIntake.off.value:
+        return
+    claim = await session.get(WorkClaim, task.active_claim_id) if task.active_claim_id else None
+    record_event(
+        session, kind=WorkEventKind.moved_without_clearance, project_id=task.project_id,
+        task_id=task.id, actor_kind=ActorKind.system.value,
+        claim_id=claim.id if claim is not None and claim.id is not None else None,
+        data={"from": previous, "to": now_status, "expected": expected, "key": task.key,
+              "provider": task.status_owner},
+    )
+    await supersede_claims(session, task, "moved_in_tracker")
+    from app.services import gates
+
+    await gates.close_open_gates(session, task, reason="moved_in_tracker",
+                                 unless_stage=now_status)
 
 
 async def check_person_move(

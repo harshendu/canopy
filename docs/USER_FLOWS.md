@@ -316,7 +316,8 @@ entire install — e.g. run canopy as "plan + Jira sync + Gantt only" by disabli
 - **Catalog (two levels, defaults all-on):** `planning` (whatif · baselines · scenarios ·
   draft_plans) · `tracking` (board · burndown · forecast · alerts · blockers · delivery ·
   capacity) · `architecture` (drift) · `portfolio` (initiatives · outcomes) · `governance` (risk ·
-  retros · specs · docs) · `integrations` (webhooks) · `reporting` (exports) · `ai`
+  retros · specs · docs) · `integrations` (webhooks · **outbound** — notifications and push
+  starts, §AE10) · `reporting` (exports) · `ai`
   (agent_tokens · proposals · **work_queue** — the agent work queue, its Decisions inbox and the
   Agents view, §AE · **stage_policy** — per-column stage policy, rules and the agent-flow
   measures, §AE6–§AE8).
@@ -555,7 +556,8 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
     register** (§Q3a, the human RAID ledger — a separate sub-view) · **Specs** (§W) · **Rules**
     (§AE7, gate `ai.stage_policy`) · **Docs** (§V) · **Retros**
   - **Integrations** — **Tracking** (§C12, core — so the workspace always shows) · **Draft
-    plans** (§C10) · **Tracker links** (§J9)
+    plans** (§C10) · **Tracker links** (§J9) · **Notifications** (§AE10, gate
+    `integrations.outbound`)
 
   A whole workspace disappears when *every* one of its features is gated off (§A10); a group that
   still has a core child (Schedule, Execution) always shows. The header has an **Export ▾** menu
@@ -1339,7 +1341,9 @@ review it, alternatives, reversibility, and a discussion thread.
   escalates it), **`review_saturated`** (a review/QA/decision column is at its WIP limit while
   work waits upstream), **`merged_ahead_of_stage`** (a PR merged before its review/QA/sign-off
   ran, last 14 days) and **`rule_stale`** (a rule follows a decision that was superseded or
-  deprecated, §AE7).
+  deprecated, §AE7). On mirrored projects (§AE9): **`moved_without_clearance`** (a ticket moved in
+  its tracker without canopy clearing it) and **`clearance_waiting`** (a cleared move the tracker
+  still doesn't show after `WORK_CLEARANCE_HOURS`).
 - **API:** `GET /api/v1/projects/{id}/alerts` (unchanged) · **MCP:** `list_alerts`.
 - **Notes:** delivery to Slack/email is **not built** — alerts are computed and shown/queried; a
   delivery integration is a future hook over this output.
@@ -2360,8 +2364,9 @@ hand-off against the next column and moves the card — or holds the task for a 
 in a project until a planner switches its **intake** on. With **`ai.stage_policy`** on, each
 column's **stage policy** says which role works it, what it requires to enter and when a person
 looks (§AE6); **rules** carry the team's working agreements and Definition of Done (§AE7); and
-the **agent-flow** measures show how it is going (§AE8). Native (canopy-owned) projects only so
-far (mirrored ones: §AE10).
+the **agent-flow** measures show how it is going (§AE8). On a **mirrored** project canopy
+clears moves instead of making them (§AE9); **notifications** tell runners and people when to act
+(§AE10); **runners** are how sessions start (§AE11).
 
 ### AE1. Delegate a task · switch the project's intake
 - **UI:** task panel (§C1a) → **Agent work** → **Delegate to agents** (it answers with advice
@@ -2377,8 +2382,8 @@ far (mirrored ones: §AE10).
 - **Notes:** the assignee stays **accountable**; an unassigned task is assigned to the claiming
   session's issuer. **Off is the kill switch**: running claims end and their sessions are told to
   stop at their next call; paused offers nothing new. Taking a task back (or undelegating) ends
-  its claim and closes its open gates. Summary tasks and mirrored tasks can't be delegated (`422
-  not_a_leaf`, `409 status_externally_owned`).
+  its claim and closes its open gates. Summary tasks can't be delegated (`422 not_a_leaf`);
+  mirrored tasks can, and advance by clearance (§AE9).
 
 ### AE2. What is ready, and why the rest isn't
 - **The built-in default pipeline** (columns with no stage policy stored, §AE6): the workflow's first
@@ -2556,7 +2561,69 @@ far (mirrored ones: §AE10).
   `rule_stale`. The initiative digest (§R5) lists gates waiting past their reminder and parked
   tasks.
 
-### AE9. Where it's enforced / wired
+### AE9. Mirrored projects — canopy clears, the tracker moves
+A mirrored ticket's status belongs to its tracker and canopy never writes it (P11). Everything
+else works as on a native project — delegation, briefs, plans, rules, gates — except how work
+advances.
+- **Policies attach to the tracker's statuses** (stored on the tracker binding): the Agents
+  view's pipeline panel edits them like a native project's (`PUT /projects/{id}/workflow/policy`
+  on a tracker-scoped workflow); the agentic-delivery template doesn't apply (`409
+  workflow_externally_owned` — its columns aren't the tracker's).
+- **Claiming and handing off clear moves instead of making them.** A claim that pulls a ticket
+  into the agent's column, a hand-off, a person's approval or request for changes all answer with
+  `tracker_transition: {key, to_status}` (`cleared_to` on a hand-off) — the session makes that
+  move with its own tracker tools, or the tracker's automation does. canopy sees it on the next
+  sync or webhook. Until it does, nothing is offered to anyone (`awaiting_tracker_move`).
+- **A move canopy didn't clear** (someone moved the ticket in the tracker) is recorded as
+  `moved_without_clearance`: the running claim ends, gates holding it in its old column close,
+  and an alert fires (§I). A clearance the tracker still doesn't show after
+  `WORK_CLEARANCE_HOURS` raises `clearance_waiting`.
+- **The approved plan goes onto the ticket**: when a person approves a plan in canopy, it is
+  posted as a comment on the mirrored ticket (trackers with the `comments` capability — Jira,
+  Linear), content only. With tracker writes routed through Claude (`write_strategy=mcp`), the
+  decision carries `response_data.tracker_comment {key, body}` for the session to post instead.
+- **UI:** a cleared card shows `→ <status>` on the board; the task panel and the gate page say
+  "Move SHOP-12 to In Review in Jira". **API:** `tracker_transition` on `POST /work/claims`, `…/submit`,
+  gate reads and `GET /tasks/{id}/execution`; `awaiting_move` on board cards.
+
+### AE10. Notifications — push starts for runners, decisions for people
+- **UI:** project → **Integrations → Notifications**, the team page's **Notifications** tab, and
+  **Admin → Integrations** (the workspace's): webhooks with their scope, format (JSON, signed —
+  or a Slack message), the events they hear, their health (last delivery, failures), **Send a
+  test**, the delivery log, switch on/off, edit, delete. Only people who may edit a webhook see
+  its full URL (a Slack URL is a credential) — the workspace's: admins; a team's: its directors
+  and managers; a project's: its planners. Human-only.
+- **Events:** `work.ready` (delegated work became ready for a role — the task key and the role
+  only, so a forged call can start a session but never hand it work), `gate.opened`,
+  `gate.reminder`, `gate.escalated`, `gate.decided`. JSON deliveries carry
+  `X-Canopy-Signature: sha256=<HMAC of the body>` when the webhook has a secret, plus
+  `X-Canopy-Event` and `X-Canopy-Delivery`. Notifications use canopy's wording and a link back,
+  never text an agent wrote.
+- **Email** to the people who may decide a gate (opened, reminder, escalation) when
+  `NOTIFY_EMAIL_GATES` and `SMTP_*` are set.
+- **Delivery:** a transactional outbox — the change that causes a notification queues it in its
+  own transaction; the worker's `deliver_outbox` (kicked after the change, and every minute)
+  sends it, retrying after 1, 5, 30, 120 and 480 minutes; a 4xx or a destination that resolves to
+  a private address fails at once (https only, no internal hosts —
+  `OUTBOUND_WEBHOOKS_ALLOW_PRIVATE` is for local development). Each readiness is announced once.
+- **API:** `GET|POST /api/v1/outbound-webhooks` (`?project_id=` / `?team_id=` for what reaches
+  them) · `PATCH|DELETE /api/v1/outbound-webhooks/{id}` · `POST …/{id}/test` · `GET …/{id}/deliveries`
+  · `GET /api/v1/outbound-webhooks/catalog` · `GET /api/v1/outbound-webhooks/scopes`. Feature gate
+  **`integrations.outbound`**. **MCP:** none (people configure where notifications go).
+
+### AE11. Runners — where the sessions come from
+canopy offers work; something you run starts sessions ([`AGENT_RUNNERS.md`](./AGENT_RUNNERS.md)
+has a recipe for each): an engineer's own session, `/loop`, a headless `claude -p` job on cron or
+CI, a scheduled cloud session, a reviewer started by pull-request events, a push start from a
+`work.ready` webhook, and the **reference SDK daemon** in [`runners/sdk/`](../runners/sdk/README.md)
+— one slot per agent token, one isolated Claude Agent SDK session per claim in its own git
+worktree, a heartbeat for the claim, `max_turns` and `max_budget_usd` per session, and a release
+with a note when a session stops without handing off.
+- **API for runners:** `POST /api/v1/work/claims/{id}/release` takes the session's `usage`;
+  `POST /api/v1/work/claims/{id}/usage` reports it after the session ended the claim itself (the
+  claim's own token, within a day). The Agents view's cost per completed task reads it.
+
+### AE12. Where it's enforced / wired
 - `app/services/work_service.py` is the **only writer** of a claim's state and of
   `Task.active_claim_id`; `app/services/gates.py` of a gate's status and decision
   (`tests/test_work_invariants.py`). Pure logic: `stage_policy.py` (pipeline + checks),
@@ -2574,13 +2641,18 @@ far (mirrored ones: §AE10).
   (`DeliveryRule`) + `services/rules.py` (pure `merge`/`applies`). Agent flow: pure
   `agent_flow.py` + `agent_flow_service.py`. `tests/test_stage_policy.py` walks the Appendix A
   pipeline end to end (implement → review → QA → sign-off → done, with rework and attestations).
+- Mirrored projects: `work_service.py` is the only writer of `Task.clearance_status` /
+  `clearance_at` (`tests/test_work_invariants.py`); the inbound sync calls
+  `work_service.on_tracker_move` after `record_transition`; `tests/test_work_mirrored.py` walks
+  claim → clear → tracker move → hand-off → review, an uncleared move and a gate approval.
+  Notifications: `models/notify.py` (`OutboundWebhook`, `OutboxMessage`) + `services/notify.py`
+  (queueing, SSRF guard, delivery) + `api/v1/outbound.py`; `tests/test_outbound.py`. The runner's
+  tests fake canopy, git and the session (`runners/sdk/test_canopy_runner.py`).
 
-### AE10. Not built yet (later phases of AGENT_EXECUTION.md §21)
-- **Mirrored projects** (agents clear tracker-owned work without writing its status), outbound
-  webhooks (`work.ready`, `gate.decided`), gate notifications by Slack/email, a reference SDK
-  runner.
-- The learning loop: graduated-autonomy suggestions, retros seeded with gate/rework data, rule
-  suggestions from recurring review notes, a decision-to-code traceability ledger.
+### AE13. Not built yet (later phases of AGENT_EXECUTION.md §21)
+- The learning loop (Phase 4): graduated-autonomy suggestions, retros seeded with gate/rework
+  data, rule suggestions from recurring review notes, a decision-to-code traceability ledger.
+- Per-person notification preferences (email is an install-wide switch today).
 
 ---
 
@@ -2791,6 +2863,9 @@ far (mirrored ones: §AE10).
   record what was done and seen as a `qa_report`. The **`change-reviewer`** and **`qa-verifier`**
   subagents run them with no edit tools. Read-only tools for the policy around the work:
   `get_stage_policy`, `list_rules`, `get_agent_flow`.
+- **Mirrored tickets** (§AE9): the contract adds one step — when a response carries
+  `tracker_transition`, make exactly that move in the tracker; never move the ticket anywhere
+  canopy didn't clear.
 - **Plugin options:** *Agent label* and *Agent runner* name the session on its claims
   (`CANOPY_AGENT_LABEL`, `CANOPY_AGENT_RUNNER`; `CANOPY_SESSION_REF` records a session id).
 
@@ -2880,7 +2955,9 @@ work-queue services as Rahul's agent tokens: a task handed off into review with 
 hand-off, a headless worker's open **question** ("which wallets ship at GA?") waiting past its
 reminder, a session **working** a task right now, a task **parked** after three sessions gave it
 back, and one delegated and ready; Payments then adopted the **agentic-delivery template**
-(§AE6), so its delegated cut-over task waits on its predecessors — **rules** at every scope
+(§AE6), so its delegated cut-over task waits on its predecessors; on the Jira-mirrored flagship a
+Jira-owned ticket is delegated too, held back by its open blocker (§AE9); two example
+**webhooks**, switched off (§AE10) — **rules** at every scope
 (§AE7: workspace guidance and a locked Definition-of-Done item, a team rule per team, a Payments
 override of "small PRs", a blocking card-data attestation from its tokenization ADR, and a rule
 Search switched off) — and

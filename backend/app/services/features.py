@@ -175,6 +175,13 @@ FEATURE_CATALOG: tuple[FeatureDef, ...] = (
         "integrations",
     ),
     FeatureDef(
+        "integrations.outbound", "Outbound notifications",
+        "Signed webhooks and Slack messages when agent work is ready or a decision waits on a "
+        "person, email to the people who may decide, and approved plans posted to mirrored "
+        "tickets.",
+        "integrations",
+    ),
+    FeatureDef(
         "reporting",
         "Reporting",
         "Point-in-time export snapshots of a project/initiative/portfolio.",

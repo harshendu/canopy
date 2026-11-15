@@ -170,6 +170,12 @@ class Task(TimestampMixin, table=True):
     delegated_at: datetime | None = None
     active_claim_id: int | None = Field(default=None, index=True)
     implements_adr_id: int | None = Field(default=None, index=True)
+    # A mirrored task canopy has **cleared** to move (docs/AGENT_EXECUTION.md §17): the status its
+    # tracker should show next, until the tracker shows it. canopy never writes a tracker's
+    # status — a session, a person or the tracker's automation makes the move. Written ONLY by
+    # `work_service` (set on a clearance, cleared when the tracker moves or the task leaves agents).
+    clearance_status: str | None = None
+    clearance_at: datetime | None = None
 
 
 class TaskStatusHistory(TimestampMixin, table=True):

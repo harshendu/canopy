@@ -14,6 +14,8 @@ The rules every worker follows (the `working-the-queue` skill has the full runbo
 - Never `move_task` a delegated card: hand off with `submit_work` / `submit_review`.
 - `claim_lost` or a `stop` directive means stop at once — another session or a person has it.
 - Before you stop: hand off, `ask_human`, or `release_work`. Never leave a claim dangling.
+- A mirrored ticket's status is its tracker's: when a response carries `tracker_transition`, make
+  exactly that move in the tracker yourself (canopy clears moves; it never makes them).
 
 Deciding a gate, delegating, switching intake and editing policy are deliberately absent:
 they are human-only (§13).
@@ -188,7 +190,8 @@ def register(mcp, client) -> None:
         `brief.claim.heartbeat_interval_s`), and end it with submit_work / submit_review /
         ask_human / release_work. Nothing ready: `claim` is null with `retry_after_s` and the
         reasons; `wait_s` (≤ 25) long-polls first. A token holds one claim at a time — calling
-        again returns the claim you already hold."""
+        again returns the claim you already hold. On a mirrored project the answer may carry
+        `tracker_transition`: move that ticket to that status in its tracker yourself."""
         body = _clean({
             "role": role, "task_id": task_id, "project_id": project_id, "team_id": team_id,
             "repo": repo, "wait_s": max(0, min(int(wait_s or 0), 25)),
@@ -312,7 +315,8 @@ def register(mcp, client) -> None:
     ) -> dict:
         """Hand off the stage's work. canopy evaluates the next column's entry checks, then
         advances the card, opens a gate for a person, or refuses (`checks_failed`: nothing was
-        saved, your claim stays active — fix and resubmit).
+        saved, your claim stays active — fix and resubmit). On a mirrored project canopy
+        *clears* the move instead (`cleared_to` + `tracker_transition`): make it in the tracker.
 
         - `verification`: [{command, result}] — what you ran and what it showed.
         - `attestations`: [{rule_key, status: done | n/a | not_done, evidence}] for the

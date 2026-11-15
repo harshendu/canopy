@@ -9,7 +9,9 @@ import type {
   WriteStrategy,
 } from "../api/types";
 import { providerLabel } from "../lib/tracking";
+import { featureOn, useFeatures } from "../lib/useFeatures";
 import { PageHeader } from "../components/PageHeader";
+import WebhooksPanel from "../components/WebhooksPanel";
 
 const READ_OPTIONS: { value: ReadStrategy; label: string }[] = [
   { value: "direct", label: "Direct — canopy polls with its own credentials" },
@@ -25,6 +27,7 @@ const WRITE_OPTIONS: { value: WriteStrategy; label: string }[] = [
 
 export default function AdminIntegrations() {
   const qc = useQueryClient();
+  const features = useFeatures();
   const settings = useQuery({
     queryKey: ["integration-settings"],
     queryFn: () => api.get<IntegrationSetting[]>("/admin/integrations"),
@@ -122,6 +125,11 @@ export default function AdminIntegrations() {
 
       {update.isError && (
         <p className="text-xs text-red-600">{(update.error as Error).message}</p>
+      )}
+      {featureOn(features, "integrations.outbound") && (
+        <section className="rounded-lg border border-slate-200 bg-white p-4">
+          <WebhooksPanel target={{ kind: "workspace" }} />
+        </section>
       )}
     </div>
   );

@@ -14,10 +14,10 @@ const ALL_ON = () => true;
 const ALL_OFF = () => false;
 
 describe("PROJECT_GROUPS / TAB_GROUP", () => {
-  it("places every one of the 21 leaf views under exactly one group", () => {
+  it("places every one of the 22 leaf views under exactly one group", () => {
     const tabs = PROJECT_GROUPS.flatMap((g) => g.tabs);
-    expect(tabs).toHaveLength(21);
-    expect(new Set(tabs).size).toBe(21); // no duplicates
+    expect(tabs).toHaveLength(22);
+    expect(new Set(tabs).size).toBe(22); // no duplicates
     for (const tab of tabs) expect(TAB_GROUP[tab]).toBeTruthy();
   });
 
@@ -29,6 +29,7 @@ describe("PROJECT_GROUPS / TAB_GROUP", () => {
       "tracking",
       "drafts",
       "trackerlinks",
+      "notifications",
     ]);
   });
 
@@ -55,6 +56,11 @@ describe("resolveProjectTab", () => {
       group: "overview",
       tab: null,
     });
+  });
+
+  it("opens Notifications under Integrations, behind the outbound gate", () => {
+    expect(resolveProjectTab("notifications", ALL_ON)).toEqual({ group: "integrations", tab: "notifications" });
+    expect(resolveProjectTab("notifications", (f) => f !== "integrations.outbound").tab).toBeNull();
   });
 
   it("opens Rules under Governance, behind the stage-policy gate", () => {

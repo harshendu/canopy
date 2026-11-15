@@ -193,6 +193,10 @@ class WorkEventKind(StrEnum):
     merged_ahead_of_stage = "merged_ahead_of_stage"
     moved_without_clearance = "moved_without_clearance"
     policy_changed = "policy_changed"
+    # Mirrored projects (§17): canopy cleared a move it may not make itself, and the tracker
+    # then showed a move (data.cleared says whether it was the one canopy cleared).
+    cleared = "cleared"
+    tracker_moved = "tracker_moved"
 
 
 class RuleScope(StrEnum):

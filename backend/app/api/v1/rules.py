@@ -120,14 +120,13 @@ async def effective_rules(
     return out
 
 
-@router.get("/rules/scopes", response_model=list[RuleScopeRead])
-async def rule_scopes(
-    session: SessionDep, user: CurrentUser, scope: TokenScopeDep,
-    project_id: int | None = None, team_id: int | None = None,
+async def scopes_for(
+    session: AsyncSession, user: User, scope: TokenScope, *, project_id: int | None,
+    team_id: int | None,
 ) -> list[RuleScopeRead]:
-    """The scopes whose rules reach a project (workspace, its team, itself) or a team
-    (workspace, itself), broadest first, each with whether the caller may edit its rules — so
-    a client offers only the scopes it may add to. Agent tokens never edit rules."""
+    """The scopes that reach a project (workspace, its team, itself) or a team (workspace,
+    itself), broadest first, each with whether the caller may edit it — shared by rules and
+    outbound webhooks, which follow the same permission model. Agent tokens edit none."""
     from app.services.org import project_team_id
 
     project: Project | None = None
@@ -156,6 +155,15 @@ async def rule_scopes(
         )
         for level, scope_id, name in levels
     ]
+
+
+@router.get("/rules/scopes", response_model=list[RuleScopeRead])
+async def rule_scopes(
+    session: SessionDep, user: CurrentUser, scope: TokenScopeDep,
+    project_id: int | None = None, team_id: int | None = None,
+) -> list[RuleScopeRead]:
+    """The scopes whose rules reach a project or team, and which the caller may add to."""
+    return await scopes_for(session, user, scope, project_id=project_id, team_id=team_id)
 
 
 @router.post("/rules", response_model=RuleRead, status_code=status.HTTP_201_CREATED)

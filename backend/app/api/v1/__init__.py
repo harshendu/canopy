@@ -26,6 +26,7 @@ from app.api.v1 import (
     me,
     meta,
     milestones,
+    outbound,
     outcomes,
     policies,
     projects,
@@ -130,6 +131,10 @@ api_router.include_router(
 )
 api_router.include_router(
     rules.router, tags=["rules"], dependencies=[FeatureGate("ai.stage_policy")]
+)
+# Outbound webhooks + gate notifications (docs/AGENT_EXECUTION.md §15, Phase 3).
+api_router.include_router(
+    outbound.router, tags=["outbound"], dependencies=[FeatureGate("integrations.outbound")]
 )
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])

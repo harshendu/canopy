@@ -2,8 +2,10 @@
 
 A policy belongs to one column of one workflow (`StagePolicy.owner_type = "workflow"`) and
 travels with it: a project uses its own workflow's policies, else its team's, else the
-workspace template's — exactly as it resolves its columns (§C9.1). A workflow nobody gave
-policies runs the built-in default pipeline.
+workspace template's — exactly as it resolves its columns (§C9.1). A mirrored project's columns
+are its tracker's statuses, so its policies belong to the tracker binding instead
+(`owner_type = "binding"`, §17). A workflow nobody gave policies runs the built-in default
+pipeline.
 
 Every write validates the whole set against the workflow's columns first (the same parser the
 pipeline uses), so what is stored can always be loaded.
@@ -23,6 +25,17 @@ from app.services import flow, stage_policy
 from app.services.stage_policy import Pipeline
 
 WORKFLOW = "workflow"
+BINDING = "binding"
+
+
+def owner_of(view: Any) -> tuple[str, int] | None:
+    """Who owns the policies of a resolved workflow view: a tracker view's binding, else the
+    workflow itself (None for the built-in default — nothing stored)."""
+    if getattr(view, "scope", None) == "tracker":
+        binding_id = getattr(view, "binding_id", None)
+        return (BINDING, int(binding_id)) if binding_id is not None else None
+    workflow_id = getattr(view, "id", None)
+    return (WORKFLOW, int(workflow_id)) if workflow_id is not None else None
 
 _FIELDS = ("worked_by", "artifact", "instructions", "pulls_from", "enter", "on_changes",
            "decision", "checkpoints", "lease_minutes", "max_attempts", "max_rework")
@@ -52,33 +65,51 @@ def _row_values(doc: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-async def rows_for(session: AsyncSession, workflow_id: int) -> list[StagePolicy]:
+async def rows_for(
+    session: AsyncSession, owner_id: int, owner_type: str = WORKFLOW
+) -> list[StagePolicy]:
     return list(
         (
             await session.execute(
                 select(StagePolicy)
-                .where(StagePolicy.owner_type == WORKFLOW, StagePolicy.owner_id == workflow_id)
+                .where(StagePolicy.owner_type == owner_type, StagePolicy.owner_id == owner_id)
                 .order_by(col(StagePolicy.id))
             )
         ).scalars().all()
     )
 
 
-async def policies_for(session: AsyncSession, workflow_id: int | None) -> dict[str, dict[str, Any]]:
-    """The stored documents of a workflow, keyed by column name ({} for the built-in default)."""
-    if workflow_id is None:
+async def policies_for(
+    session: AsyncSession, owner_id: int | None, owner_type: str = WORKFLOW
+) -> dict[str, dict[str, Any]]:
+    """The stored documents of a workflow (or a binding), keyed by column name ({} for the
+    built-in default)."""
+    if owner_id is None:
         return {}
-    return {row.status_name: row_to_doc(row) for row in await rows_for(session, workflow_id)}
+    return {
+        row.status_name: row_to_doc(row)
+        for row in await rows_for(session, owner_id, owner_type)
+    }
 
 
-async def has_policies(session: AsyncSession, workflow_id: int | None) -> bool:
-    if workflow_id is None:
+async def policies_of_view(session: AsyncSession, view: Any) -> dict[str, dict[str, Any]]:
+    """The stored documents for the columns a resolved view describes."""
+    owner = owner_of(view)
+    if owner is None:
+        return {}
+    return await policies_for(session, owner[1], owner[0])
+
+
+async def has_policies(
+    session: AsyncSession, owner_id: int | None, owner_type: str = WORKFLOW
+) -> bool:
+    if owner_id is None:
         return False
     return bool(
         (
             await session.execute(
                 select(StagePolicy.id).where(
-                    StagePolicy.owner_type == WORKFLOW, StagePolicy.owner_id == workflow_id
+                    StagePolicy.owner_type == owner_type, StagePolicy.owner_id == owner_id
                 )
             )
         ).scalars().first()
@@ -112,18 +143,20 @@ async def save(
     columns: Sequence[flow.ColumnDef],
     policies: Mapping[str, Mapping[str, Any] | None],
     user_id: int | None,
+    owner_type: str = WORKFLOW,
 ) -> Pipeline:
-    """Replace the policies of one workflow (validated first). An empty set returns the
-    workflow to the built-in default. Does not commit."""
+    """Replace the policies of one workflow — or, with `owner_type="binding"`, of one tracker
+    binding (`workflow_id` is then the binding's id) — validated first. An empty set returns it
+    to the built-in default. Does not commit."""
     pipeline = validate(columns, policies)
-    for row in await rows_for(session, workflow_id):
+    for row in await rows_for(session, workflow_id, owner_type):
         await session.delete(row)
     await session.flush()
     for stage in pipeline.stages:
         if not stage.has_policy:
             continue
         doc = stage.policy_doc()
-        session.add(StagePolicy(owner_type=WORKFLOW, owner_id=workflow_id,
+        session.add(StagePolicy(owner_type=owner_type, owner_id=workflow_id,
                                 status_name=stage.status_name, updated_by_user_id=user_id,
                                 **_row_values(doc)))
     await session.flush()

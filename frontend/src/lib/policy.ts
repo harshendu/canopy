@@ -118,7 +118,9 @@ export function policyPath(
   scope: PipelineRead["scope"],
   ids: { projectId?: number; teamId?: number | null },
 ): string | null {
-  if (scope === "project" && ids.projectId != null) return `/projects/${ids.projectId}/workflow/policy`;
+  if ((scope === "project" || scope === "tracker") && ids.projectId != null) {
+    return `/projects/${ids.projectId}/workflow/policy`;
+  }
   if (scope === "team" && ids.teamId != null) return `/teams/${ids.teamId}/workflow/policy`;
   if (scope === "template") return "/workflows/template/policy";
   return null; // the built-in default: nothing stored to edit until the scope has columns
@@ -129,6 +131,7 @@ export const SCOPE_LABEL: Record<PipelineRead["scope"], string> = {
   team: "the team's shared columns",
   template: "the workspace template",
   default: "the built-in default",
+  tracker: "the tracker's statuses (canopy clears moves; the tracker makes them)",
 };
 
 /** "worked by implementer · hands off a hand-off" — who works a column. */

@@ -82,7 +82,7 @@ def pipeline_read(
 
 
 async def _view_pipeline(session: AsyncSession, view: WorkflowView) -> stage_policy.Pipeline:
-    policies = await policy_store.policies_for(session, view.id)
+    policies = await policy_store.policies_of_view(session, view)
     return stage_policy.pipeline_from_policies(view.columns, policies, strict=False)
 
 
@@ -111,8 +111,8 @@ async def _refuse_tracker_owned(session: AsyncSession, project: Project) -> None
     if await workflow_service.tracker_view(session, project) is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
             "code": "workflow_externally_owned",
-            "message": "This project's columns are its tracker's statuses; policies for them "
-                       "arrive with mirrored-project support.",
+            "message": "This project's columns are its tracker's statuses, so the template's "
+                       "columns can't be applied — give the tracker's statuses policies instead.",
         })
 
 
@@ -148,7 +148,9 @@ async def get_project_policy(
     project = await _project(session, project_id)
     view = await workflow_service.resolve_workflow(session, project)
     can_edit = scope != TokenScope.agent and (
-        (view.scope == "project" and await project_can_edit(session, user, project))
+        # A mirrored project's statuses are its tracker's; their policies are the project's
+        # planners' to set (§17).
+        (view.scope in ("project", "tracker") and await project_can_edit(session, user, project))
         or (view.scope == "team" and view.team_id is not None
             and await team_can_manage(session, user, view.team_id))
         or (view.scope == "template" and user.role == UserRole.admin)
@@ -161,12 +163,15 @@ async def put_project_policy(
     session: SessionDep, user: PlannerWriter, _human: HumanOnly, project_id: int,
     payload: PolicyUpdate,
 ) -> PipelineRead:
-    """Replace the stage policies of this project's own columns (human-only)."""
+    """Replace the stage policies of this project's own columns — or, on a mirrored project,
+    of its tracker's statuses (stored on the binding, §17). Human-only."""
     project = await _project(session, project_id)
     await ensure_project_editable(session, user, project_id)
-    await _refuse_tracker_owned(session, project)
     view = await workflow_service.resolve_workflow(session, project)
-    if view.scope != "project" or view.id is None:
+    if view.scope == "tracker":
+        if view.binding_id is None:
+            raise _inherited("This project")
+    elif view.scope != "project" or view.id is None:
         raise _inherited("This project")
     pipeline = await _save_policies(session, user, view, payload.policies, team_id=None,
                                     project_id=project_id)

@@ -109,6 +109,14 @@ class AgentWorkFacts:
     merged_ahead: list[tuple[int, str, list[str]]] = field(default_factory=list)
     # (rule key, title, why) for rules whose source decision moved on
     stale_rules: list[tuple[str, str, str]] = field(default_factory=list)
+    # Mirrored projects (§17): (task id, name, from, to, tracker) for tickets the tracker moved
+    # without canopy clearing it (recent) …
+    uncleared_moves: list[tuple[int, str, str | None, str | None, str]] = field(
+        default_factory=list
+    )
+    # … and (task id, ticket, to status, tracker, hours) for clearances the tracker hasn't shown
+    clearances_waiting: list[tuple[int, str, str, str, float]] = field(default_factory=list)
+    clearance_hours: float = 24
 
 
 @dataclass
@@ -354,4 +362,19 @@ def agent_flow_alerts(facts: AgentWorkFacts) -> list[Alert]:
             message=f"Rule '{title}' ({key}) follows a decision that moved on: {why}",
             entity_type="rule",
         ))
+    for task_id, name, before, after, tracker in facts.uncleared_moves:
+        alerts.append(Alert(
+            kind="moved_without_clearance", severity="warning",
+            message=(f"'{name}' moved from {before or '(no status)'} to {after or '(no status)'} "
+                     f"in {tracker} without canopy clearing it — its agent work stopped"),
+            entity_type="task", entity_id=task_id,
+        ))
+    for task_id, ticket, to_status, tracker, hours in facts.clearances_waiting:
+        if hours > facts.clearance_hours:
+            alerts.append(Alert(
+                kind="clearance_waiting", severity="warning",
+                message=(f"canopy cleared {ticket} to move to {to_status} {hours:.0f} h ago, but "
+                         f"{tracker} still doesn't show it — move it there"),
+                entity_type="task", entity_id=task_id,
+            ))
     return alerts

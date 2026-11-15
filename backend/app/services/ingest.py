@@ -190,7 +190,8 @@ async def upsert_task_from_external(
     # and mirrors completion into progress (a done status ⇒ 100%; leaving done drops a 100% back
     # to 0; other manual partial progress is kept) so every view agrees on one "done".
     category = workflow.resolve_category(status, explicit=status_category)
-    workflow.record_transition(
+    previous_status = task.status
+    moved = workflow.record_transition(
         session,
         task,
         status,
@@ -198,6 +199,11 @@ async def upsert_task_from_external(
         source=StatusSource.sync,
         at=workflow.parse_remote_time(updated),
     )
+    if moved is not None and (task.delegation or task.clearance_status):
+        # Agent work on a mirrored ticket: the move canopy cleared, or one it didn't (§17).
+        from app.services import work_service
+
+        await work_service.on_tracker_move(session, task, previous_status, status)
     # Ownership mirrors the upstream assignee when one is set; an unassigned upstream issue
     # leaves any locally-set owner alone (assignment stays usable for canopy-only workflows).
     engineer_id = await resolve_assignee_engineer(

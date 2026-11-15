@@ -210,6 +210,21 @@ async def build_brief(
         },
         "pipeline_configured": pipeline.configured,
     }
+    if work_service.is_mirrored(task):
+        # The tracker owns this ticket's status (§17): canopy clears moves, the session makes them.
+        brief["stage"]["tracker"] = {
+            "provider": task.status_owner,
+            "key": task.key,
+            "status": task.status,
+            "pending_move": work_service.tracker_transition(task),
+            "how": (
+                f"This ticket's status belongs to {task.status_owner}; canopy never changes it. "
+                "When a response carries `tracker_transition`, make that move in the tracker "
+                "with your own tools (or let its automation do it) — canopy sees it on the next "
+                "sync. Moving the ticket anywhere canopy didn't clear is recorded as "
+                "moved_without_clearance and ends your claim."
+            ),
+        }
     if claim is not None:
         brief["claim"] = {
             "id": claim.id,

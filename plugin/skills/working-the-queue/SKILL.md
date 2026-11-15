@@ -50,6 +50,17 @@ Everything you do lands on the task's **execution timeline** for people to read.
    a note the next session can act on. (`needs_human=True` when a person must look before
    anyone retries.)
 
+### Mirrored projects (the tracker owns the status)
+
+When the brief's `stage.tracker` is set, the ticket's status belongs to Jira, Linear or another
+tracker and **canopy never changes it** — it *clears* moves instead. A claim that pulls the
+ticket, a hand-off, or a person's approval comes back with `tracker_transition`
+(`{key, to_status}`): **make exactly that move** in the tracker with your own tracker tools (or
+leave it to the tracker's automation when the team has one), then carry on. canopy sees it on
+the next sync. Until the tracker shows a cleared move, nothing is offered to anyone
+(`awaiting_tracker_move`). Never move the ticket anywhere canopy didn't clear: that is recorded
+as `moved_without_clearance`, ends your claim and alerts the team.
+
 ## Refusals and directives
 
 | You see | It means | Do |
@@ -67,6 +78,8 @@ Everything you do lands on the task's **execution timeline** for people to read.
 | `same_actor` (claim refused) | this session did the earlier stage — reviews need another | leave it for another session |
 | `role_not_allowed` | this token can't work that role | use a role it has (`roles`) |
 | `approval.required: true` (plan) | a person must approve the plan | stop; the claim has ended |
+| `tracker_transition` in a response | a mirrored ticket: canopy cleared a move it doesn't make | make that move in the tracker, nothing else |
+| `awaiting_tracker_move` (a reason) | a cleared move the tracker doesn't show yet | make the move, or wait for the sync |
 
 ## What people do (not you)
 

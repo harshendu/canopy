@@ -368,7 +368,7 @@ async def agent_flow_alert_facts(
     `ai.work_queue` off."""
     if not await feature_enabled(session, "ai.work_queue"):
         return None
-    from app.services import agent_flow_service, gates, policy_service, rules
+    from app.services import agent_flow_service, gates, policy_service, rules, work_service
     from app.services.workflow import resolve_workflow, wip_counts, wip_scope_project_ids
 
     project = await session.get(Project, project_id)
@@ -425,6 +425,29 @@ async def agent_flow_alert_facts(
             (e.key, e.rule.title, e.stale_reason or "")
             for e in await rules.effective_rules(session, project) if e.stale
         ]
+    # Mirrored projects (§17): tickets moved without a clearance, and clearances not yet shown.
+    for event in (await session.execute(
+        select(WorkEvent).where(
+            WorkEvent.project_id == project_id,
+            WorkEvent.kind == WorkEventKind.moved_without_clearance.value,
+            col(WorkEvent.at) >= recent,
+        ).order_by(col(WorkEvent.at))
+    )).scalars().all():
+        if event.task_id is not None:
+            data = event.data or {}
+            facts.uncleared_moves.append((
+                event.task_id, task_names.get(event.task_id, f"#{event.task_id}"),
+                data.get("from"), data.get("to"), str(data.get("provider") or "the tracker"),
+            ))
+    facts.clearance_hours = settings.WORK_CLEARANCE_HOURS
+    now = utcnow()
+    for task in delegated:
+        target = work_service.awaiting_move(task)
+        if task.id is not None and target is not None and task.clearance_at is not None:
+            facts.clearances_waiting.append((
+                task.id, task.key or task.name, target, task.status_owner,
+                (now - task.clearance_at).total_seconds() / 3600,
+            ))
     return facts
 
 

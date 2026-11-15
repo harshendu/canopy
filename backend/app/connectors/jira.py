@@ -89,6 +89,7 @@ class JiraConnector(WorkTracker):
         update_items=True,
         estimates=True,
         oauth=True,
+        comments=True,
     )
     config_schema: ClassVar[type[BaseModel]] = JiraConnectionConfig
     scope_schema: ClassVar[type[BaseModel]] = JiraScope
@@ -384,6 +385,13 @@ class JiraConnector(WorkTracker):
             estimate_field=self._estimate_field(scope),
         )
 
+    async def add_comment(self, scope: Scope, ref: ItemRef, body: str) -> None:
+        async with await self.open_client() as client:
+            await request_with_retry(
+                client, "POST", f"/rest/api/3/issue/{ref.key or ref.external_id}/comment",
+                json={"body": self._adf_blocks(body)},
+            )
+
     # --------------------------------------------------------------------- #
     # Webhooks
     # --------------------------------------------------------------------- #
@@ -464,6 +472,21 @@ class JiraConnector(WorkTracker):
             "version": 1,
             "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}],
         }
+
+    @staticmethod
+    def _adf_blocks(text: str) -> dict[str, Any]:
+        """Multi-line text as ADF: a paragraph per block, hard breaks between its lines."""
+        paragraphs: list[dict[str, Any]] = []
+        for block in [b for b in text.replace("\r\n", "\n").split("\n\n") if b.strip()]:
+            content: list[dict[str, Any]] = []
+            for i, line in enumerate(block.split("\n")):
+                if i:
+                    content.append({"type": "hardBreak"})
+                if line:
+                    content.append({"type": "text", "text": line})
+            paragraphs.append({"type": "paragraph", "content": content})
+        return {"type": "doc", "version": 1, "content": paragraphs or [
+            {"type": "paragraph", "content": [{"type": "text", "text": text or " "}]}]}
 
     @property
     def _story_point_field(self) -> str | None:

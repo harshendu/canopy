@@ -59,6 +59,8 @@ class ClaimResponse(BaseModel):
     brief: dict[str, Any] | None = None
     retry_after_s: int | None = None
     reasons: dict[str, int] = {}
+    # A mirrored task (§17): the move to make in its tracker — canopy never writes its status.
+    tracker_transition: dict[str, Any] | None = None
 
 
 class PlanStep(BaseModel):
@@ -229,6 +231,21 @@ class ReleaseRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
     note: str | None = Field(default=None, max_length=2000)
     needs_human: bool = False
+    usage: dict[str, Any] | None = None  # what the session cost, when the runner knows
+
+
+class UsageReport(BaseModel):
+    """What a session cost, reported by its runner after the session ended (§15). Team-level
+    accounting only: it feeds the agent-flow cost per task, never a per-person figure."""
+
+    cost_usd: float | None = Field(default=None, ge=0)
+    turns: int | None = Field(default=None, ge=0)
+    duration_s: float | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cache_read_input_tokens: int | None = Field(default=None, ge=0)
+    model: str | None = Field(default=None, max_length=64)
+    outcome: str | None = Field(default=None, max_length=64)  # the runner's view: success, …
 
 
 class GateRead(BaseModel):
@@ -276,6 +293,8 @@ class GateRead(BaseModel):
     age_hours: float = 0.0
     may_decide: bool = False
     waiting_for_evidence: bool = False
+    # A mirrored task this gate cleared to move: make the move in its tracker (§17).
+    tracker_transition: dict[str, Any] | None = None
 
 
 class WorkEventRead(BaseModel):
@@ -320,6 +339,10 @@ class SubmitResponse(BaseModel):
     claim: ClaimRead
     task: TaskRead
     moved_to: str | None = None
+    # A mirrored task: canopy cleared the move instead of making it — make it in the tracker
+    # (`tracker_transition`), or let the tracker's automation (§17).
+    cleared_to: str | None = None
+    tracker_transition: dict[str, Any] | None = None
     gate: GateRead | None = None
     evaluation: dict[str, Any] = {}
     warnings: list[str] = []
@@ -384,6 +407,7 @@ class ExecutionResponse(BaseModel):
     events: list[WorkEventRead] = []
     exit_contract: dict[str, Any] | None = None
     readiness: dict[str, Any] | None = None
+    tracker_transition: dict[str, Any] | None = None  # a mirrored task's pending move (§17)
 
 
 class StageRead(BaseModel):

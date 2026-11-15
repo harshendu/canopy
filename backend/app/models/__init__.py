@@ -31,6 +31,7 @@ from app.models.integration import (
     UserConnection,
 )
 from app.models.leadership import InitiativeLead, LeadershipNote
+from app.models.notify import OutboundWebhook, OutboxMessage
 from app.models.org import Pod, Team, TeamMember
 from app.models.outcome import Outcome
 from app.models.policy import DeliveryRule, StagePolicy
@@ -101,6 +102,8 @@ __all__ = [
     "IntegrationSetting",
     "LeadershipNote",
     "Milestone",
+    "OutboundWebhook",
+    "OutboxMessage",
     "Outcome",
     "Pod",
     "Project",

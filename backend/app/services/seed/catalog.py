@@ -315,6 +315,20 @@ class RuleSpec:
     source_url: str | None = None
 
 
+@dataclass(frozen=True)
+class WebhookSpec:
+    """An outbound webhook (USER_FLOWS §AE10) at ``workspace``, ``team:<KEY>`` or
+    ``project:<KEY>`` scope. Seeded switched off: the demo shows the setup without sending
+    anything to the placeholder URLs."""
+
+    scope: str
+    name: str
+    url: str
+    events: tuple[str, ...]
+    format: str = "json"  # json | slack
+    enabled: bool = False
+
+
 # --------------------------------------------------------------------------- #
 # Projects + initiatives + scenarios
 # --------------------------------------------------------------------------- #
@@ -564,6 +578,7 @@ class Dataset:
     # tokens the sessions ran under (docs/AGENT_EXECUTION.md).
     agent_owner_email: str | None = None
     rules: tuple[RuleSpec, ...] = ()  # working agreements + the Definition of Done
+    webhooks: tuple[WebhookSpec, ...] = ()  # push starts and gate notifications (switched off)
 
     def accounts(self) -> list[DemoAccount]:
         return [DemoAccount(u.email, u.full_name, u.role.value, u.function.value)

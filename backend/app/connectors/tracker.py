@@ -100,6 +100,10 @@ class WorkTracker(Connector):
     async def update_item(self, scope: Scope, ref: ItemRef, patch: ItemPatch) -> None:
         raise NotImplementedError
 
+    async def add_comment(self, scope: Scope, ref: ItemRef, body: str) -> None:
+        """Post a comment (plain text / markdown) on an item — content, never status."""
+        raise NotImplementedError
+
     # --- webhooks ---
     @classmethod
     def verify_webhook(cls, headers: Mapping[str, str], body: bytes, secret: str) -> bool:

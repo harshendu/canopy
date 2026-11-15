@@ -220,6 +220,18 @@ export function BoardCardView({
 /** Agent work on a card (docs/AGENT_EXECUTION.md §16): parked, a gate waiting on a person (a
  *  link to decide it), the session working it, or simply delegated. */
 function AgentBadges({ card, overlay }: { card: Card; overlay: boolean }) {
+  if (card.awaiting_move && !card.gate && !card.claim) {
+    return (
+      <span
+        title={`canopy cleared this ticket to move to ${card.awaiting_move} — move it in ${trackerName(
+          card.status_owner,
+        )} (canopy never changes a tracker's status)`}
+        className="rounded bg-sky-100 px-1 font-medium text-sky-800"
+      >
+        → {card.awaiting_move}
+      </span>
+    );
+  }
   if (card.gate) {
     const parked = card.parked || isParked(card.gate);
     const text = `${parked ? "parked" : gateLabel(card.gate).toLowerCase()} · ${waitedPhrase(

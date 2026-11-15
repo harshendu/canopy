@@ -183,6 +183,9 @@ async def open_gate(
                  actor_kind=None if caller else ActorKind.system.value,
                  claim_id=claim.id if claim else None, gate_id=gate.id,
                  data={"kind": kind_value, "origin": origin, "reasons": list(reasons)})
+    from app.services import notify
+
+    await notify.gate_event(session, gate, "gate.opened")
     return gate
 
 
@@ -406,10 +409,16 @@ async def _anyone_else_may_decide(session: AsyncSession, gate: Gate) -> bool:
 
 
 async def _move(
-    session: AsyncSession, task: Task, to_status: str, *, author: str, actor_kind: str
+    session: AsyncSession, task: Task, to_status: str, *, author: str, actor_kind: str,
+    gate_id: int | None = None,
 ) -> bool:
+    """Move the task on (a canopy-owned one), or — a mirrored one, whose status its tracker
+    owns — clear the move for a person, a session or the tracker's automation to make (§17)."""
     if task.status_owner != CANOPY_OWNER:
-        return False
+        if (task.status or "").casefold() != to_status.casefold():
+            work_service.clear_for_tracker(session, task, to_status, gate_id=gate_id,
+                                           reason=f"gate:{actor_kind}")
+        return True
     try:
         await move_task(session, task, to_status=to_status, author=author, actor_kind=actor_kind)
     except TrackingError:
@@ -446,7 +455,7 @@ async def route_approved(session: AsyncSession, gate: Gate, *, author: str) -> b
         gate.evidence = {**(gate.evidence or {}), "waiting_for": evaluation.to_dict()}
         return False
     if await _move(session, task, target.status_name, author=author,
-                   actor_kind=ActorKind.system.value):
+                   actor_kind=ActorKind.system.value, gate_id=gate.id):
         gate.routed_at = utcnow()
         record_event(session, kind=WorkEventKind.advanced, project_id=task.project_id,
                      task_id=task.id, actor_kind=ActorKind.system.value, gate_id=gate.id,
@@ -490,7 +499,8 @@ async def _route_changes(session: AsyncSession, gate: Gate, task: Task, *, autho
         )
         target_name = target.status_name if target is not None else task.status
     if target_name and (task.status or "").casefold() != target_name.casefold():
-        await _move(session, task, target_name, author=author, actor_kind=ActorKind.human.value)
+        await _move(session, task, target_name, author=author, actor_kind=ActorKind.human.value,
+                    gate_id=gate.id)
     record_event(session, kind=WorkEventKind.returned, project_id=task.project_id,
                  task_id=task.id, actor_kind=ActorKind.human.value, gate_id=gate.id,
                  data={"from": gate.stage, "to": target_name, "stage": target_name,
@@ -517,7 +527,7 @@ async def _route_reject(session: AsyncSession, gate: Gate, task: Task, *, author
     await work_service.supersede_claims(session, task, "cancelled", caller)
     if target is not None:
         await _move(session, task, target.status_name, author=author,
-                    actor_kind=ActorKind.human.value)
+                    actor_kind=ActorKind.human.value, gate_id=gate.id)
 
 
 def _finish(gate: Gate, decision: str, *, via: str, user: User | None, label: str | None,
@@ -612,6 +622,17 @@ async def decide(
     if decision != GateDecision.take_over.value:
         gate.routed_at = gate.routed_at or (utcnow() if gate.status != GateStatus.approved.value
                                             else None)
+    from app.services import notify
+
+    if (gate.kind == GateKind.plan_approval.value and gate.status == GateStatus.approved.value
+            and work_service.is_mirrored(task)):
+        # The approved plan goes onto the mirrored ticket (§17): canopy posts it, or — writes
+        # routed through Claude — the session does, from the decision it reads next.
+        post = await notify.queue_plan_comment(session, gate, task, approver=caller.user)
+        if post is not None:
+            gate.response_data = {**(gate.response_data or {}), "tracker_comment": post}
+    await notify.gate_event(session, gate, "gate.decided")
+    await notify.queue_ready_for_task(session, task)
     return gate
 
 
@@ -705,6 +726,9 @@ async def sweep(session: AsyncSession, now: datetime | None = None) -> int:
         record_event(session, kind=WorkEventKind.gate_escalated, project_id=gate.project_id,
                      task_id=gate.task_id, actor_kind=ActorKind.system.value, gate_id=gate.id,
                      data={"level": gate.escalation_level})
+        from app.services import notify
+
+        await notify.gate_event(session, gate, "gate.escalated")
         count += 1
     await session.commit()
     return count

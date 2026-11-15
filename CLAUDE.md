@@ -33,6 +33,10 @@ and a Claude Code plugin (FastMCP server + skills + subagents).
 - **GitHub** owns code + some architecture docs. **Google Drive** holds design docs. canopy reads
   these; it does not own them. **Scoped write:** canopy can upload an *export snapshot* (a generated
   PDF/CSV, see Exports below) into a connected Drive via `GoogleDriveConnector.upload_file`.
+- **Scoped write (comments):** when a person approves an agent's plan in canopy on a mirrored
+  ticket, canopy posts the plan as a comment through `WorkTracker.add_comment` (trackers with the
+  `comments` capability; queued in the outbox) — content only, never status, and only a person's
+  decision in canopy triggers it (with `write_strategy=mcp` the session posts it instead).
 
 ## Layout
 ```
@@ -78,6 +82,10 @@ npm run build        # tsc typecheck + vite build
 Plugin (run from `plugin/`, venv at `plugin/.venv`):
 ```bash
 pip install -r mcp_server/requirements.txt
+```
+Reference runner (run from `runners/sdk/`; its unit tests fake canopy, git and the session):
+```bash
+python -m pytest -q          # the backend venv has what the tests need
 ```
 Whole stack: `docker compose up --build` (postgres, redis, backend, worker, frontend).
 Production (single machine): `docker compose -f compose.prod.yml up -d --build` — Caddy terminates
@@ -161,7 +169,16 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   **Rules** (`DeliveryRule`, pure `rules.py` merge: workspace → team → project, nearest wins
   unless locked, stricter attestation wins) are guidance in the brief or Definition-of-Done
   attestations a hand-off must carry. `agent_flow.py` (pure) + `agent_flow_service.py` compute the
-  team-level measures (`/projects|initiatives|teams/{id}/agent-flow`), never per person. **`work_service.py` is the only writer of a
+  team-level measures (`/projects|initiatives|teams/{id}/agent-flow`), never per person.
+  **Mirrored projects** (§17): policies live on the tracker binding (`StagePolicy.owner_type =
+  "binding"`); a claim's pull, a hand-off or a gate approval *clears* the move
+  (`Task.clearance_status`, written only by `work_service`; responses carry `tracker_transition`)
+  and the inbound sync's `work_service.on_tracker_move` consumes it — any other tracker move is
+  `moved_without_clearance` (claim ends, alert). **Outbound notifications** go through a
+  transactional outbox (`models/notify.py`, `services/notify.py`: queued in the change's own
+  transaction, drained by the worker's `deliver_outbox` with backoff, SSRF-guarded, HMAC-signed;
+  gate `integrations.outbound`; webhooks managed in `api/v1/outbound.py`). Runners:
+  `docs/AGENT_RUNNERS.md` and the reference Agent SDK daemon in `runners/sdk/`. **`work_service.py` is the only writer of a
   claim's state and `Task.active_claim_id`; `gates.py` of `Gate.status/decision`**
   (`tests/test_work_invariants.py`). Claiming is a portable compare-and-swap (reserve the task
   with a conditional UPDATE, *then* insert the claim — inserting first deadlocks on MySQL);

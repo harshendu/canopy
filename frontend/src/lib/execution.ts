@@ -8,6 +8,7 @@ import type {
   WorkClaim,
   WorkEvent,
 } from "../api/types";
+import { trackerName } from "./board";
 
 /**
  * Agent work in plain language (docs/AGENT_EXECUTION.md §16): gate kinds and decisions, claim
@@ -94,6 +95,7 @@ const END_REASON_TEXT: Record<string, string> = {
   taken_over: "a person took it over",
   undelegated: "it was taken back from agents",
   intake_off: "agent intake was switched off",
+  moved_in_tracker: "the ticket moved in its tracker",
   merged_ahead: "its PR was merged",
   cancelled: "it was cancelled",
   expired: "the session stopped checking in",
@@ -154,6 +156,7 @@ export const READINESS_REASON_TEXT: Record<string, string> = {
   role_not_allowed: "No token may work that role",
   no_accountable_owner: "Nobody is accountable — assign it first",
   same_actor: "Needs a different session than the one before",
+  awaiting_tracker_move: "Cleared to move — waiting for its tracker to show it",
 };
 
 export function reasonText(code: string | null | undefined): string {
@@ -246,7 +249,11 @@ export function eventText(event: Pick<WorkEvent, "kind" | "data">): string {
     case "merged_ahead_of_stage":
       return "PR merged while the task was upstream — moved to done";
     case "moved_without_clearance":
-      return "Moved in the tracker without canopy's clearance";
+      return `Moved ${str(d.from) || "(no status)"} → ${str(d.to) || "(no status)"} in the tracker without canopy's clearance`;
+    case "cleared":
+      return `Cleared to move to ${str(d.to)} — the tracker makes the move`;
+    case "tracker_moved":
+      return `The tracker moved it ${str(d.from) || "(no status)"} → ${str(d.to)}`;
     case "policy_changed":
       return "Stage policy changed";
     default:
@@ -269,4 +276,13 @@ export function refusalText(error: unknown): string {
     // not JSON — fall through
   }
   return raw;
+}
+
+/** "Move SHOP-12 to In Review in Jira" — the move canopy cleared on a mirrored ticket. */
+export function trackerMoveText(t: {
+  key: string | null;
+  provider: string;
+  to_status: string;
+}): string {
+  return `Move ${t.key ?? "the ticket"} to ${t.to_status} in ${t.provider ? trackerName(t.provider) : "its tracker"}`;
 }

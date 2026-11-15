@@ -36,7 +36,7 @@ from app.schemas.entities import (
     BoardTaskRead,
     BoardViewer,
 )
-from app.services import flow, policy_service
+from app.services import flow, policy_service, work_service
 from app.services.links import external_urls
 from app.services.org import team_project_ids
 from app.services.sprint_service import (
@@ -202,6 +202,7 @@ async def build_board_response(
                     claim=claims.get(bt.id),
                     gate=gates.get(bt.id),
                     parked=bt.id in gates and gates[bt.id].parked,
+                    awaiting_move=work_service.awaiting_move(t),
                 )
             )
         scope_wip = (
