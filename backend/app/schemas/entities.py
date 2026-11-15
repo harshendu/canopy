@@ -254,6 +254,8 @@ class TaskStatusHistoryRead(BaseModel):
     changed_at: datetime
     author: str | None
     source: str = "sync"
+    actor_kind: str | None = None  # human | agent | system (None: reported by a tracker)
+    work_claim_id: int | None = None
 
 
 # --- Board moves + workflows (USER_FLOWS §C9) ---
@@ -647,6 +649,18 @@ class PullRequestRead(BaseModel):
     url: str | None
     author: str | None
     task_id: int | None = None
+    draft: bool = False
+    merged: bool = False
+    merged_at: datetime | None = None
+    merged_by: str | None = None
+    head_branch: str | None = None
+    head_sha: str | None = None
+    review_decision: str | None = None
+    approved_by: list[str] | None = None
+    checks_state: str | None = None
+    additions: int | None = None
+    deletions: int | None = None
+    changed_files: int | None = None
 
 
 # --- Jira ticket linking (link a Jira ticket → canopy project/initiative) ---
@@ -1700,6 +1714,19 @@ class IngestPullRequest(BaseModel):
     author: str | None = None
     updated: str | None = None
     branch: str | None = None  # head branch — its issue key (e.g. "feat/SHOP-12-x") links a task
+    # Review / check / merge state as far as the source knows it (docs/AGENT_EXECUTION.md §11.3);
+    # omit what you don't know and the cached value is kept.
+    draft: bool | None = None
+    merged: bool | None = None
+    merged_at: str | None = None  # ISO timestamp
+    merged_by: str | None = None
+    head_sha: str | None = None
+    additions: int | None = None
+    deletions: int | None = None
+    changed_files: int | None = None
+    review_decision: Literal["approved", "changes_requested", "review_required"] | None = None
+    approved_by: list[str] | None = None  # logins whose approval covers the current head
+    checks_state: Literal["pending", "passing", "failing"] | None = None
 
 
 class IngestPullRequestsRequest(BaseModel):

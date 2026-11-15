@@ -673,10 +673,14 @@ def record_transition(
     source: StatusSource,
     author: str | None = None,
     at: datetime | None = None,
+    actor_kind: str | None = None,
+    work_claim_id: int | None = None,
 ) -> TaskStatusHistory | None:
     """Set a task's status and category, reconcile its progress, and append a history row when
     the status actually changed. Returns the new row (None when nothing changed). The task must
-    have an id (flush first). The ONLY writer of `Task.status` — see the module docstring."""
+    have an id (flush first). The ONLY writer of `Task.status` — see the module docstring.
+    `actor_kind` / `work_claim_id` attribute a canopy move to a person, an agent or canopy
+    itself, and to the work claim it was made under (docs/AGENT_EXECUTION.md §11.2)."""
     previous = task.status
     _set_status(task, to_status, category)
     if previous == to_status:
@@ -690,6 +694,8 @@ def record_transition(
         changed_at=at or utcnow(),
         author=author,
         source=source.value,
+        actor_kind=actor_kind,
+        work_claim_id=work_claim_id,
     )
     session.add(row)
     return row
@@ -898,6 +904,8 @@ async def move_task(
     expected_status: str | None = None,
     author: str | None = None,
     native_enabled: bool = True,
+    actor_kind: str | None = None,
+    work_claim_id: int | None = None,
 ) -> MoveOutcome:
     """Move a card: change its status (canopy-owned tasks only) and/or its place in the
     column. Raises TrackingError (stale | status_externally_owned | native_tracking_disabled |
@@ -978,6 +986,8 @@ async def move_task(
             category=column.category,
             source=StatusSource.canopy,
             author=author,
+            actor_kind=actor_kind,
+            work_claim_id=work_claim_id,
         )
 
     if changing or after_task_id is not None or before_task_id is not None or to_status is None:

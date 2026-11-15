@@ -7,6 +7,7 @@ from sqlmodel import col, select
 from app.api.deps import (
     AdminActor,
     AdminUser,
+    AgentTokenDep,
     CurrentUser,
     FeatureGate,
     HumanOnly,
@@ -30,9 +31,11 @@ from app.schemas.auth import (
     UserUpdate,
 )
 from app.services.agent_tokens import (
+    AgentTokenError,
     list_agent_tokens,
     mint_agent_token,
     revoke_agent_token,
+    scope_of,
 )
 
 router = APIRouter()
@@ -64,7 +67,10 @@ async def me(user: CurrentUser) -> User:
 
 @router.get("/session", response_model=SessionInfo)
 async def session_info(
-    user: CurrentUser, impersonator: Impersonator, scope: TokenScopeDep
+    user: CurrentUser,
+    impersonator: Impersonator,
+    scope: TokenScopeDep,
+    agent_token: AgentTokenDep,
 ) -> SessionInfo:
     """The effective user, plus the real admin when an admin is impersonating someone — drives the
     account switcher and the impersonation banner. Also reports the token's bounded-agency `scope`
@@ -73,6 +79,7 @@ async def session_info(
         user=UserRead.model_validate(user),
         impersonator=UserRead.model_validate(impersonator) if impersonator is not None else None,
         scope=scope.value,
+        agent_token=scope_of(agent_token) if agent_token is not None else None,
     )
 
 
@@ -115,9 +122,18 @@ async def issue_agent_token(
     signed-in user (the token only carries the issuer's own permissions); `HumanOnly` stops an agent
     token from minting another. Persisted so it appears in `GET /agent-tokens` and can be revoked.
     Default 7-day expiry (max 30). The `access_token` secret is returned **only** here."""
-    return await mint_agent_token(
-        session, user, label=payload.label, expires_minutes=payload.expires_minutes
-    )
+    try:
+        return await mint_agent_token(
+            session,
+            user,
+            label=payload.label,
+            expires_minutes=payload.expires_minutes,
+            roles=payload.roles,
+            project_ids=payload.project_ids,
+            max_active_claims=payload.max_active_claims,
+        )
+    except AgentTokenError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/agent-tokens", response_model=list[AgentTokenInfo])

@@ -149,6 +149,12 @@ def register(mcp, client) -> None:
         Keyed on (repo, number); the repo comes from the connection config. Re-ingesting the
         same PR updates it. A PR is tied to the task whose key (a tracker key or a native
         canopy key) appears in its title or branch.
+
+        Include what you know of its review / check / merge state — stage checks and gates read
+        it: "head_sha", "draft", "merged", "merged_at", "merged_by", "additions", "deletions",
+        "changed_files", "review_decision" (approved | changes_requested | review_required),
+        "approved_by" (logins whose approval covers the current head) and "checks_state"
+        (pending | passing | failing). Leave out what you don't know; the cached value is kept.
         """
         return await client.post(
             f"/connectors/connections/{connection_id}/ingest/pull-requests",

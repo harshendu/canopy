@@ -204,3 +204,16 @@ jobs:
           set -e
           cat refusal.txt
           test "$code" -eq 1 && grep -q CANOPY_MCP_AUTH_TOKEN refusal.txt
+      - name: Per-caller mode serves beyond loopback but needs each caller's own token
+        run: |
+          CANOPY_MCP_TRANSPORT=http CANOPY_MCP_HOST=0.0.0.0 CANOPY_MCP_PORT=8790 \
+            CANOPY_MCP_AUTH_MODE=per_caller CANOPY_API_BASE_URL=http://127.0.0.1:9 \
+            python server.py > per_caller.log 2>&1 &
+          pid=$!
+          for _ in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8790/mcp/ && break; sleep 1; done
+          anonymous=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/mcp/)
+          forged=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Authorization: Bearer forged' \
+            http://127.0.0.1:8790/mcp/)
+          kill "$pid" || true
+          cat per_caller.log
+          test "$anonymous" = "401" && test "$forged" = "401"

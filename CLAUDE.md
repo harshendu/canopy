@@ -400,7 +400,8 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
 - **Startup refuses guessable secrets** (`app/core/startup_checks.py`): the API lifespan and the
   worker's `on_startup` stop on an empty, published-placeholder or <32-byte `SECRET_KEY`; seeding
   refuses to create the first admin with a placeholder or <8-char password; the MCP server refuses
-  HTTP beyond loopback without `CANOPY_MCP_AUTH_TOKEN`. The checks run at startup, not import, so
+  HTTP beyond loopback without `CANOPY_MCP_AUTH_TOKEN` — unless `CANOPY_MCP_AUTH_MODE=per_caller`,
+  where every request must carry the caller's own canopy token, validated with the API. The checks run at startup, not import, so
   tests/Alembic/scripts are unaffected — keep it that way, and don't add an "allow insecure" switch.
 - **Observability:** `GET /api/v1/health` (liveness, also reports `demo_mode`) and
   `/api/v1/health/ready` (DB check) for orchestration; structured logging via `app/core/logging.py`.

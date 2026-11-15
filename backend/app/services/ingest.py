@@ -10,6 +10,8 @@ upsert-only (never deletes), so a partial push can't shrink canopy's state.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func
@@ -22,7 +24,7 @@ from app.models.integration import Connection, EngineerIdentity, ExternalRef, Pu
 from app.models.project import Task
 from app.models.team import Engineer
 from app.schemas.entities import IngestIssue, IngestPullRequest
-from app.services import mapping, workflow
+from app.services import mapping, pr_signals, workflow
 
 if TYPE_CHECKING:
     from app.services.tracker_types import WorkItem
@@ -336,16 +338,14 @@ async def upsert_pull_request(
     author: str | None = None,
     updated: str | None = None,
     branch: str | None = None,
+    signals: PullRequestSignals | None = None,
 ) -> str:
     """Idempotently upsert one PR cache row (keyed on repo+number); returns created|updated.
     Shared by the GitHub webhook and MCP/file ingest so the cache write can't drift. A PR not yet
     tied to a task is matched by the issue key in its title or branch (any tracker's key, or a
-    native canopy key)."""
-    existing = (
-        await session.execute(
-            select(PullRequest).where(PullRequest.repo == repo, PullRequest.number == number)
-        )
-    ).scalar_one_or_none()
+    native canopy key). `signals` carries the review/check fields a source knows (§11.3); a field
+    left None keeps what the cache already holds."""
+    existing = await find_pull_request(session, repo, number)
     action = "updated"
     if existing is None:
         existing = PullRequest(repo=repo, number=number, title=title, state=state)
@@ -356,9 +356,63 @@ async def upsert_pull_request(
     existing.url = url
     existing.author = author
     existing.remote_updated = updated
+    if branch:
+        existing.head_branch = branch
+    if signals is not None:
+        apply_signals(existing, signals)
     if existing.task_id is None:
         existing.task_id = await task_for_keys(session, issue_keys(title, branch))
     return action
+
+
+async def find_pull_request(session: AsyncSession, repo: str, number: int) -> PullRequest | None:
+    return (
+        await session.execute(
+            select(PullRequest).where(PullRequest.repo == repo, PullRequest.number == number)
+        )
+    ).scalar_one_or_none()
+
+
+@dataclass
+class PullRequestSignals:
+    """Review / check / merge facts about a PR, as far as one source knows them (None = unknown,
+    keep the cached value). `checks_state`, `review_decision` and `approved_by` are accepted
+    as-is from ingest, where canopy sees no individual reviews or checks; the webhook path
+    derives them from `reviews` and `checks` instead (`app/services/pr_signals.py`)."""
+
+    draft: bool | None = None
+    merged: bool | None = None
+    merged_at: datetime | None = None
+    merged_by: str | None = None
+    head_sha: str | None = None
+    additions: int | None = None
+    deletions: int | None = None
+    changed_files: int | None = None
+    review_decision: str | None = None
+    approved_by: list[str] | None = None
+    checks_state: str | None = None
+
+
+def apply_signals(pr: PullRequest, signals: PullRequestSignals) -> None:
+    """Merge known signals into the cached row. A new head resets the checks and re-derives the
+    approvals, so nothing seen on an earlier commit vouches for the new one."""
+    if signals.head_sha and signals.head_sha != pr.head_sha:
+        pr.head_sha = signals.head_sha
+        pr.checks = {}
+        pr.checks_state = None
+        pr.approved_by = pr_signals.approvals_at_head(pr.reviews or [], pr.head_sha)
+        pr.review_decision = pr_signals.review_decision(pr.reviews or [], pr.head_sha)
+    for name in ("draft", "merged", "merged_at", "merged_by", "additions", "deletions",
+                 "changed_files"):
+        value = getattr(signals, name)
+        if value is not None:
+            setattr(pr, name, value)
+    if signals.review_decision is not None:
+        pr.review_decision = signals.review_decision
+    if signals.approved_by is not None:
+        pr.approved_by = list(signals.approved_by)
+    if signals.checks_state is not None:
+        pr.checks_state = signals.checks_state
 
 
 async def ingest_pull_requests(
@@ -384,6 +438,19 @@ async def ingest_pull_requests(
             author=pr.author,
             updated=pr.updated,
             branch=pr.branch,
+            signals=PullRequestSignals(
+                draft=pr.draft,
+                merged=pr.merged,
+                merged_at=workflow.parse_remote_time(pr.merged_at),
+                merged_by=pr.merged_by,
+                head_sha=pr.head_sha,
+                additions=pr.additions,
+                deletions=pr.deletions,
+                changed_files=pr.changed_files,
+                review_decision=pr.review_decision,
+                approved_by=pr.approved_by,
+                checks_state=pr.checks_state,
+            ),
         )
         setattr(result, action, getattr(result, action) + 1)
     await session.commit()

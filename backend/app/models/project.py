@@ -171,6 +171,12 @@ class TaskStatusHistory(TimestampMixin, table=True):
     changed_at: datetime = Field(index=True)
     author: str | None = None
     source: str = StatusSource.sync.value
+    # Who made a canopy move: a person (`human`), an agent token acting for one (`agent`), or canopy
+    # itself (`system` — routing after a gate, a PR event). None for rows a tracker reported.
+    actor_kind: str | None = None
+    # The work claim a move was made under (docs/AGENT_EXECUTION.md §6.3). A plain integer, not a
+    # foreign key: audit metadata, and an FK on an existing table forces a SQLite rebuild.
+    work_claim_id: int | None = None
 
 
 class Dependency(TimestampMixin, table=True):

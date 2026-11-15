@@ -61,6 +61,14 @@ class StatusSource(StrEnum):
 CANOPY_OWNER = "canopy"
 
 
+class ActorKind(StrEnum):
+    """Who made a change canopy recorded (status history, work events)."""
+
+    human = "human"  # a person's own (full-scope) session
+    agent = "agent"  # an agent-scope token, acting for the person who issued it
+    system = "system"  # canopy itself: routing after a gate decision, a PR event, the reaper
+
+
 class DeliveryMethod(StrEnum):
     """How a team runs its work, across all of its projects (USER_FLOWS §C11)."""
 

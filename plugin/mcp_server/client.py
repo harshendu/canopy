@@ -11,6 +11,11 @@ user's plugin config, or exported directly for standalone / cloud Claude session
 Empty values are treated as unset so a blank plugin config doesn't clobber an env var
 provided by the surrounding (e.g. cloud) session. A static CANOPY_API_TOKEN wins over
 email/password until it expires; then the login fallback takes over.
+
+Per-caller mode (`per_caller = True`, set by server.py for CANOPY_MCP_AUTH_MODE=per_caller on
+an HTTP transport): every call uses the bearer token of the MCP request being served — the
+caller's own canopy agent token — and never this server's configured credentials, so each
+session acts as its own identity with its own scope (docs/AGENT_EXECUTION.md §18.2).
 """
 
 from __future__ import annotations
@@ -20,6 +25,25 @@ import os
 import httpx
 
 
+class MissingCallerToken(RuntimeError):
+    """Per-caller mode, but the MCP request being served carries no canopy token."""
+
+
+def caller_token() -> str | None:
+    """The bearer token of the MCP request being served (None outside an HTTP request)."""
+    try:
+        from fastmcp.server.dependencies import get_http_request
+    except ImportError:  # pragma: no cover - fastmcp without HTTP dependencies
+        return None
+    try:
+        request = get_http_request()
+    except RuntimeError:
+        return None
+    scheme, _, value = request.headers.get("authorization", "").partition(" ")
+    value = value.strip()
+    return value if scheme.lower() == "bearer" and value else None
+
+
 class CanopyClient:
     def __init__(self) -> None:
         base = (os.environ.get("CANOPY_API_BASE_URL") or "http://localhost:8000").rstrip("/")
@@ -27,16 +51,26 @@ class CanopyClient:
         self.token = os.environ.get("CANOPY_API_TOKEN") or ""
         self.email = os.environ.get("CANOPY_API_EMAIL") or ""
         self.password = os.environ.get("CANOPY_API_PASSWORD") or ""
+        self.per_caller = False
 
     def _headers(self) -> dict[str, str]:
         headers = {"Accept": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
+        token = self.token
+        if self.per_caller:
+            token = caller_token() or ""
+            if not token:
+                raise MissingCallerToken(
+                    "This canopy MCP server runs in per-caller mode: send your own canopy agent "
+                    "token as `Authorization: Bearer <token>`."
+                )
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         return headers
 
     async def _login(self, client: httpx.AsyncClient) -> bool:
-        """Mint a fresh JWT from the configured service account, if one is set."""
-        if not (self.email and self.password):
+        """Mint a fresh JWT from the configured service account, if one is set. Never in
+        per-caller mode: a caller whose token fails must not fall back to the server's account."""
+        if self.per_caller or not (self.email and self.password):
             return False
         resp = await client.post(
             "/auth/login", data={"username": self.email, "password": self.password}
@@ -56,7 +90,7 @@ class CanopyClient:
         timeout: float = 60.0,
     ):
         async with httpx.AsyncClient(base_url=self.base_url, timeout=timeout) as client:
-            if not self.token and self.email:
+            if not self.per_caller and not self.token and self.email:
                 await self._login(client)
             resp = await client.request(
                 method, path, params=params, json=json, headers=self._headers()

@@ -223,7 +223,8 @@ instead; see [`docs/PRODUCTION.md`](docs/PRODUCTION.md#4-connect-claude-over-mcp
 | `CANOPY_DASHBOARD_URL` | Dashboard origin used in review links | API base URL |
 | `CANOPY_MCP_TRANSPORT` | `stdio`, `http` (streamable HTTP) or `sse` (legacy) | `stdio` |
 | `CANOPY_MCP_HOST` / `CANOPY_MCP_PORT` / `CANOPY_MCP_PATH` | Bind address and path for the network transports | `127.0.0.1` / `8765` / `/mcp` |
-| `CANOPY_MCP_AUTH_TOKEN` | Require `Authorization: Bearer …` on the HTTP endpoint. Mandatory unless bound to loopback: the server refuses to start without it | — |
+| `CANOPY_MCP_AUTH_MODE` | `shared` — clients send `CANOPY_MCP_AUTH_TOKEN` and act as the server's account; `per_caller` — each client sends its own canopy agent token, validated with the API and used for its calls | `shared` |
+| `CANOPY_MCP_AUTH_TOKEN` | Shared mode: require `Authorization: Bearer …` on the HTTP endpoint. Mandatory unless bound to loopback (or in per-caller mode): the server refuses to start without it | — |
 
 ## Production deployment
 

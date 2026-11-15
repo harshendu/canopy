@@ -3,16 +3,19 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { AgentToken, AgentTokenInfo, SetupMeta } from "../api/types";
+import type { AgentToken, AgentTokenInfo, Project, SetupMeta } from "../api/types";
 import { featureOn, useFeatures } from "../lib/useFeatures";
 import {
+  AGENT_ROLE_OPTIONS,
   EXPIRY_OPTIONS,
   TOKEN_PLACEHOLDER,
   cloneSnippet,
   expiryPhrase,
   formatDate,
+  lastUsedPhrase,
   mcpJsonSnippet,
   mcpServerDisplayPath,
+  scopeSummary,
   statusChipClass,
 } from "../lib/agentSetup";
 import { PageHeader } from "../components/PageHeader";
@@ -89,6 +92,8 @@ export default function AgentSetup() {
 
   const [label, setLabel] = useState("");
   const [expiryMinutes, setExpiryMinutes] = useState(DEFAULT_EXPIRY);
+  const [role, setRole] = useState("");
+  const [projectIds, setProjectIds] = useState<number[]>([]);
   const [justMinted, setJustMinted] = useState<AgentToken | null>(null);
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [mode, setMode] = useState<"plugin" | "mcp">("plugin");
@@ -97,6 +102,12 @@ export default function AgentSetup() {
     queryKey: ["agent-tokens"],
     queryFn: () => api.get<AgentTokenInfo[]>("/auth/agent-tokens"),
   });
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: () => api.get<Project[]>("/projects"),
+    staleTime: 60 * 1000,
+  });
+  const projectKeys = Object.fromEntries((projects.data ?? []).map((p) => [p.id, p.key]));
 
   // Deployment-configured repo/marketplace refs so the snippets point at THIS install's repo
   // (a fork overrides them via env — §GET /meta), not a hardcoded upstream. Sensible upstream
@@ -115,10 +126,14 @@ export default function AgentSetup() {
       api.post<AgentToken>("/auth/agent-token", {
         label: label.trim() || null,
         expires_minutes: expiryMinutes,
+        roles: role ? [role] : [],
+        project_ids: projectIds,
       }),
     onSuccess: (token) => {
       setJustMinted(token);
       setLabel("");
+      setRole("");
+      setProjectIds([]);
       void qc.invalidateQueries({ queryKey: ["agent-tokens"] });
     },
   });
@@ -194,12 +209,56 @@ export default function AgentSetup() {
                 ))}
               </select>
             </label>
+            <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+              Agent role
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-800"
+              >
+                {AGENT_ROLE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <details className="relative text-xs font-medium text-slate-500">
+              <summary className="cursor-pointer list-none rounded border border-slate-300 px-3 py-2 text-sm font-normal text-slate-800">
+                {projectIds.length === 0 ? "All projects" : `${projectIds.length} selected`} ▾
+              </summary>
+              <div className="absolute z-10 mt-1 max-h-56 w-64 overflow-auto rounded border border-slate-200 bg-white p-2 shadow-lg">
+                {(projects.data ?? []).map((p) => (
+                  <label key={p.id} className="flex items-center gap-2 py-0.5 font-normal text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={projectIds.includes(p.id)}
+                      onChange={(e) =>
+                        setProjectIds((ids) =>
+                          e.target.checked ? [...ids, p.id] : ids.filter((id) => id !== p.id),
+                        )
+                      }
+                    />
+                    <span className="font-mono text-[11px] text-slate-400">{p.key}</span>
+                    <span className="truncate">{p.name}</span>
+                  </label>
+                ))}
+                {(projects.data ?? []).length === 0 && (
+                  <p className="text-slate-400">No projects yet.</p>
+                )}
+              </div>
+            </details>
             <button
               disabled={generate.isPending}
               className="rounded bg-canopy-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
               {generate.isPending ? "Generating…" : "Generate token"}
             </button>
+            <p className="w-full text-xs text-slate-500">
+              For an unattended worker, mint one token per runner, scoped to the one role it
+              runs — a reviewer token can't hand off implementation work, and an agent never
+              approves a gate.
+            </p>
           </form>
         ) : (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -245,7 +304,11 @@ export default function AgentSetup() {
               >
                 {t.status}
               </span>
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+                {scopeSummary(t, projectKeys)}
+              </span>
               <span className="text-xs text-slate-500">{expiryPhrase(t, now)}</span>
+              <span className="text-xs text-slate-400">{lastUsedPhrase(t.last_used_at, now)}</span>
               {t.status === "revoked" ? (
                 <span className="w-16 text-right text-xs text-slate-300">—</span>
               ) : confirmingId === t.id ? (

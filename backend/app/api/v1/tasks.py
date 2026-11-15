@@ -6,11 +6,12 @@ from app.api.deps import (
     CurrentUser,
     PlannerWriter,
     SessionDep,
+    TokenScopeDep,
     current_engineer,
     is_planner,
 )
 from app.core.events import publish
-from app.models.base import TaskType
+from app.models.base import ActorKind, TaskType, TokenScope
 from app.models.project import Project, Task, TaskStatusHistory
 from app.models.user import User
 from app.schemas.entities import (
@@ -54,6 +55,12 @@ async def list_tasks(
 def actor_name(user: User) -> str:
     """How a person appears in status history (`TaskStatusHistory.author`)."""
     return user.full_name or user.email
+
+
+def actor_kind_of(scope: TokenScope) -> str:
+    """How a caller appears in status history and work events: `agent` for an agent-scope
+    token (it acts for the person who issued it), else `human`."""
+    return ActorKind.agent.value if scope == TokenScope.agent else ActorKind.human.value
 
 
 def _tracking_http_error(exc: TrackingError) -> HTTPException:
@@ -178,7 +185,11 @@ async def _own_card_rules(
 
 @router.post("/{task_id}/move", response_model=TaskMoveResponse)
 async def move_task(
-    session: SessionDep, user: ContributorWriter, task_id: int, payload: TaskMoveRequest
+    session: SessionDep,
+    user: ContributorWriter,
+    scope: TokenScopeDep,
+    task_id: int,
+    payload: TaskMoveRequest,
 ) -> TaskMoveResponse:
     """Move a card on the board: change its status (canopy-owned tasks only — a mirrored task's
     status belongs to its tracker: 409 `status_externally_owned`) and/or its place in the
@@ -218,6 +229,7 @@ async def move_task(
             expected_status=payload.expected_status,
             author=actor_name(user),
             native_enabled=await feature_enabled(session, "tracking.native"),
+            actor_kind=actor_kind_of(scope),
         )
     except TrackingError as exc:
         await session.rollback()

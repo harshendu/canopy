@@ -14,6 +14,7 @@ from app.core.security import (
     decode_token_jti,
     decode_token_scope,
 )
+from app.models.agent_token import AgentTokenRecord
 from app.models.base import TokenScope, UserRole
 from app.models.team import Engineer
 from app.models.user import User
@@ -41,15 +42,19 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if user is None or not user.is_active:
         raise credentials_error
-    # A persisted (revocable) token carries a `jti`; reject it once its record is revoked. Ordinary
-    # stateless tokens have no `jti` and skip this entirely (no extra query). Lazy import avoids a
-    # deps↔services import cycle (same pattern as require_feature).
+    # A persisted (revocable) token carries a `jti`; reject it once its record is revoked, and note
+    # when it was last used (at most once a minute). Ordinary stateless tokens have no `jti` and
+    # skip this entirely (no extra query). Lazy import avoids a deps↔services import cycle (same
+    # pattern as require_feature).
     jti = decode_token_jti(token)
     if jti is not None:
-        from app.services.agent_tokens import token_is_revoked
+        from app.services.agent_tokens import record_for_jti, touch_last_used
 
-        if await token_is_revoked(session, jti):
+        record = await record_for_jti(session, jti)
+        if record is not None and record.revoked_at is not None:
             raise credentials_error
+        if record is not None:
+            await touch_last_used(session, record)
     return user
 
 
@@ -90,6 +95,24 @@ async def current_token_scope(token: Annotated[str, Depends(oauth2_scheme)]) -> 
 
 
 TokenScopeDep = Annotated[TokenScope, Depends(current_token_scope)]
+
+
+async def current_agent_token(
+    session: SessionDep, token: Annotated[str, Depends(oauth2_scheme)]
+) -> AgentTokenRecord | None:
+    """The persisted record behind an agent token (its role / project scope and claim limit), or
+    None for a person's own session. Authentication is `get_current_user`'s job; pair them."""
+    if decode_token_scope(token) != TokenScope.agent:
+        return None
+    jti = decode_token_jti(token)
+    if jti is None:
+        return None
+    from app.services.agent_tokens import record_for_jti
+
+    return await record_for_jti(session, jti)
+
+
+AgentTokenDep = Annotated[AgentTokenRecord | None, Depends(current_agent_token)]
 
 
 async def require_human(scope: TokenScopeDep) -> None:

@@ -194,6 +194,13 @@ forbidden from **one-way-door / external-write** actions; **two-way-door** actio
   and `get_current_user` rejects it once revoked. **List/revoke:** `GET /auth/agent-tokens` (your
   tokens + expiry + status) and `DELETE /auth/agent-tokens/{id}` (revoke, `HumanOnly`). UI: the
   **Agent Setup** tab (§A11).
+- **Scope (narrowing):** a token can be minted for given agent **roles** (`roles`, e.g.
+  `["reviewer"]`) and **projects** (`project_ids`), with a limit on how many tasks it may hold at
+  once (`max_active_claims`, default 1, max 10) — empty lists mean "whatever the issuer may do",
+  so existing tokens are unchanged. The claim API enforces them (agent execution — designed in
+  [`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md)). `GET /auth/session` reports an agent token's
+  scope (`agent_token`), and each token records **when it was last used** (`last_used_at`,
+  refreshed at most once a minute) — shown on the Agent Setup list.
 - **What an agent token is blocked from (403):** accepting a decision that is **not explicitly
   two-way** (`PATCH /architecture/adrs/{id}` → `accepted` unless `reversibility=two_way` — an
   *unclassified* decision fails closed too, §G2); **finalising a draft plan**
@@ -328,9 +335,11 @@ signed-in user mint a bounded agent token (§A6), see their live tokens, revoke 
 exact steps to connect — as a full plugin or a bare MCP server.
 - **Actor:** any authenticated user (the token carries only the issuer's own permissions).
 - **UI:** `/agent-setup` (sidebar **Agent Setup**, shown to everyone). Three parts: (1) a
-  **generate** form (name + 7/14/30-day expiry) that reveals the secret **once** in a copy block
-  with a "copy it now" warning; (2) a **token list** — label, status chip (active/expired/revoked),
-  expiry phrase, and a two-click **Revoke**; (3) **Connect Claude Code** with a *Full plugin* /
+  **generate** form (name + 7/14/30-day expiry + an optional **agent role** and **project**
+  scope — one token per runner, scoped to the role it runs, is the recommended practice) that
+  reveals the secret **once** in a copy block with a "copy it now" warning; (2) a **token list** —
+  label, status chip (active/expired/revoked), its scope ("Reviewer · PAYMENTS"), expiry phrase,
+  when it was last used, and a two-click **Revoke**; (3) **Connect Claude Code** with a *Full plugin* /
   *MCP only* toggle whose copy-paste snippets auto-fill the just-minted token. When the
   `ai.agent_tokens` gate is off, the generate form is replaced by an explainer but list/revoke stay.
 - **API:** `POST /auth/agent-token` (mint, `ai.agent_tokens`-gated), `GET /auth/agent-tokens`
@@ -355,8 +364,9 @@ exact steps to connect — as a full plugin or a bare MCP server.
   false "Copied" (was BUG-13).
 - **Cross-link:** pairs with **Connectors** (§J1) — Agent Setup connects *Claude*, Connectors connect
   *data sources*; each links to the other.
-- **Not built:** per-token last-used tracking, and a shared-server (HTTP transport) token flow —
-  the tab is scoped to a per-user stdio token.
+- **Not built:** a guided shared-server (HTTP transport) setup on this tab — the snippets are for a
+  per-user stdio server; a shared HTTP server in per-caller mode (§L1) takes the same token as an
+  `Authorization: Bearer` header.
 
 ---
 
@@ -814,7 +824,8 @@ tracker sent its statuses, where the columns come from — differs.
   position: top|bottom, expected_status?}` · **MCP:** `move_task`. Omitting `to_status` only
   reorders (allowed for mirrored cards too — rank is canopy's). Every status change goes through
   the one write path (`workflow.record_transition`): it stamps the category, appends a
-  `TaskStatusHistory` row (author = the mover, `source = canopy`) and reconciles progress
+  `TaskStatusHistory` row (author = the mover, `source = canopy`, and `actor_kind` — `human`
+  for a person's own session, `agent` for an agent token acting for them) and reconciles progress
   (entering done → 100%; leaving done → 0; other manual progress kept).
 - **Who:** a planner moves any card in projects they may edit (§R6); anyone else who contributes
   — an **engineer**, or a planner outside the project — moves their own cards, or **pulls** an
@@ -1629,7 +1640,10 @@ and (issues) replans on new tasks; ingest does **not** advance the connection wa
   re-ingest updates, never duplicates; assignees map to Engineers exactly like the direct sync
   (§J3 — the same engine). This is also how a tracker canopy can't read itself
   (`direct_read: false`) is kept in sync.
-- **PRs → cache:** `POST .../ingest/pull-requests` · **MCP:** `ingest_github_pull_requests`.
+- **PRs → cache:** `POST .../ingest/pull-requests` · **MCP:** `ingest_github_pull_requests`. An
+  item may also carry what the source knows of its review / check / merge state (`draft`,
+  `merged`, `merged_at`, `merged_by`, `head_sha`, `additions` / `deletions` / `changed_files`,
+  `review_decision`, `approved_by`, `checks_state` — §J6); omitted fields keep the cached value.
 - **Draft push write-back (writes=`mcp`):** when finalising can't write to the tracker by policy,
   Claude creates the items itself then `POST /api/v1/draft-plans/{id}/record-push`
   (`{results:[{draft_task_id, provider?, external_id, external_key}]}` — `provider` defaults to
@@ -1691,6 +1705,16 @@ items, GitHub→PRs); invalid rows are reported and skipped (a bad row never abo
 - **API:** `GET /api/v1/connectors/github/{id}/file?path=`, `.../github/{id}/pulls`,
   `.../github/cached-prs`; `GET /api/v1/connectors/gdrive/{id}/docs`, `.../gdrive/{id}/docs/{file_id}`
   · **MCP:** `read_repo_file`, `list_open_prs`, `read_design_doc`.
+- **Review and check state:** the cache also keeps what stage checks and gates need
+  ([`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md) §11.3): `draft`, `merged` / `merged_at` /
+  `merged_by`, the head branch and **`head_sha`**, size (`additions` / `deletions` /
+  `changed_files`), the **latest review per reviewer** and from it `approved_by` (approvals of the
+  *current head* — a stale approval doesn't count) and `review_decision` (`changes_requested`
+  while any reviewer's latest review requests changes, else `approved` / `review_required`), and
+  every check seen at the head rolled up as `checks_state` (`failing` / `pending` / `passing`; a
+  neutral or skipped check is neither). Fed by the `pull_request`, `pull_request_review`,
+  `check_suite`, `check_run` and `status` webhooks (pure roll-ups in `app/services/pr_signals.py`)
+  and by MCP / file ingest; a new head resets the checks. Nothing here moves a task's status.
 - **PR↔task link:** a cached `PullRequest` carries an optional `task_id` (the task it
   implements), set on ingest/webhook from the first issue key in its **title or head branch**
   (e.g. `feat/shop-12-checkout` → `SHOP-12`): a native canopy key (`Task.key`) or the key of any
@@ -2294,7 +2318,11 @@ pentest out a week"*, *"drop the vendor risk"*, *"add a go/no-go review after th
   **streamable HTTP** (`CANOPY_MCP_TRANSPORT=http` + `CANOPY_MCP_HOST`/`PORT`/`PATH`, default path
   `/mcp`; **SSE remains as a legacy option**) and point the session at
   `https://<host>/mcp` with `"type": "http"`. `CANOPY_MCP_AUTH_TOKEN` is required to bind beyond
-  loopback (the server refuses to start without it) — clients send `Authorization: Bearer <token>`. Backend
+  loopback (the server refuses to start without it) — clients send `Authorization: Bearer <token>`.
+  **Per-caller mode** (`CANOPY_MCP_AUTH_MODE=per_caller`): each client sends **its own** canopy
+  agent token instead; the server validates it with the API (`GET /auth/session`, re-checked at
+  least once a minute so a revoked token stops working) and uses it for that request's calls, so
+  every session acts as itself with its own scope (§A6) and the server holds no canopy credential. Backend
   connection and transport are all read from **environment variables**, so a headless cloud
   session needs no interactive plugin config. See README → *Production deployment* and
   `docs/PRODUCTION.md` (Caddy routes `/mcp` and ngrok exposes it publicly).

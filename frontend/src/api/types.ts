@@ -616,12 +616,28 @@ export interface FeatureGate {
 export interface SessionInfo {
   user: User;
   impersonator: User | null;
+  scope?: "full" | "agent";
+  /** For an agent token: what it is narrowed to (null for a person's own session). */
+  agent_token?: AgentTokenScope | null;
+}
+
+/** What an agent token is narrowed to — empty lists mean "whatever the issuer may do". */
+export interface AgentTokenScope {
+  id: number;
+  label: string;
+  roles: string[];
+  project_ids: number[];
+  max_active_claims: number;
 }
 
 // --- Agent tokens (Agent Setup tab: mint a bounded token for Claude / the MCP server, §A6) ---
 export interface AgentTokenRequest {
   label?: string | null;
   expires_minutes?: number | null;
+  /** The agent roles it may claim work as, and the projects it may work in (empty = any). */
+  roles?: string[];
+  project_ids?: number[];
+  max_active_claims?: number | null;
 }
 
 /** A freshly minted token — the only time `access_token` (the secret) is returned. */
@@ -633,6 +649,9 @@ export interface AgentToken {
   label: string;
   expires_minutes: number;
   expires_at: string;
+  roles?: string[];
+  project_ids?: number[];
+  max_active_claims?: number;
 }
 
 /** A minted token as listed later — metadata only, never the secret. */
@@ -644,6 +663,10 @@ export interface AgentTokenInfo {
   expires_at: string;
   revoked_at: string | null;
   status: "active" | "expired" | "revoked";
+  roles?: string[];
+  project_ids?: number[];
+  max_active_claims?: number;
+  last_used_at?: string | null;
 }
 
 /** Non-secret instance metadata (GET /api/v1/meta) — drives the Agent Setup snippets so a fork
