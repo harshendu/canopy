@@ -682,7 +682,8 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
   **"drift" is reserved for architecture drift** (§N); the schedule's plan-vs-actual is *variance*.
 - **API:** `POST /api/v1/projects/{id}/baseline` (optional `{note}`, returns the logged
   `Baseline`), `GET /api/v1/projects/{id}/baselines` (the history, newest first) · **MCP:**
-  `set_baseline` (accepts a `note`).
+  `set_baseline` (accepts a `note`). Capturing a baseline also **pins** the design docs the plan
+  was based on (basis links on the project and its tasks) to their current versions (§V9).
 
 ### C5. What-if scheduling **[updated — now has a UI panel]**
 - **UI:** Gantt tab → a **What-if** card under the chart (shown when `planning.whatif` is on and the
@@ -1041,6 +1042,12 @@ boundaries).
   `PATCH/DELETE /api/v1/draft-tasks/{task_id}` (writes are planner-gated) · **MCP:**
   `list_draft_plans`, `create_draft_plan`, `get_draft_plan`, `add_draft_task`,
   `update_draft_task`, `delete_draft_task`.
+- **From a design doc (§V9):** `source_doc_id` + `source_doc_version` name the tracked (shared)
+  doc the plan was drafted from (422 `invalid_source_doc` for a personal or unknown doc). On
+  finalise, a **native** plan links the doc as a **reference** to every task it creates; a
+  **mirrored** plan cites it at the end of each ticket's description ("Design doc: <title> —
+  <url>", idempotent — a content write, never status). Only a doc shared at its source is cited.
+  The plan card shows "drafted from a tracked design doc".
 
 ### C10.2 Finalise the draft (canopy tasks, or create / update tickets)
 - **Finalise (any tracking mode):** `POST /api/v1/draft-plans/{plan_id}/finalize`
@@ -1228,7 +1235,9 @@ review it, alternatives, reversibility, and a discussion thread.
 - **UI:** Decisions tab → click an ADR to expand: full context/decision/consequences/alternatives,
   a **status control** (only legal transitions; a `decide_by` date appears when deferring), a
   **review summary** (approved / changes-requested / rejected / pending + whether the project's
-  decision rule is met to accept), a **blast-radius** button (G5), and the **discussion thread**.
+  decision rule is met to accept — plus an advisory **"N design doc(s) not approved yet"** chip
+  when a doc it rests on or waits for is not approved, §V9), a **Design docs behind this
+  decision** panel (§V7), a **blast-radius** button (G5), and the **discussion thread**.
   Post a comment with a **kind**: `comment` | `approve` | `request_changes` | `reject` (a
   non-comment kind is a formal review action, attributable to an engineer).
 - **API:** `GET /api/v1/architecture/adrs/{id}` (detail: fields + comments + review summary),
@@ -1239,6 +1248,8 @@ review it, alternatives, reversibility, and a discussion thread.
   `owner_decides` | `consensus` | `lazy_consensus`, `decision_sla_hours`): drives the advisory
   `can_accept` in the review summary. It is surfaced, **not hard-enforced** — the owner can still
   decide. Per-stakeholder approval *gates* and SLA *notifications* are **not built** yet.
+  The summary also carries `docs_ready` / `docs_pending` (advisory, §V9); **accepting** an ADR
+  pins every basis design doc to its current version.
 
 ### G4. Decision queue
 - **UI:** the **`/decisions`** page (team-wide, also in the sidebar) and the top of each project's
@@ -1260,6 +1271,11 @@ review it, alternatives, reversibility, and a discussion thread.
 - **UI:** Decisions tab → "Import an ADR from a doc" (planner): pick a GitHub/Drive connection + a
   path/file id → the markdown is parsed (title + context/decision/consequences) into an ADR.
 - **API:** `POST /api/v1/architecture/adrs/import` · **MCP:** `import_adr`.
+- **From a design doc's text (§V9):** `POST /api/v1/architecture/adrs/import-text`
+  `{project_id, markdown, doc_id?, doc_version?, fallback_title?}` (planner, project owner) — a
+  session exports a Claude doc or artifact as markdown; the ADR's fields become canopy's own
+  record and, with `doc_id`, the doc is linked as the ADR's **basis** pinned to the version read
+  · **MCP:** `import_adr_from_markdown`.
 
 ### G7. Fitness functions (machine-checkable decisions) **[new — v2 §G-R1]**
 - **What:** a decision can carry **fitness functions** — dependency rules over the component graph
@@ -1432,7 +1448,8 @@ component map + ADRs and maintains the queue.
 ### P1. Project retrospective
 - **UI:** project → **Retros** tab → **New retrospective** (planner) opens a retro whose body is
   **auto-seeded** from project state: completed milestones, schedule variance (tasks ended off
-  baseline), open drift (§N), and ADR churn (superseded/total). It's editable markdown; engineers
+  baseline), open drift (§N), ADR churn (superseded/total), and the **design docs that changed
+  after approval** (approved vs current version, §V9). It's editable markdown; engineers
   **comment**; planners can **close** it.
 - **Follow-ups:** from a retro, mint a **task** or **propose an ADR** (linked to the retro's
   affected components) — turning lessons into tracked work.
@@ -1781,7 +1798,10 @@ initiative / portfolio rollups), so the numbers match what's on screen.
   `GET /api/v1/initiatives/{id}/export?fmt=`, `GET /api/v1/portfolio/export?fmt=` — returns the file
   with a `Content-Disposition` attachment. Rendering is `app/services/export_pdf.py` (reportlab —
   pure Python, no headless browser, CI-safe) + `app/services/export_csv.py`; the snapshot data is
-  assembled in `app/api/v1/exports.py`.
+  assembled in `app/api/v1/exports.py`. Project and initiative snapshots add a **Design docs**
+  table — title, kind, review status, version ("r12 approved, now r14"), where it lives and the
+  link; personal and archived docs are left out; in CSV it is a trailing section after a blank
+  row (§V9).
 
 ### S2. Save a snapshot to Google Drive
 - **UI:** the same Export menu → **Save to Google Drive** (pick a connection when more than one is
@@ -2053,17 +2073,43 @@ row per *document*, however many places use it:
   current version, the **version timeline** with hashes and frozen copies, *Record check* / *can't
   open it*, *Request review*, *Approve* for planners, *archive*, *Supersede* with a new link).
 
-### V9. Not built yet (design docs)
-- **Lifecycle wiring** — pins at ADR accept / spec approve / baseline, a docs-ready flag on ADR
-  review, an ADR from a Claude doc's text, staged doc links in proposals with a source doc, draft
-  plans that copy doc links, docs on milestones / outcomes / risks / retros, design-doc tables in
-  exports, freezing an approved version (repo or Drive) — the next slice.
-- **Automation** — a doc-sentinel sweep, the optional organization artifact sync, a workspace
-  docs library — later.
+### V9. Design docs across the lifecycle **[new]**
+- **Pins at decision points.** Accepting an ADR (§G3), approving a spec (§W) and capturing a
+  baseline (§C4) pin every **basis** link on that entity (the project + its tasks for a
+  baseline) to the doc's current version — so a later edit raises `behind_pin` (§V8).
+- **Advisory readiness.** The ADR review summary and the spec bundle report `docs_ready` /
+  `docs_pending`: every doc the entity rests on (basis) or waits for (gate) is approved. Like
+  `can_accept`, it is surfaced, not enforced.
+- **An ADR from a doc's text** — `POST /architecture/adrs/import-text` (§G6), the doc linked as
+  its basis · **MCP:** `import_adr_from_markdown`.
+- **Proposals.** `doc_link.create` items; `proposalitem.entity_type` is now VARCHAR (migration
+  `1c2d3e4f5a6b`). A proposal may name its **source doc** (`source_doc_id` +
+  `source_doc_version`; shared docs only) — the review workspace shows "From <doc>, <version>"
+  and warns when the doc has **moved on** since; the preview counts `docs_linked` (§AA).
+- **Draft plans** carry a source doc; finalise links it to the created tasks (native) or cites
+  it in the tickets (mirrored) (§C10).
+- **Docs on more work.** A **docs** toggle (lazy `LinkedDocs`) on roadmap milestones (default
+  relation `gate`), outcomes and risks (project or initiative scope) and retros.
+- **Exports** add a Design docs table (§S); the **retro seeder** lists docs changed after
+  approval (§P).
+- **Freeze.** A session saves a copy of an approved version where the organization owns it —
+  a repo file via a pull request, or a Drive file — with its own access, then records the link
+  (`POST /docs/{id}/revisions {snapshot_url}` · **MCP** `record_design_doc_version(snapshot_url=)`);
+  the version timeline shows "frozen copy". Each person's default store is
+  `PATCH /api/v1/auth/me/preferences {doc_snapshot_store: repo | drive}` (UI: **My docs →
+  Frozen copies of approved docs go to**); `UserRead.doc_snapshot_store` reports it.
+- **Skills:** `tracking-design-docs` §8–§9 (lifecycle table, freezing), and the doc steps in
+  `spec-driven-development`, `writing-adrs`, `drafting-tickets`, `harvesting-signals`,
+  `persona-playbooks` (design) and `daily-standup`.
+
+### V10. Not built yet (design docs)
+- **Automation** — a doc-sentinel sweep that re-checks the worklist, the optional organization
+  artifact sync (Compliance API metadata), a workspace docs library — the next slice.
 - By design: **no content search, no embedded preview** (canopy never frames or fetches a doc),
   **no mirrored comment threads** (review conversations stay in Claude), **no automatic
   registration** (a session or a person registers), **no Slack/email delivery** of doc alerts (a
-  hook over the alerts, like §I).
+  hook over the alerts, like §I), **no enforced gates** (readiness and gate links are advisory,
+  like `can_accept`).
 
 ---
 
@@ -2097,6 +2143,9 @@ document graph (§V) or `source_url`; the governing decision links via `adr_id`.
 - `GET /api/v1/specs/{id}` returns the **self-audit bundle**: the spec + its criteria + the linked
   tasks (name/status/percent) + computed **readiness** (`criteria_met` / `criteria_total` excluding
   waived, `acceptance_ratio`). Readiness is pure in `app/services/specs.py` · **MCP:** `get_spec`.
+  The bundle also carries `docs_ready` / `docs_pending` (advisory — its source docs are approved;
+  "source docs not approved" chip in the UI), and moving a spec to **approved** pins every
+  basis design doc to its current version (§V9).
 - **Skill `spec-driven-development`** scripts the loop: draft the spec from a PRD/ADRs → write
   checkable criteria → approve → plan + link the work (via `drafting-tickets`) → self-audit
   each criterion against the implementation → mark `verified` when all are met.
@@ -2212,7 +2261,10 @@ the page is open**, watching it update live (§AA5).
   computed output the replan overwrites), `dependency.create`, `milestone.create/update`,
   `blocker.create/resolve`, `risk.create/update`, `outcome.create/update`,
   `decision.create` (lands as a **proposed** ADR — the §G lifecycle takes over),
-  `doc_reference.create` (deduped per scope+url). Payloads are **whitelisted per
+  `doc_reference.create` (through the design-doc register-or-link path, with `visibility` — a
+  private Claude doc is refused, §V6), `doc_link.create` (link a tracked doc — `doc_id`, or a
+  `doc_ref` staged here — to work in scope — `entity_id`, or an `entity_ref` of the right kind
+  — with a relation, §V9). Payloads are **whitelisted per
   entity/action** and validated through the same schemas as the REST API — no
   mass-assignment; a create item may declare a `ref` handle that later items point at
   (`parent_ref`, `predecessor_ref`, `task_ref`, …), so one proposal can stage "create

@@ -95,6 +95,9 @@ async def get_spec(session: SessionDep, _: CurrentUser, spec_id: int) -> SpecDet
     detail.criteria_met = met
     detail.criteria_total = total
     detail.acceptance_ratio = ratio
+    detail.docs_ready, detail.docs_pending = await design_docs.docs_readiness(
+        session, DocLinkEntity.spec, spec_id
+    )
     return detail
 
 
@@ -103,8 +106,13 @@ async def update_spec(
     session: SessionDep, _: PlannerWriter, spec_id: int, payload: SpecUpdate
 ) -> Spec:
     spec = await _get_spec(session, spec_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    approving = changes.get("status") == SpecStatus.approved and spec.status != SpecStatus.approved
+    for field, value in changes.items():
         setattr(spec, field, value)
+    if approving:
+        # Pin the source docs to the version the spec was approved on (§V9).
+        await design_docs.pin_basis_links(session, DocLinkEntity.spec, [spec_id])
     await session.commit()
     await session.refresh(spec)
     return spec

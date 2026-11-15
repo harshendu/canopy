@@ -30,6 +30,21 @@ class ProposalCreate(BaseModel):
     summary: str | None = None
     origin: str | None = None  # authoring surface, e.g. "claude-session (product persona)"
     items: list[ProposalItemIn] = Field(min_length=1)
+    # The tracked design doc the changes were derived from, and the version read (§V9).
+    source_doc_id: int | None = None
+    source_doc_version: str | None = Field(default=None, max_length=64)
+
+
+class ProposalSourceDoc(BaseModel):
+    """The design doc a proposal was derived from, as it stands now."""
+
+    id: int
+    title: str | None
+    url: str
+    provider: str
+    current_version: str | None
+    # the doc moved on since the proposal read it — review against the newer version
+    moved_on: bool = False
 
 
 class ProposalItemRead(BaseModel):
@@ -92,6 +107,9 @@ class ProposalRead(BaseModel):
     # items that errored or drifted (stale) since staging — look before applying:
     attention_count: int = 0
     scope_label: str | None = None  # resolved project/initiative key+name for display
+    source_doc_id: int | None = None
+    source_doc_version: str | None = None
+    source_doc: ProposalSourceDoc | None = None
     # Co-review trail (§AA5): bumped each time the author revises the open proposal in place.
     revision: int = 1
     revised_at: datetime | None = None
@@ -249,6 +267,7 @@ class PreviewCounts(BaseModel):
     outcomes_edited: int = 0
     decisions_added: int = 0
     docs_added: int = 0
+    docs_linked: int = 0
 
 
 class ProposalPreview(BaseModel):

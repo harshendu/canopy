@@ -71,6 +71,8 @@ def register(mcp, client) -> None:
         items: list[dict],
         summary: str | None = None,
         origin: str | None = None,
+        source_doc_id: int | None = None,
+        source_doc_version: str | None = None,
     ) -> dict:
         """Stage a batch of canopy changes for **human review** — the default way to write
         anything you inferred (from Slack/email/meetings/Jira/GitHub/docs) rather than were
@@ -84,7 +86,14 @@ def register(mcp, client) -> None:
         `source_label`, `source_url`.
 
         - `entity_type`: task | dependency | milestone | blocker | risk | outcome |
-          decision | doc_reference. `action`: create | update | resolve (blockers only).
+          decision | doc_reference | doc_link. `action`: create | update | resolve (blockers
+          only).
+        - `doc_link` (create): link a tracked design doc to the work it serves —
+          `{"doc_id": 12 | "doc_ref": "<a doc_reference item's ref>", "entity_type": "task" |
+          "decision" | "milestone" | "spec" | "risk" | "outcome" | …, "entity_id": 7 |
+          "entity_ref": "<a ref created in this proposal>", "relation": "basis" | "gate" |
+          "reference"}`. A `doc_reference` item takes `visibility` (users | org | public — a
+          Claude doc must be shared in Claude).
         - Payload fields mirror the create/update APIs (task: name, duration, type,
           parent_id, constraint_start, deadline, assignee_engineer_id, tags, estimate_*;
           dependency: predecessor_id, successor_id, type, lag; blocker: task_id, reason,
@@ -105,6 +114,9 @@ def register(mcp, client) -> None:
           github | drive | document | chat), `source_label`, and `source_url` on every item
           you derived from an external source — the reviewer sees where each change came from.
         - `reason`: one line on *why* this change (shown beside the diff).
+        - **From a design doc:** pass `source_doc_id` + `source_doc_version` (the version you
+          read) when the batch comes from a tracked design doc; the reviewer sees "from <doc>,
+          <version>" and a warning if the doc moved on before they apply.
 
         Validation is strict (400 lists per-item errors — fix and restage). Returns the
         staged proposal (id, items) plus `review_url`. Follow up with `preview_proposal`
@@ -120,6 +132,8 @@ def register(mcp, client) -> None:
                 "summary": summary,
                 "origin": origin or "claude-session",
                 "items": items,
+                "source_doc_id": source_doc_id,
+                "source_doc_version": source_doc_version,
             },
         )
         proposal["review_url"] = _review_url(proposal.get("id"))

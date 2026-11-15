@@ -21,6 +21,7 @@ from app.schemas.auth import (
     AgentToken,
     AgentTokenInfo,
     AgentTokenRequest,
+    MyPreferences,
     PasswordChange,
     PasswordReset,
     SessionInfo,
@@ -218,6 +219,21 @@ async def reset_password(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     user.hashed_password = hash_password(payload.new_password)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+@router.patch("/me/preferences", response_model=UserRead)
+async def update_my_preferences(
+    session: SessionDep, user: CurrentUser, payload: MyPreferences
+) -> User:
+    """A signed-in user sets their own preferences — today, where frozen copies of approved
+    design docs go (`repo` or `drive`); each freeze can still choose the other."""
+    changes = payload.model_dump(exclude_unset=True)
+    if "doc_snapshot_store" in changes:
+        store = changes["doc_snapshot_store"]
+        user.doc_snapshot_store = store.value if store is not None else None
     await session.commit()
     await session.refresh(user)
     return user

@@ -455,6 +455,14 @@ class ProposalEntity(StrEnum):
     outcome = "outcome"
     decision = "decision"
     doc_reference = "doc_reference"
+    doc_link = "doc_link"  # link a tracked design doc to the work it serves (USER_FLOWS §V9)
+
+
+# `proposalitem.entity_type` is VARCHAR (not a native DB enum) since the design-doc lifecycle
+# revision, so a new stageable entity is one enum member — no dialect-branched migration.
+ProposalEntityType = sa.Enum(
+    ProposalEntity, native_enum=False, create_constraint=False, length=32
+)
 
 
 class ProposalAction(StrEnum):

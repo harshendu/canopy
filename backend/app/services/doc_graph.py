@@ -501,6 +501,13 @@ async def doc_attention_messages(
     ]
 
 
+async def scope_refs(
+    session: AsyncSession, scope_level: DocScope, scope_id: int
+) -> list[DocReference]:
+    """The shared docs of a scope, rolled up (what coverage counts) — for exports."""
+    return await _refs_for_scope(session, scope_level, scope_id)
+
+
 # Kept for callers that need the link rows of a scope (exports, the digest).
 async def links_in_scope(session: AsyncSession, doc_ids: list[int]) -> list[DocLink]:
     if not doc_ids:

@@ -21,6 +21,10 @@ it, a discussion thread, and a review lifecycle.
    `stakeholder_ids`). The number is assigned automatically; status starts `proposed`.
 4. If it replaces an earlier decision, say so in the context and move the prior ADR to
    `superseded` via `canopy:transition_adr` (the app tracks the supersession chain).
+5. **From a design doc in Claude** (an RFC, an options page): export it as markdown and use
+   `canopy:import_adr_from_markdown(project_id, markdown, doc_id, version)` — the doc becomes
+   the ADR's **basis**, pinned to the version you read. For an ADR that already exists, link the
+   doc with `canopy:link_design_doc(doc_id, "decision", adr_id, "basis")`.
 
 ## Proposing a decision (engineer)
 
@@ -35,7 +39,9 @@ it, a discussion thread, and a review lifecycle.
 - Discuss with `canopy:comment_adr`. A `kind` of approve / request_changes / reject is a
   formal review action (attribute it with `engineer_id`); plain `comment` is just a note.
 - `canopy:get_adr` shows the thread and a review summary (who approved, what's pending,
-  and whether the project's decision rule is satisfied to accept).
+  and whether the project's decision rule is satisfied to accept) — plus `docs_ready`
+  (advisory): the design docs it rests on are approved. Accepting the ADR **pins** each basis
+  doc to its current version; then freeze that version (skill `tracking-design-docs` §9).
 - `canopy:decision_queue` is the morning surface: what needs triage, what's stuck in
   discussion, and which deferred decisions are coming due.
 

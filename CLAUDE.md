@@ -121,7 +121,7 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   (`app/models/proposal.py`) stage **inbound canopy writes** an agent inferred (from
   Slack/email/meetings/docs) for a human to review and apply in the UI — the inbound twin of
   draft plans. Items are whitelisted per entity×action (task/dependency/milestone/blocker/
-  risk/outcome/decision/doc_reference; task `status` stageable only on canopy-owned tasks,
+  risk/outcome/decision/doc_reference/doc_link; task `status` stageable only on canopy-owned tasks,
   never on a mirrored one), scope-contained
   to one project/initiative, may reference each other via `ref`/`*_ref` handles, and carry
   provenance (`source_kind/label/url`) + a stage-time `before` snapshot. Apply is
@@ -246,9 +246,17 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   pure in `app/services/doc_health.py` (never stored) and feed the project alerts
   (`doc_*` kinds), the initiative digest, coverage's `needs_attention`, `/me` approvals and the
   session worklist (`DOC_CHECK_DAYS`, `DOC_GATE_WINDOW_DAYS`).
+  **Lifecycle:** accepting an ADR, approving a spec and capturing a baseline pin basis links
+  (`design_docs.pin_basis_links`); ADR review + spec bundle report advisory `docs_ready`;
+  `POST /architecture/adrs/import-text` makes an ADR from a doc's markdown; proposals stage
+  `doc_link` items (`proposalitem.entity_type` is VARCHAR) and carry a `source_doc_id`; draft
+  plans carry one too (finalise links it to native tasks / cites it in tickets); exports and the
+  retro seeder list design docs; frozen copies are recorded as `DocRevision.snapshot_url`
+  (`User.doc_snapshot_store` = repo | drive).
   MCP: `register_design_doc`/`link_design_doc`/`promote_design_doc`/`get_design_doc`/
   `list_design_docs`/`list_doc_kinds`/`record_design_doc_version`/`request_design_doc_review`/
-  `get_doc_worklist` (skill `tracking-design-docs`). USER_FLOWS §V5-§V9.
+  `get_doc_worklist`/`import_adr_from_markdown` (skill `tracking-design-docs`). USER_FLOWS
+  §V5-§V10.
 - **Specs (spec-driven development):** `Spec` + `SpecCriterion` (`app/models/spec.py`) capture
   *intent as the source of truth* — a problem statement + explicit, checkable **acceptance
   criteria** — before work begins. Tasks implement a spec via `Task.spec_id`; an agent self-audits

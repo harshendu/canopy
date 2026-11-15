@@ -181,6 +181,14 @@ function SpecDetailPanel({
         <span className="text-xs tabular-nums text-slate-500">
           {d.criteria_met}/{d.criteria_total} met
         </span>
+        {d.docs_ready === false && (
+          <span
+            className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800"
+            title={(d.docs_pending ?? []).join(", ")}
+          >
+            source docs not approved
+          </span>
+        )}
         {mayPlan && (
           <select
             value={d.status}

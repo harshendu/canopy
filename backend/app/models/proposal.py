@@ -23,6 +23,7 @@ from sqlmodel import Field
 from app.models.base import (
     ProposalAction,
     ProposalEntity,
+    ProposalEntityType,
     ProposalScope,
     ProposalStatus,
     TimestampMixin,
@@ -54,6 +55,10 @@ class Proposal(TimestampMixin, table=True):
     revision: int = 1
     revised_at: datetime | None = None
     revision_note: str | None = Field(default=None, sa_column=Column(Text))
+    # The design doc the staged changes were derived from, and the version read (§V9): the review
+    # workspace shows "from <doc>, <version>" and warns when the doc has moved on since.
+    source_doc_id: int | None = Field(default=None, foreign_key="docreference.id")
+    source_doc_version: str | None = Field(default=None, max_length=64)
 
 
 class ProposalItem(TimestampMixin, table=True):
@@ -69,7 +74,7 @@ class ProposalItem(TimestampMixin, table=True):
     id: int | None = Field(default=None, primary_key=True)
     proposal_id: int = Field(foreign_key="proposal.id", index=True)
     sort_order: int = 0
-    entity_type: ProposalEntity
+    entity_type: ProposalEntity = Field(sa_type=ProposalEntityType)
     action: ProposalAction
     entity_id: int | None = None  # the live target for update/resolve
     ref: str | None = None  # handle other items may reference (creates only)

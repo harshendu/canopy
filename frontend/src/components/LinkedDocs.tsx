@@ -46,6 +46,7 @@ export default function LinkedDocs({
   entityType,
   entityId,
   projectId,
+  initiativeId,
   mayLink,
   legacyUrl,
   title = "Design docs",
@@ -55,6 +56,8 @@ export default function LinkedDocs({
   entityId: number;
   /** The project whose docs the picker offers (and where a pasted doc is filed). */
   projectId?: number;
+  /** …or, for initiative-level work (an initiative outcome or risk), the initiative. */
+  initiativeId?: number;
   mayLink: boolean;
   /** A pre-design-doc link field (an ADR's RFC URL, a spec's source URL), shown until a doc
    *  covers it. */
@@ -175,7 +178,13 @@ export default function LinkedDocs({
         <LinkPicker
           entityType={entityType}
           entityId={entityId}
-          projectId={projectId}
+          home={
+            projectId != null
+              ? { level: "project", id: projectId }
+              : initiativeId != null
+                ? { level: "initiative", id: initiativeId }
+                : null
+          }
           linkedIds={items.map((r) => r.doc.id)}
           defaultRelation={defaultRelation}
           onDone={invalidate}
@@ -188,14 +197,14 @@ export default function LinkedDocs({
 function LinkPicker({
   entityType,
   entityId,
-  projectId,
+  home,
   linkedIds,
   defaultRelation,
   onDone,
 }: {
   entityType: DocLinkEntity;
   entityId: number;
-  projectId?: number;
+  home: { level: "project" | "initiative"; id: number } | null;
   linkedIds: number[];
   defaultRelation: DocRelation;
   onDone: () => void;
@@ -207,9 +216,9 @@ function LinkPicker({
   const [visibility, setVisibility] = useState<DocVisibility>("org");
 
   const candidates = useQuery({
-    queryKey: ["docs", "project", projectId],
-    queryFn: () => api.get<DesignDoc[]>(`/docs?scope_level=project&scope_id=${projectId}`),
-    enabled: open && projectId != null,
+    queryKey: ["docs", home?.level, home?.id],
+    queryFn: () => api.get<DesignDoc[]>(`/docs?scope_level=${home?.level}&scope_id=${home?.id}`),
+    enabled: open && home != null,
   });
 
   const link = useMutation({
@@ -225,8 +234,8 @@ function LinkPicker({
       api.post<DocRegisterResult>("/docs/register", {
         url,
         visibility,
-        scope_level: "project",
-        scope_id: projectId,
+        scope_level: home?.level,
+        scope_id: home?.id,
         links: [{ entity_type: entityType, entity_id: entityId, relation }],
       }),
     onSuccess: () => {
@@ -260,14 +269,14 @@ function LinkPicker({
             </option>
           ))}
         </select>
-        {projectId != null && (
+        {home != null && (
           <>
             <select
               value={docId}
               onChange={(e) => setDocId(e.target.value ? Number(e.target.value) : "")}
               className="min-w-0 flex-1 rounded border border-slate-300 px-1 py-1"
             >
-              <option value="">Pick a project doc…</option>
+              <option value="">Pick a {home.level} doc…</option>
               {options.map((d) => (
                 <option key={d.id} value={d.id}>
                   {docTitle(d)} ({d.kind_label})
@@ -287,7 +296,7 @@ function LinkPicker({
           cancel
         </button>
       </div>
-      {projectId != null && (
+      {home != null && (
         <div className="flex flex-wrap items-center gap-2">
           <input
             value={url}

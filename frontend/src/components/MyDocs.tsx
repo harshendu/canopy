@@ -13,6 +13,7 @@ import {
   providerLabel,
   slugify,
 } from "../lib/docs";
+import { useCurrentUser } from "../lib/useCurrentUser";
 
 const PROMOTE_VISIBILITY: DocVisibility[] = ["org", "users", "public"];
 
@@ -33,6 +34,12 @@ export default function MyDocs() {
     onSuccess: invalidate,
   });
   const items = docs.data ?? [];
+  const { data: me } = useCurrentUser();
+  const setStore = useMutation({
+    mutationFn: (store: "repo" | "drive" | null) =>
+      api.patch("/auth/me/preferences", { doc_snapshot_store: store }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["me"] }),
+  });
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -55,6 +62,19 @@ export default function MyDocs() {
           }}
         />
       )}
+      <label className="mb-2 flex items-center gap-2 text-xs text-slate-500">
+        Frozen copies of approved docs go to
+        <select
+          value={me?.doc_snapshot_store ?? ""}
+          onChange={(e) => setStore.mutate((e.target.value || null) as "repo" | "drive" | null)}
+          className="rounded border border-slate-300 px-1 py-0.5"
+          title="When a decision is made on a doc, a Claude session saves a copy of that version here"
+        >
+          <option value="">ask each time</option>
+          <option value="repo">the repo (a pull request)</option>
+          <option value="drive">Google Drive</option>
+        </select>
+      </label>
       {items.length === 0 ? (
         <p className="text-sm text-slate-400">
           Nothing tracked privately. Claude sessions can add docs here as you work.

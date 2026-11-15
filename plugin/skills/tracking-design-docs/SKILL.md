@@ -119,7 +119,34 @@ door — you may do it when the user asks or the doc is ready). The doc's planne
 version. **You cannot approve** (an agent token gets 403) — hand over the link instead. A newer
 version after approval does not undo it; the doc shows "changed since approval".
 
-## 8. Report back
+## 8. Use it across the lifecycle
+
+| Moment | Do |
+| --- | --- |
+| A decision is drafted from a doc | `import_adr_from_markdown(project_id, markdown, doc_id, version)` (the doc becomes its basis) or `link_design_doc(…, "decision", adr_id, "basis")` |
+| A spec rests on a PRD | `link_design_doc(…, "spec", spec_id, "basis")`; `get_spec` reports `docs_ready` |
+| A plan is drafted from a doc | `create_draft_plan(…, source_doc_id, source_doc_version)` — finalise links/cites the doc |
+| Changes are inferred from a doc | `propose_changes(…, source_doc_id, source_doc_version)`; link docs to new work with `doc_link` items |
+| A milestone must wait for a design | `link_design_doc(…, "milestone", id, "gate")` |
+| Context for a task, risk, outcome or retro | `link_design_doc(…, "reference")` |
+
+Accepting an ADR, approving a spec or capturing a baseline **pins** every basis link to the
+doc's current version — canopy does it; you see the pins in `get_design_doc`.
+
+## 9. Freeze the version a decision was made on
+
+A pin names a version, but Claude keeps only recent page versions and docs are edited in place.
+When an ADR is accepted, a spec approved or the doc itself approved, save a copy where the
+organization owns it — **with your own access, never through canopy's server**:
+
+1. Read the user's `doc_snapshot_store` (`get_workspace_context` → `user`): `repo` or `drive`.
+   Unset → ask once (they can set it under My docs).
+2. Export the doc at that version as Markdown (a page artifact: its source).
+3. `repo`: open a pull request adding `docs/design/<slug>-<version>.md` with your GitHub tools.
+   `drive`: upload the file with your Drive tools.
+4. `record_design_doc_version(doc_id, version, snapshot_url=<the PR file or Drive link>)`.
+
+## 10. Report back
 
 Give the user the doc's title, its kind/format, what it is linked to, and its review state.
 For a Claude doc that is not yet shared, say plainly that it is personal (only they see it in

@@ -8,7 +8,7 @@ import io
 
 from app.models.base import TaskType
 from app.schemas.entities import ProjectSummary
-from app.services.snapshot import InitiativeSnapshot, PortfolioSnapshot, ProjectSnapshot
+from app.services.snapshot import DocRow, InitiativeSnapshot, PortfolioSnapshot, ProjectSnapshot
 
 
 def _encode(rows: list[list[str]]) -> bytes:
@@ -64,7 +64,18 @@ def project_csv(snap: ProjectSnapshot) -> bytes:
                 assignee,
             ]
         )
-    return _encode(rows)
+    return _encode(rows + _doc_rows(snap.docs))
+
+
+def _doc_rows(docs: list[DocRow]) -> list[list[str]]:
+    """A trailing "Design docs" section (after a blank row) — the docs the work runs on: kind,
+    review status, version, where it lives and the link (§V9). Empty when there are none."""
+    if not docs:
+        return []
+    out: list[list[str]] = [[], ["Design docs"], ["Title", "Kind", "Status", "Version",
+                                                  "Lives in", "Link"]]
+    out += [[d.title, d.kind, d.status, d.version, d.provider, d.url] for d in docs]
+    return out
 
 
 def _summary_rows(projects: list[ProjectSummary]) -> list[list[str]]:
@@ -103,8 +114,8 @@ def _summary_rows(projects: list[ProjectSummary]) -> list[list[str]]:
 
 
 def initiative_csv(snap: InitiativeSnapshot) -> bytes:
-    """One row per sub-project (the initiative rollup table)."""
-    return _encode(_summary_rows(snap.rollup.projects))
+    """One row per sub-project (the initiative rollup table), then its design docs."""
+    return _encode(_summary_rows(snap.rollup.projects) + _doc_rows(snap.docs))
 
 
 def portfolio_csv(snap: PortfolioSnapshot) -> bytes:

@@ -542,6 +542,10 @@ class ReviewSummaryRead(BaseModel):
     rejected: int
     pending: int
     can_accept: bool
+    # advisory, like can_accept: every design doc the decision rests on (basis) or waits for
+    # (gate) is approved — USER_FLOWS §V9
+    docs_ready: bool = True
+    docs_pending: list[str] = []
 
 
 class FitnessFunctionCreate(BaseModel):
@@ -589,6 +593,17 @@ class ADRImportRequest(BaseModel):
     provider: Provider  # github | gdrive
     connection_id: int
     ref: str  # GitHub file path or Google Drive file id
+
+
+class ADRImportTextRequest(BaseModel):
+    """An ADR from markdown a session read from a design doc (a Claude Doc, an artifact). The
+    ADR's fields become canopy's own record; the doc itself is only linked (§V9)."""
+
+    project_id: int
+    markdown: str = Field(min_length=1, max_length=200_000)
+    fallback_title: str | None = Field(default=None, max_length=255)
+    doc_id: int | None = None  # the tracked doc it came from → a basis link
+    doc_version: str | None = Field(default=None, max_length=64)  # the version read
 
 
 class ImpactResponse(BaseModel):
@@ -1610,6 +1625,9 @@ class DraftPlanCreate(BaseModel):
     title: str
     description: str | None = None
     source: str | None = None  # where the plan came from (a design doc / PRD / url)
+    # the tracked design doc it was drafted from + the version read (§V9)
+    source_doc_id: int | None = None
+    source_doc_version: str | None = Field(default=None, max_length=64)
 
 
 class DraftPlanUpdate(BaseModel):
@@ -1617,6 +1635,8 @@ class DraftPlanUpdate(BaseModel):
     description: str | None = None
     status: str | None = None  # draft | synced | archived
     source: str | None = None
+    source_doc_id: int | None = None
+    source_doc_version: str | None = Field(default=None, max_length=64)
 
 
 class DraftPlanRead(BaseModel):
@@ -1629,6 +1649,8 @@ class DraftPlanRead(BaseModel):
     source: str | None
     synced_at: datetime | None
     created_at: datetime
+    source_doc_id: int | None = None
+    source_doc_version: str | None = None
 
 
 class DraftTaskCreate(BaseModel):
@@ -2085,6 +2107,9 @@ class SpecDetail(SpecRead):
     criteria_total: int = 0  # excludes waived
     criteria_met: int = 0
     acceptance_ratio: float = 0.0  # met / effective total
+    # advisory: the source docs (basis / gate links) are approved — USER_FLOWS §V9
+    docs_ready: bool = True
+    docs_pending: list[str] = []
 
 
 # --- Delivery metrics (DORA + flow; team-level only) ---

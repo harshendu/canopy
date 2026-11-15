@@ -475,6 +475,14 @@ function AdrDetailPanel({
         >
           {adr.review.can_accept ? "ready to accept" : "rule not yet met"}
         </span>
+        {adr.review.docs_ready === false && (
+          <span
+            className="rounded bg-amber-100 px-2 py-0.5 text-amber-800"
+            title={(adr.review.docs_pending ?? []).join(", ")}
+          >
+            {(adr.review.docs_pending ?? []).length} design doc(s) not approved yet
+          </span>
+        )}
       </div>
 
       {/* Blast radius */}

@@ -358,6 +358,9 @@ export interface ReviewSummary {
   rejected: number;
   pending: number;
   can_accept: boolean;
+  /** Advisory: every design doc the decision rests on (basis) or waits for (gate) is approved. */
+  docs_ready?: boolean;
+  docs_pending?: string[];
 }
 
 export interface FitnessFunction {
@@ -592,6 +595,8 @@ export interface User {
   role: UserRole;
   function: UserFunction;
   is_active: boolean;
+  /** Where this person keeps frozen copies of approved design docs (§V9). */
+  doc_snapshot_store?: "repo" | "drive" | null;
 }
 
 export interface Token {
@@ -1096,6 +1101,9 @@ export interface DraftPlan {
   source: string | null;
   synced_at: string | null;
   created_at: string;
+  /** The tracked design doc the plan was drafted from, and the version read (§V9). */
+  source_doc_id?: number | null;
+  source_doc_version?: string | null;
 }
 
 export interface DraftTask {
@@ -1359,6 +1367,9 @@ export interface SpecDetail extends Spec {
   criteria_total: number;
   criteria_met: number;
   acceptance_ratio: number;
+  /** Advisory: the source docs (basis / gate links) are approved. */
+  docs_ready?: boolean;
+  docs_pending?: string[];
 }
 
 // --- Document graph (link, don't store) + design docs (USER_FLOWS §V5) ---
@@ -1769,7 +1780,8 @@ export type ProposalEntityType =
   | "risk"
   | "outcome"
   | "decision"
-  | "doc_reference";
+  | "doc_reference"
+  | "doc_link";
 export type ProposalActionType = "create" | "update" | "resolve";
 
 export interface ProposalItem {
@@ -1833,11 +1845,25 @@ export interface Proposal {
   revision_note: string | null;
   /** resolved display name of the author */
   created_by: string | null;
+  /** The design doc the changes were derived from, as it stands now (§V9). */
+  source_doc_id?: number | null;
+  source_doc_version?: string | null;
+  source_doc?: ProposalSourceDoc | null;
+}
+
+export interface ProposalSourceDoc {
+  id: number;
+  title: string | null;
+  url: string;
+  provider: string;
+  current_version: string | null;
+  /** The doc moved on since the proposal read it. */
+  moved_on: boolean;
 }
 
 /** Display names for the ids a proposal's items mention: `{kind: {"<id>": name}}`. */
 export type ProposalLookups = Partial<
-  Record<"task" | "engineer" | "project" | "initiative" | "spec", Record<string, string>>
+  Record<"task" | "engineer" | "project" | "initiative" | "spec" | "doc", Record<string, string>>
 >;
 
 export interface ProposalDetail extends Proposal {
@@ -1922,6 +1948,7 @@ export interface PreviewCounts {
   outcomes_edited: number;
   decisions_added: number;
   docs_added: number;
+  docs_linked?: number;
 }
 
 export interface ProposalPreview {

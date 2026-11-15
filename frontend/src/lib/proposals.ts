@@ -32,6 +32,7 @@ export type FieldKind =
   | "task"
   | "project"
   | "spec"
+  | "doc"
   | "list";
 
 export interface FieldMeta {
@@ -74,6 +75,7 @@ const FIELDS: Record<string, FieldMeta> = {
   blocking_task_id: { label: "Waiting on", kind: "task" },
   project_id: { label: "Project", kind: "project" },
   spec_id: { label: "Spec", kind: "spec" },
+  doc_id: { label: "Doc", kind: "doc" },
   tags: { label: "Tags", kind: "list" },
   alternatives: { label: "Alternatives", kind: "list" },
   estimate_optimistic: { label: "Estimate (optimistic)", kind: "number", unit: "d" },
@@ -136,6 +138,13 @@ const ENTITY_FIELDS: Partial<Record<ProposalEntityType, Record<string, FieldMeta
       label: "Status",
       kind: "enum",
       options: ["pending", "on_track", "at_risk", "validated", "invalidated"],
+    },
+  },
+  doc_link: {
+    relation: {
+      label: "Relation",
+      kind: "enum",
+      options: ["basis", "gate", "reference"],
     },
   },
   doc_reference: {
@@ -313,6 +322,7 @@ export function displayValue(
     case "task":
     case "project":
     case "spec":
+    case "doc":
       return lookupName(ctx, meta.kind, value);
     default:
       return formatValue(value);
@@ -347,12 +357,45 @@ export function itemKindLabel(item: ProposalItem): string {
       return "Propose decision";
     case "doc_reference":
       return "Link doc";
+    case "doc_link":
+      return "Link doc to work";
   }
+}
+
+/** The lookup bucket that names a doc link's target, when there is one. */
+const LINK_TARGET_LOOKUP: Record<string, keyof ProposalLookups> = {
+  task: "task",
+  project: "project",
+  initiative: "initiative",
+  spec: "spec",
+};
+
+/** "Checkout design → Retry the payment step": a doc link reads as its two ends. */
+function docLinkTitle(item: ProposalItem, ctx: ItemContext): string {
+  const p = effectivePayload(item);
+  const doc =
+    p.doc_ref != null
+      ? (ctx.refs.get(String(p.doc_ref)) ?? String(p.doc_ref))
+      : p.doc_id != null
+        ? lookupName(ctx, "doc", p.doc_id)
+        : "?";
+  const type = String(p.entity_type ?? "");
+  const bucket = LINK_TARGET_LOOKUP[type];
+  const target =
+    p.entity_ref != null
+      ? (ctx.refs.get(String(p.entity_ref)) ?? String(p.entity_ref))
+      : p.entity_id != null
+        ? bucket
+          ? lookupName(ctx, bucket, p.entity_id)
+          : `${type} #${String(p.entity_id)}`
+        : "?";
+  return `${doc} → ${target}`;
 }
 
 /** The thing a change is about: the new name for creates, the live name for updates, the
  *  two ends for a dependency. */
 export function itemTitle(item: ProposalItem, ctx: ItemContext = EMPTY_CONTEXT): string {
+  if (item.entity_type === "doc_link") return docLinkTitle(item, ctx);
   if (item.entity_type === "dependency") {
     const p = effectivePayload(item);
     const end = (refKey: string, idKey: string) =>
@@ -398,6 +441,14 @@ const DEPENDENCY_ENDS = new Set([
   "predecessor_ref",
   "successor_id",
   "successor_ref",
+]);
+/** A doc link's two ends are its title, not facts. */
+const DOC_LINK_ENDS = new Set([
+  "doc_id",
+  "doc_ref",
+  "entity_type",
+  "entity_id",
+  "entity_ref",
 ]);
 const EDITABLE_KINDS = new Set<FieldKind>([
   "text",
@@ -463,7 +514,9 @@ export function itemFacts(item: ProposalItem, ctx: ItemContext = EMPTY_CONTEXT):
   const overrides = item.overrides ?? {};
   const fields = [...new Set([...Object.keys(item.payload), ...Object.keys(overrides)])].filter(
     (f) =>
-      !HIDDEN_FIELDS.has(f) && !(item.entity_type === "dependency" && DEPENDENCY_ENDS.has(f))
+      !HIDDEN_FIELDS.has(f) &&
+      !(item.entity_type === "dependency" && DEPENDENCY_ENDS.has(f)) &&
+      !(item.entity_type === "doc_link" && DOC_LINK_ENDS.has(f))
   );
   const rank = (f: string) => {
     const index = FIELD_ORDER.indexOf(f);
@@ -574,7 +627,7 @@ export const CHANGE_GROUPS: readonly ChangeGroup[] = [
   { key: "risks", label: "Risks", entities: ["risk"] },
   { key: "outcomes", label: "Outcomes", entities: ["outcome"] },
   { key: "decisions", label: "Decisions", entities: ["decision"] },
-  { key: "docs", label: "Docs", entities: ["doc_reference"] },
+  { key: "docs", label: "Docs", entities: ["doc_reference", "doc_link"] },
 ];
 
 export function groupItems(

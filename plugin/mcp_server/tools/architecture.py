@@ -41,6 +41,30 @@ def register(mcp, client) -> None:
         )
 
     @mcp.tool
+    async def import_adr_from_markdown(
+        project_id: int,
+        markdown: str,
+        doc_id: int | None = None,
+        version: str | None = None,
+        fallback_title: str | None = None,
+    ) -> dict:
+        """Create a proposed ADR from markdown you exported from a design doc (a Claude Doc or
+        artifact): `# Title`, then `## Context` / `## Decision` / `## Consequences`. The ADR's
+        fields become canopy's own record. With `doc_id` (a tracked design doc), the doc is
+        linked as the ADR's **basis**, pinned to `version` (the version you read) — a later
+        version then flags the ADR for a re-check."""
+        return await client.post(
+            "/architecture/adrs/import-text",
+            {
+                "project_id": project_id,
+                "markdown": markdown,
+                "doc_id": doc_id,
+                "doc_version": version,
+                "fallback_title": fallback_title,
+            },
+        )
+
+    @mcp.tool
     async def list_adrs(project_id: int | None = None) -> list[dict]:
         """List ADRs (architecture decisions), newest number first.
 

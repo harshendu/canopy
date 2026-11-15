@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import ColumnElement, and_, delete, false, or_, true
+from sqlalchemy import ColumnElement, and_, delete, false, or_, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -51,8 +51,10 @@ from app.models.base import (
     utcnow,
 )
 from app.models.doc import DocLink, DocReference, DocRevision
+from app.models.draft import DraftPlan
 from app.models.outcome import Outcome
 from app.models.project import Initiative, Milestone, Project, Task
+from app.models.proposal import Proposal
 from app.models.retro import Retrospective
 from app.models.risk_register import RiskItem
 from app.models.spec import Spec
@@ -687,6 +689,23 @@ async def _upsert_link(
     return link
 
 
+async def upsert_link(
+    session: AsyncSession,
+    doc: DocReference,
+    entity_type: DocLinkEntity,
+    entity_id: int,
+    relation: DocRelation = DocRelation.reference,
+    *,
+    created_by: int | None = None,
+) -> DocLink:
+    """Create or update one link with no permission checks — for proposal apply (a human
+    applying a reviewed change) and draft finalise. Callers enforce the sharing rule."""
+    return await _upsert_link(
+        session, doc, entity_type, entity_id, relation, pinned_version=None,
+        created_by=created_by,
+    )
+
+
 async def link_doc(
     session: AsyncSession,
     user: User,
@@ -800,6 +819,13 @@ async def _delete_doc_rows(session: AsyncSession, doc: DocReference) -> None:
     assert doc.id is not None
     await session.execute(delete(DocLink).where(col(DocLink.doc_id) == doc.id))
     await session.execute(delete(DocRevision).where(col(DocRevision.doc_id) == doc.id))
+    # provenance that named the doc outlives it (PG/MySQL enforce these foreign keys)
+    await session.execute(
+        update(Proposal).where(col(Proposal.source_doc_id) == doc.id).values(source_doc_id=None)
+    )
+    await session.execute(
+        update(DraftPlan).where(col(DraftPlan.source_doc_id) == doc.id).values(source_doc_id=None)
+    )
     for successor in (
         await session.execute(select(DocReference).where(DocReference.supersedes_id == doc.id))
     ).scalars().all():
@@ -1342,3 +1368,65 @@ async def docs_awaiting_approval(session: AsyncSession, user: User) -> list[DocR
             continue
         out.append(doc)
     return out
+
+
+# --- lifecycle wiring (USER_FLOWS §V9) ----------------------------------------------------
+
+
+async def pin_basis_links(
+    session: AsyncSession, entity_type: DocLinkEntity, entity_ids: Sequence[int]
+) -> int:
+    """At a decision point (an ADR accepted, a spec approved, a baseline captured) pin every
+    basis link on these entities to its doc's current version, so a later edit is detectable.
+    Returns how many links moved."""
+    if not entity_ids:
+        return 0
+    rows = (
+        await session.execute(
+            select(DocLink, DocReference)
+            .join(DocReference, col(DocReference.id) == col(DocLink.doc_id))
+            .where(
+                col(DocLink.entity_type) == entity_type.value,
+                col(DocLink.entity_id).in_(list(entity_ids)),
+                col(DocLink.relation) == DocRelation.basis.value,
+            )
+        )
+    ).all()
+    moved = 0
+    now = utcnow()
+    for link, doc in rows:
+        if doc.current_version and link.pinned_version != doc.current_version:
+            link.pinned_version = doc.current_version
+            link.pinned_at = now
+            link.updated_at = now
+            moved += 1
+    await session.flush()
+    return moved
+
+
+async def docs_readiness(
+    session: AsyncSession, entity_type: DocLinkEntity, entity_id: int
+) -> tuple[bool, list[str]]:
+    """Advisory: are the docs this entity rests on (basis) or waits for (gate) approved?
+    Returns (ready, titles of the docs that are not)."""
+    rows = (
+        await session.execute(
+            select(DocLink, DocReference)
+            .join(DocReference, col(DocReference.id) == col(DocLink.doc_id))
+            .where(
+                col(DocLink.entity_type) == entity_type.value,
+                col(DocLink.entity_id) == entity_id,
+                col(DocLink.relation).in_([DocRelation.basis.value, DocRelation.gate.value]),
+                col(DocReference.private_to_user_id).is_(None),
+            )
+            .order_by(col(DocLink.id))
+        )
+    ).all()
+    pending = [
+        doc.title or doc.url
+        for _, doc in rows
+        if doc.review_status not in (DocReviewStatus.approved.value,
+                                     DocReviewStatus.superseded.value,
+                                     DocReviewStatus.archived.value)
+    ]
+    return (not pending, pending)

@@ -23,6 +23,7 @@ from app.schemas.entities import (
     RetrospectiveRead,
     RetrospectiveUpdate,
 )
+from app.services import design_docs
 from app.services.retro import RetroInputs, generate_project_retro
 
 router = APIRouter()
@@ -113,6 +114,14 @@ async def _seed_project_retro(session: SessionDep, project: Project) -> str:
         adr_total=len(adrs),
         adr_accepted=sum(1 for a in adrs if a.status == ADRStatus.accepted),
         adr_superseded=sum(1 for a in adrs if a.status == ADRStatus.superseded),
+        docs_changed_after_approval=[
+            f"{d.title or d.url} (approved {d.approved_version}, now {d.current_version})"
+            for d in await design_docs.docs_in_project(session, project.id or 0)
+            if d.review_status == "approved"
+            and d.approved_version
+            and d.current_version
+            and d.approved_version != d.current_version
+        ],
     )
     return generate_project_retro(inputs)
 

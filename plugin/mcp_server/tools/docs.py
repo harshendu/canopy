@@ -250,6 +250,7 @@ def register(mcp, client) -> None:
         change_summary: str | None = None,
         reachable: bool = True,
         visibility: str | None = None,
+        snapshot_url: str | None = None,
     ) -> dict:
         """Record what you saw when you opened a tracked doc — after every republish, and on
         each check. Pass the source's `version` label (a page artifact's published version, a
@@ -257,8 +258,11 @@ def register(mcp, client) -> None:
         exported text as `content` to fingerprint it — it is hashed here, only the SHA-256 is
         sent. `reachable=False` records that the link no longer opens (flags it broken).
         `visibility` reports its sharing level in Claude (owner | users | org | public) — a
-        shared doc made private is flagged. Every call stamps `last_checked_at`. Returns
-        `new_version` and the doc with its health flags."""
+        shared doc made private is flagged. Every call stamps `last_checked_at`.
+        `snapshot_url`: after **freezing** a version (a decision was made on it), the link to
+        the copy you saved — a repo file (via a pull request) or a Drive file, per the user's
+        `doc_snapshot_store` preference. Returns `new_version` and the doc with its health
+        flags."""
         return await client.post(
             f"/docs/{doc_id}/revisions",
             {
@@ -267,6 +271,7 @@ def register(mcp, client) -> None:
                 "change_summary": change_summary,
                 "reachable": reachable,
                 "visibility": visibility,
+                "snapshot_url": snapshot_url,
             },
         )
 

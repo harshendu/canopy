@@ -31,6 +31,10 @@ class DraftPlan(TimestampMixin, table=True):
     # free-text note on where the plan came from (doc/PRD/url)
     source: str | None = Field(default=None, sa_column=Column(Text))
     synced_at: datetime | None = None  # when its tickets were last pushed to Jira
+    # The tracked design doc the plan was drafted from, and the version read (§V9). Finalising
+    # links the doc to the created tasks (native) or cites it in the tickets (mirrored).
+    source_doc_id: int | None = Field(default=None, foreign_key="docreference.id")
+    source_doc_version: str | None = Field(default=None, max_length=64)
 
 
 class DraftTask(TimestampMixin, table=True):

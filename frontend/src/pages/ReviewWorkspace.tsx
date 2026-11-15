@@ -278,6 +278,34 @@ export default function ReviewWorkspace() {
         </div>
       )}
 
+      {proposal.source_doc && (
+        <div
+          className={`rounded-lg border px-4 py-2 text-sm ${
+            proposal.source_doc.moved_on
+              ? "border-amber-200 bg-amber-50 text-amber-900"
+              : "border-slate-200 bg-white text-slate-700"
+          }`}
+        >
+          From{" "}
+          <a
+            href={proposal.source_doc.url}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-canopy-700 hover:underline"
+          >
+            {proposal.source_doc.title ?? proposal.source_doc.url}
+          </a>
+          {proposal.source_doc_version ? `, ${proposal.source_doc_version}` : ""}
+          {proposal.source_doc.moved_on && (
+            <span>
+              {" "}
+              — the doc has moved on to {proposal.source_doc.current_version}; check the changes
+              against the newer version before applying.
+            </span>
+          )}
+        </div>
+      )}
+
       {proposal.status === "applied" && (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
           Applied {proposal.applied_count} change{proposal.applied_count === 1 ? "" : "s"}

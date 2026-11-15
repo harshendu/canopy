@@ -23,7 +23,15 @@ from app.models.architecture import (
     ComponentCodeBinding,
     ComponentLink,
 )
-from app.models.base import ADRCommentKind, ADRStatus, DecisionRule, Reversibility, TokenScope
+from app.models.base import (
+    ADRCommentKind,
+    ADRStatus,
+    DecisionRule,
+    DocLinkEntity,
+    DocRelation,
+    Reversibility,
+    TokenScope,
+)
 from app.models.integration import Connection
 from app.models.project import Project
 from app.schemas.entities import (
@@ -32,6 +40,7 @@ from app.schemas.entities import (
     ADRCreate,
     ADRDetail,
     ADRImportRequest,
+    ADRImportTextRequest,
     ADRRead,
     ADRUpdate,
     CodeBindingCreate,
@@ -45,6 +54,7 @@ from app.schemas.entities import (
     ImpactResponse,
     ReviewSummaryRead,
 )
+from app.services import design_docs
 from app.services.access import ensure_project_editable
 from app.services.decisions import review_summary, valid_transition
 from app.services.impact import downstream_components
@@ -342,6 +352,54 @@ async def import_adr(
     return adr
 
 
+@router.post(
+    "/adrs/import-text", response_model=ADRRead, status_code=status.HTTP_201_CREATED
+)
+async def import_adr_text(
+    session: SessionDep, user: PlannerWriter, payload: ADRImportTextRequest
+) -> ADRRead:
+    """Create an ADR from markdown a session exported from a design doc (`# title`, then
+    context / decision / consequences sections). With `doc_id`, the doc becomes the ADR's
+    **basis**, pinned to `doc_version` (or its current version) — USER_FLOWS §V9."""
+    await ensure_project_editable(session, user, payload.project_id)
+    if await session.get(Project, payload.project_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    doc = None
+    if payload.doc_id is not None:
+        try:
+            doc = await design_docs.get_visible_doc(session, user, payload.doc_id)
+        except design_docs.DocError as exc:
+            raise HTTPException(
+                status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}
+            ) from exc
+    fallback = payload.fallback_title or (doc.title if doc is not None else None) or "Imported"
+    fields = parse_markdown_adr(payload.markdown, fallback_title=fallback)
+    adr = ArchitectureDecision(
+        project_id=payload.project_id,
+        number=await _next_number(session, payload.project_id),
+        title=(fields["title"] or fallback)[:255],
+        context=fields["context"],
+        decision=fields["decision"],
+        consequences=fields["consequences"],
+    )
+    session.add(adr)
+    await session.flush()
+    assert adr.id is not None
+    if doc is not None:
+        try:
+            await design_docs.link_doc(
+                session, user, doc, DocLinkEntity.decision, adr.id, DocRelation.basis,
+                payload.doc_version or doc.current_version,
+            )
+        except design_docs.DocError as exc:
+            raise HTTPException(
+                status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}
+            ) from exc
+    await session.commit()
+    await session.refresh(adr)
+    return _adr_read(adr, [], [])
+
+
 @router.get("/adrs/{adr_id}/impact", response_model=ImpactResponse)
 async def adr_impact(session: SessionDep, _: CurrentUser, adr_id: int) -> ImpactResponse:
     """Components an ADR directly affects, plus everything that transitively depends on them."""
@@ -403,12 +461,17 @@ async def get_adr(session: SessionDep, _: CurrentUser, adr_id: int) -> ADRDetail
     project = await session.get(Project, adr.project_id)
     rule = project.decision_rule if project else DecisionRule.owner_decides
     summary = review_summary(stakeholder_ids, latest, rule)
+    docs_ready, docs_pending = await design_docs.docs_readiness(
+        session, DocLinkEntity.decision, adr_id
+    )
     base = _adr_read(adr, component_ids, stakeholder_ids)
     fitness = await _fitness_functions(session, adr_id)
     return ADRDetail(
         **base.model_dump(),
         comments=[ADRCommentRead.model_validate(c) for c in comments],
-        review=ReviewSummaryRead.model_validate(summary, from_attributes=True),
+        review=ReviewSummaryRead(
+            **vars(summary), docs_ready=docs_ready, docs_pending=docs_pending
+        ),
         fitness_functions=[FitnessFunctionRead.model_validate(f) for f in fitness],
     )
 
@@ -543,8 +606,12 @@ async def update_adr(
             detail="A deferred ADR needs a decide_by date",
         )
 
+    accepting = "status" in data and new_status == ADRStatus.accepted and adr.status != new_status
     for field, value in data.items():
         setattr(adr, field, value)
+    if accepting:
+        # Pin every design doc the decision rests on to the version it was accepted on (§V9).
+        await design_docs.pin_basis_links(session, DocLinkEntity.decision, [adr_id])
     if payload.component_ids is not None:
         await _set_component_links(session, adr_id, payload.component_ids)
     if payload.stakeholder_ids is not None:

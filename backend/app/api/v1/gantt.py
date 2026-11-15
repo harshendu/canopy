@@ -14,7 +14,14 @@ from app.api.deps import (
     is_planner,
 )
 from app.core.events import publish
-from app.models.base import RiskScope, RiskStatus, SprintState, StatusCategory, TaskType
+from app.models.base import (
+    DocLinkEntity,
+    RiskScope,
+    RiskStatus,
+    SprintState,
+    StatusCategory,
+    TaskType,
+)
 from app.models.project import (
     Baseline,
     Blocker,
@@ -202,6 +209,12 @@ async def set_baseline(
         task.baseline_start = task.start
         task.baseline_end = task.end
         count += 1
+    # The plan-of-record pins the docs it was planned from (basis links on the project and its
+    # tasks) to their current versions (§V9).
+    await design_docs.pin_basis_links(session, DocLinkEntity.project, [project_id])
+    await design_docs.pin_basis_links(
+        session, DocLinkEntity.task, [t.id for t in tasks if t.id is not None]
+    )
     baseline = Baseline(
         project_id=project_id,
         note=payload.note if payload else None,
