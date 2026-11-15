@@ -9,10 +9,19 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
-from app.models.doc import DocLink, DocReference
-from app.schemas.docs import DesignDocRead, DocLinkRead, EntityDocRead
+from app.models.doc import DocLink, DocReference, DocRevision
+from app.schemas.docs import (
+    DesignDocDetail,
+    DesignDocRead,
+    DocHealthFlagRead,
+    DocLinkRead,
+    DocRevisionRead,
+    EntityDocRead,
+)
 from app.services import design_docs
+from app.services.doc_health import HealthFlag
 from app.services.doc_kinds import KindInfo, load_catalog, resolve_kind
 
 
@@ -27,6 +36,7 @@ def _doc_read(
     links: list[DocLink],
     labels: dict[tuple[str, int], str],
     catalog: dict[str, KindInfo],
+    health: list[HealthFlag],
 ) -> DesignDocRead:
     info = resolve_kind(catalog, doc.kind)
     base = DesignDocRead.model_validate(
@@ -39,6 +49,7 @@ def _doc_read(
         }
     )
     base.links = [_link_read(link, labels) for link in links]
+    base.health = [DocHealthFlagRead(**vars(flag)) for flag in health]
     return base
 
 
@@ -51,7 +62,26 @@ async def design_doc_reads(
         session, ((link.entity_type, link.entity_id) for group in links.values() for link in group)
     )
     catalog = await load_catalog(session)
-    return [_doc_read(d, links.get(d.id or 0, []), labels, catalog) for d in docs]
+    health = await design_docs.health_for(session, docs)
+    return [
+        _doc_read(d, links.get(d.id or 0, []), labels, catalog, health.get(d.id or 0, []))
+        for d in docs
+    ]
+
+
+async def design_doc_detail(session: AsyncSession, doc: DocReference) -> DesignDocDetail:
+    read = await design_doc_read(session, doc)
+    rows = (
+        await session.execute(
+            select(DocRevision)
+            .where(DocRevision.doc_id == doc.id)
+            .order_by(col(DocRevision.created_at).desc(), col(DocRevision.id).desc())
+        )
+    ).scalars().all()
+    return DesignDocDetail(
+        **read.model_dump(),
+        revisions=[DocRevisionRead.model_validate(r) for r in rows],
+    )
 
 
 async def design_doc_read(session: AsyncSession, doc: DocReference) -> DesignDocRead:

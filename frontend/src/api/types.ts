@@ -1053,6 +1053,8 @@ export interface MyWorkspace {
   blockers: Blocker[];
   /** "My sprint": my tasks in active sprints (§C11). */
   my_sprints: MySprint[];
+  /** Design docs in review this user may approve (§V8). */
+  docs_to_review?: DocReference[];
 }
 
 export interface MyToday {
@@ -1444,12 +1446,58 @@ export interface DocLink {
   label: string | null;
 }
 
-/** A doc with its catalog entry and its labelled links. */
+export type DocHealthFlagName =
+  | "unverified"
+  | "check_due"
+  | "changed_since_approval"
+  | "behind_pin"
+  | "gate_open"
+  | "restricted"
+  | "broken";
+
+/** One reason a doc needs a look (computed server-side, never stored). */
+export interface DocHealthFlag {
+  flag: DocHealthFlagName;
+  severity: "info" | "warning" | "error";
+  message: string;
+  entity_type: string | null;
+  entity_id: number | null;
+}
+
+export interface DocRevision {
+  id: number;
+  doc_id: number;
+  version: string;
+  content_hash: string | null;
+  change_summary: string | null;
+  snapshot_url: string | null;
+  recorded_by_user_id: number | null;
+  source: string;
+  created_at: string;
+}
+
+/** A doc with its catalog entry, its labelled links and its health. */
 export interface DesignDoc extends DocReference {
   kind_label: string;
   stage: DocStage | string;
   personal: boolean;
   links: DocLink[];
+  health?: DocHealthFlag[];
+}
+
+export interface DesignDocDetail extends DesignDoc {
+  revisions: DocRevision[];
+}
+
+export interface DocRevisionResult {
+  doc: DesignDoc;
+  new_version: boolean;
+  revision: DocRevision | null;
+}
+
+export interface DocWorklist {
+  total: number;
+  docs: DesignDoc[];
 }
 
 export interface EntityDoc {

@@ -157,3 +157,17 @@ describe("docErrorMessage", () => {
     expect(docErrorMessage(new ApiError(500, "boom"))).toBe("boom");
   });
 });
+
+describe("health chips", () => {
+  it("collapses repeated flags and puts attention first", async () => {
+    const { healthChips, shortHash } = await import("./docs");
+    const chips = healthChips([
+      { flag: "check_due", severity: "info", message: "", entity_type: null, entity_id: null },
+      { flag: "behind_pin", severity: "warning", message: "a", entity_type: "decision", entity_id: 1 },
+      { flag: "behind_pin", severity: "warning", message: "b", entity_type: "spec", entity_id: 2 },
+    ]);
+    expect(chips.map((c) => c.flag)).toEqual(["behind_pin", "check_due"]);
+    expect(healthChips(undefined)).toEqual([]);
+    expect(shortHash("a".repeat(64))).toBe("aaaaaaaa");
+  });
+});

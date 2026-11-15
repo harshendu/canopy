@@ -12,6 +12,7 @@ import { featureOn, useFeatures } from "../lib/useFeatures";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
 import { Icon } from "../components/icons";
+import DocsToApprove from "../components/DocsToApprove";
 import MyDocs from "../components/MyDocs";
 
 const adrLabel = (n: number) => `ADR-${String(n).padStart(4, "0")}`;
@@ -285,6 +286,9 @@ export default function MyWorkspace() {
         <DecisionList title="Decisions to review" decisions={data.stakeholder_decisions} />
       </div>
 
+      {featureOn(features, "governance.docs") && (data.docs_to_review ?? []).length > 0 && (
+        <DocsToApprove docs={data.docs_to_review ?? []} onChange={invalidate} />
+      )}
       {featureOn(features, "governance.docs") && <MyDocs />}
     </div>
   );

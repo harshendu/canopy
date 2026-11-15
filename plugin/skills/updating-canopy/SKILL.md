@@ -58,8 +58,8 @@ Work out which rung every intended change sits on **before** calling any write t
    them in the **Reviews** queue. Always end by giving the user the returned
    `review_url` and a one-line summary of what awaits them there.
 4. **Human-only, never you** — applying proposals, accepting a **one-way-door** ADR,
-   pushing drafts to Jira (unless the human runs it), applying a scenario, minting
-   tokens, anything admin. Your job is to *prepare* these perfectly and hand over the link.
+   pushing drafts to Jira (unless the human runs it), applying a scenario, **approving a
+   design doc**, minting tokens, anything admin. Your job is to *prepare* these perfectly and hand over the link.
 
 When in doubt between rungs 2 and 3, stage. A proposal that gets applied unchanged
 costs the human one click; an unwanted direct write costs them trust.

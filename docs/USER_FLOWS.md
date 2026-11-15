@@ -1294,6 +1294,10 @@ review it, alternatives, reversibility, and a discussion thread.
   section inside the **Risk** tab (§Q). Same content: deadline misses (error), overdue milestones /
   over-allocations / **open blockers** / **`sprint_overrun`** — an open task in an active sprint
   whose computed end falls after the sprint ends (§C11) (warning), unscheduled work (info).
+  **Design-doc alerts** (§V8) for the docs that bear on the project: `doc_changed_since_approval`
+  and `doc_behind_pin` / `doc_gate_open` (warning), `doc_restricted` (a shared Claude doc made
+  private) and `doc_broken` (error) — `entity_type: "doc"`; on the project **Overview** they drill
+  to the **Docs** tab.
 - **API:** `GET /api/v1/projects/{id}/alerts` (unchanged) · **MCP:** `list_alerts`.
 - **Notes:** delivery to Slack/email is **not built** — alerts are computed and shown/queried; a
   delivery integration is a future hook over this output.
@@ -2014,17 +2018,52 @@ row per *document*, however many places use it:
   vs now ("doc now r14 — re-check"), unlink, and **Link a doc** (pick a project doc, or paste a
   link to register + link in one step).
 
-### V8. Not built yet (design docs)
-- **Versions, review and approval** (`request-review` / human-only `approve`, the version log
-  beyond registration, session **checks** that write `link_health` / `last_checked_at`,
-  changed-since-approval and behind-pin alerts, `/me` approvals) — the next slice;
-  `review_status` stops at `draft` until then.
-- **Lifecycle wiring** (pins at ADR accept / spec approve / baseline, docs on milestones /
-  outcomes / risks / retros, design-doc tables in exports, freezing an approved version) and the
-  **automation** (a doc-sentinel sweep, the organization artifact sync) — later slices.
+### V8. Versions, review, approval and health **[new]**
+- **Checks + the version log.** `POST /api/v1/docs/{id}/revisions` `{version?, content_hash?,
+  change_summary?, reachable?, visibility?, snapshot_url?}` records what a session (or a person)
+  saw: a new version label is appended to `DocRevision` (unique per doc + version) and becomes
+  `current_version`; every call stamps `last_checked_at` and writes `link_health` (`ok`, or
+  `broken` when `reachable=false`) — so "never checked" and "checked, unchanged" differ. A
+  SHA-256 of the exported content is the only content-derived thing canopy receives.
+  `GET …/revisions` lists the log. **MCP:** `record_design_doc_version` (hashes `content`
+  locally).
+- **Review.** `draft → in_review` (`POST …/request-review {version?}`; the doc's writers, agents
+  included) names the version under review. **Approval** (`POST …/approve`) is **human-only**
+  (`HumanOnly`, an agent token 403s) by a **planner on the doc's home** (admins exempt; a
+  contributor — the author included — gets 403 `not_approver`), stamps `approved_version`,
+  `approved_by_user_id`, `approved_at`. `design_docs.approve` is the **only** writer of the
+  approved state (`tests/test_doc_review_single_writer.py`). A newer version does not demote an
+  approved doc — it is flagged instead. `approved → in_review` again via request-review;
+  `POST …/archive` retires a doc; registering a replacement with `supersedes_id` marks the old
+  one `superseded`. Review and approval obey the sharing rule (409 `doc_not_shared`); a personal
+  doc has none (409 `doc_personal`). **MCP:** `request_design_doc_review` (no approve tool).
+- **Health** (pure `app/services/doc_health.py`, computed per read — never stored):
+  `unverified` (a Claude doc never opened since registration), `check_due` (a tracked doc not
+  re-checked within `DOC_CHECK_DAYS`, default 14), `changed_since_approval`, `behind_pin` (a
+  basis link pinned an older version — names the ADR/spec/plan), `gate_open` (a gate link whose
+  milestone is within `DOC_GATE_WINDOW_DAYS` or whose spec is still draft, and the doc is not
+  approved), `restricted` (a shared Claude doc made private), `broken`. Superseded/archived docs
+  raise nothing; personal docs raise check flags only. Every doc read carries `health`.
+- **Where it surfaces:** the project **alerts** (§I — attention flags only), the initiative
+  **digest**'s attention list (§R5), coverage's `needs_attention` count, **/me → Design docs to
+  approve**, and the session worklist `GET /api/v1/docs/worklist?project_id=` (check flags,
+  oldest first; `get_workspace_context.design_docs.checks_due`). **MCP:** `get_doc_worklist`.
+- **UI:** health chips on each Docs-tab row and attention chips in the `LinkedDocs` panels; a
+  **doc detail drawer** (`DocDetailPanel`: Open in Claude, summary, health, links with pinned vs
+  current version, the **version timeline** with hashes and frozen copies, *Record check* / *can't
+  open it*, *Request review*, *Approve* for planners, *archive*, *Supersede* with a new link).
+
+### V9. Not built yet (design docs)
+- **Lifecycle wiring** — pins at ADR accept / spec approve / baseline, a docs-ready flag on ADR
+  review, an ADR from a Claude doc's text, staged doc links in proposals with a source doc, draft
+  plans that copy doc links, docs on milestones / outcomes / risks / retros, design-doc tables in
+  exports, freezing an approved version (repo or Drive) — the next slice.
+- **Automation** — a doc-sentinel sweep, the optional organization artifact sync, a workspace
+  docs library — later.
 - By design: **no content search, no embedded preview** (canopy never frames or fetches a doc),
   **no mirrored comment threads** (review conversations stay in Claude), **no automatic
-  registration** (a session or a person registers).
+  registration** (a session or a person registers), **no Slack/email delivery** of doc alerts (a
+  hook over the alerts, like §I).
 
 ---
 
@@ -2571,7 +2610,9 @@ team member via `Engineer.user_id` (§A5).
 - **API:** `GET /api/v1/me/workspace` · **MCP:** `my_workspace`. The response also includes
   **`blockers`** — open impediments on your tasks or raised by you (§D0), with flag/resolve in the UI
   — and **`my_sprints`** ("My sprint"): each active sprint you have work in, with just your tasks
-  (§C11).
+  (§C11). **`docs_to_review`** — design docs in review that you approve (a planner on their
+  home, §V8) — renders as **Design docs to approve** (Approve in place); **My docs** lists your
+  personal docs (§V6).
 - **Note:** if no engineer is linked to the account, the page prompts to have an admin link one on
   the Team page; tasks/decisions are empty until then.
 

@@ -5,6 +5,8 @@
 import { ApiError } from "../api/client";
 import type {
   DesignDoc,
+  DocHealthFlag,
+  DocHealthFlagName,
   DocKindDef,
   DocLinkEntity,
   DocProvider,
@@ -310,4 +312,49 @@ export function docErrorMessage(err: unknown): string {
     return err.message;
   }
   return err instanceof Error ? err.message : "Something went wrong";
+}
+
+export const HEALTH_LABEL: Record<DocHealthFlagName, string> = {
+  unverified: "not checked yet",
+  check_due: "check due",
+  changed_since_approval: "changed since approval",
+  behind_pin: "decision behind the doc",
+  gate_open: "gate open",
+  restricted: "private in Claude",
+  broken: "can't be opened",
+};
+
+/** Flags that need a person (they raise project alerts); the rest are a session's to clear. */
+export const ATTENTION_FLAGS: ReadonlySet<DocHealthFlagName> = new Set([
+  "changed_since_approval",
+  "behind_pin",
+  "gate_open",
+  "restricted",
+  "broken",
+]);
+
+export function healthTone(flag: DocHealthFlag): string {
+  if (flag.severity === "error") return "bg-red-100 text-red-700";
+  if (flag.severity === "warning") return "bg-amber-100 text-amber-800";
+  return "bg-slate-100 text-slate-500";
+}
+
+/** One chip per kind of flag (several behind_pin flags read as one), attention first. */
+export function healthChips(flags: DocHealthFlag[] | undefined): DocHealthFlag[] {
+  const seen = new Set<string>();
+  const out: DocHealthFlag[] = [];
+  const ordered = [...(flags ?? [])].sort(
+    (a, b) => Number(ATTENTION_FLAGS.has(b.flag)) - Number(ATTENTION_FLAGS.has(a.flag)),
+  );
+  for (const f of ordered) {
+    if (seen.has(f.flag)) continue;
+    seen.add(f.flag);
+    out.push(f);
+  }
+  return out;
+}
+
+/** A short form of a content hash for the version timeline. */
+export function shortHash(hash: string | null): string {
+  return hash ? hash.slice(0, 8) : "";
 }

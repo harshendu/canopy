@@ -43,9 +43,11 @@ from app.schemas.entities import (
     ReplanResult,
     WhatIfRequest,
 )
+from app.services import design_docs
 from app.services.access import ensure_project_editable, project_can_edit
 from app.services.alerts import (
     AlertBlocker,
+    AlertDocFlag,
     AlertMilestone,
     AlertRiskItem,
     AlertSprintTask,
@@ -61,6 +63,7 @@ from app.services.capacity import (
     mondays,
     over_allocated_weeks,
 )
+from app.services.doc_health import ATTENTION_FLAGS
 from app.services.features import feature_enabled
 from app.services.forecast import monte_carlo_forecast, weekly_throughput
 from app.services.metadata import risk_exposure
@@ -476,6 +479,15 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
         and t.type != TaskType.summary
         and category_of_task(t) not in (StatusCategory.done, StatusCategory.cancelled)
     ]
+    # Design docs bearing on the project: changed after approval, behind a pin, a gate close
+    # to its date, made private, unreachable (USER_FLOWS §V8).
+    project_docs = await design_docs.docs_in_project(session, project_id)
+    doc_flags = [
+        AlertDocFlag(doc_id, flag.flag, flag.severity, flag.message)
+        for doc_id, flags in (await design_docs.health_for(session, project_docs)).items()
+        for flag in flags
+        if flag.flag in ATTENTION_FLAGS
+    ]
     computed = compute_alerts(
         date.today(),
         alert_tasks,
@@ -484,6 +496,7 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
         alert_blockers,
         alert_risks,
         alert_sprint_tasks,
+        doc_flags,
     )
     return AlertsResponse(
         project_id=project_id,

@@ -239,8 +239,16 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   doc's home; a contributor on a doc they registered, linking their own tasks; a link's target
   must be editable by the caller). Deleting an entity drops its links and re-homes docs filed
   there (`release_docs_homed_at`, used by `cascade.py`). Views assemble in `doc_views.py`.
+  **Review:** `request-review` (writers, agents too) → `approve` (**human-only**, a planner on the
+  home; `design_docs.approve` is the single writer of the approved state —
+  `tests/test_doc_review_single_writer.py`); a check (`POST /docs/{id}/revisions`) appends new
+  versions to `DocRevision` and stamps `last_checked_at`/`link_health`. **Health** flags are
+  pure in `app/services/doc_health.py` (never stored) and feed the project alerts
+  (`doc_*` kinds), the initiative digest, coverage's `needs_attention`, `/me` approvals and the
+  session worklist (`DOC_CHECK_DAYS`, `DOC_GATE_WINDOW_DAYS`).
   MCP: `register_design_doc`/`link_design_doc`/`promote_design_doc`/`get_design_doc`/
-  `list_design_docs`/`list_doc_kinds` (skill `tracking-design-docs`). USER_FLOWS §V5-§V8.
+  `list_design_docs`/`list_doc_kinds`/`record_design_doc_version`/`request_design_doc_review`/
+  `get_doc_worklist` (skill `tracking-design-docs`). USER_FLOWS §V5-§V9.
 - **Specs (spec-driven development):** `Spec` + `SpecCriterion` (`app/models/spec.py`) capture
   *intent as the source of truth* — a problem statement + explicit, checkable **acceptance
   criteria** — before work begins. Tasks implement a spec via `Task.spec_id`; an agent self-audits

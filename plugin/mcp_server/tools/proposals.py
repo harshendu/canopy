@@ -280,6 +280,8 @@ def register(mcp, client) -> None:
         - `trackers`: the work trackers enabled here and what each supports.
         - `open_proposals`: staged changes already awaiting review (don't duplicate them —
           `revise_proposal` an open one instead of staging a near-copy).
+        - `design_docs.checks_due`: tracked design docs a session should open and re-check
+          (`get_doc_worklist`; skill `tracking-design-docs`).
         - `dashboard_url` / `reviews_url`: where to send the user to look and to commit.
         """
         context: dict = {
@@ -328,6 +330,19 @@ def register(mcp, client) -> None:
             ]
         except httpx.HTTPStatusError:
             context["initiatives"] = []  # portfolio.initiatives gated off
+        try:
+            worklist = await client.get("/docs/worklist", params={"limit": 5})
+            context["design_docs"] = {
+                # docs a session should open and re-check (`get_doc_worklist`, skill
+                # `tracking-design-docs`)
+                "checks_due": worklist.get("total", 0),
+                "oldest": [
+                    {"id": d.get("id"), "title": d.get("title"), "url": d.get("url")}
+                    for d in worklist.get("docs", [])
+                ],
+            }
+        except httpx.HTTPStatusError:
+            context["design_docs"] = None  # governance.docs gated off (or an older backend)
         try:
             open_rows = await client.get("/proposals", params={"status": "open"})
             context["open_proposals"] = [

@@ -44,7 +44,7 @@ from app.schemas.entities import (
     ProjectSummary,
 )
 from app.schemas.leadership import InitiativeAccess, InitiativeLeadIn, InitiativeLeadRead
-from app.services import design_docs
+from app.services import design_docs, doc_graph
 from app.services import digest as digest_service
 from app.services.access import (
     directed_team_ids,
@@ -440,6 +440,9 @@ async def initiative_digest(
         open_blockers=open_blockers,
         at_risk_projects=at_risk,
         outcomes=[f"{o.statement} ({o.status})" for o in outcomes],
+        doc_attention=await doc_graph.doc_attention_messages(
+            session, DocScope.initiative, initiative_id
+        ),
     )
     attention = digest_service.attention_items(inputs)
     return InitiativeDigest(

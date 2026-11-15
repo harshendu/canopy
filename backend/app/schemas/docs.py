@@ -81,13 +81,73 @@ class DocLinkRead(BaseModel):
     label: str | None = None  # the target's display name
 
 
+class DocHealthFlagRead(BaseModel):
+    """One reason a doc needs a look (computed, never stored — USER_FLOWS §V8)."""
+
+    flag: str  # unverified | check_due | changed_since_approval | behind_pin | gate_open |
+    #            restricted | broken
+    severity: str  # info | warning | error
+    message: str
+    entity_type: str | None = None
+    entity_id: int | None = None
+
+
+class DocRevisionRead(BaseModel):
+    model_config = _read
+    id: int
+    doc_id: int
+    version: str
+    content_hash: str | None
+    change_summary: str | None
+    snapshot_url: str | None
+    recorded_by_user_id: int | None
+    source: str
+    created_at: datetime
+
+
 class DesignDocRead(DocReferenceRead):
-    """A doc with what the views need around it: its catalog entry and its links."""
+    """A doc with what the views need around it: its catalog entry, its links and its health."""
 
     kind_label: str
     stage: str
     personal: bool
     links: list[DocLinkRead] = Field(default_factory=list)
+    health: list[DocHealthFlagRead] = Field(default_factory=list)
+
+
+class DesignDocDetail(DesignDocRead):
+    """One doc with its version log, newest first."""
+
+    revisions: list[DocRevisionRead] = Field(default_factory=list)
+
+
+class DocRevisionIn(BaseModel):
+    """What a check saw. `reachable=false` records a failed open (the link health turns
+    `broken`); a version label is appended to the log when it is new."""
+
+    version: str | None = Field(default=None, max_length=64)
+    content_hash: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
+    change_summary: str | None = Field(default=None, max_length=2000)
+    reachable: bool = True
+    visibility: DocVisibility | None = None
+    snapshot_url: str | None = Field(default=None, max_length=4000)
+
+
+class DocRevisionOut(BaseModel):
+    doc: DesignDocRead
+    new_version: bool
+    revision: DocRevisionRead | None = None
+
+
+class DocReviewIn(BaseModel):
+    version: str | None = Field(default=None, max_length=64)
+
+
+class DocWorklistRead(BaseModel):
+    """Docs a session should open and re-check (the sentinel's worklist)."""
+
+    total: int
+    docs: list[DesignDocRead]
 
 
 class DocRegisterOut(BaseModel):

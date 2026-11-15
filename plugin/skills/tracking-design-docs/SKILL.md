@@ -91,7 +91,35 @@ own tasks. A 403 means "not theirs" — say so, or stage the link in a proposal 
   it: `propose_changes` with a `doc_reference.create` item (url, kind, title, `visibility`) with
   provenance, so the owner reviews it.
 
-## 6. Report back
+## 6. Versions and checks — after every republish
+
+Each time you republish a tracked page or edit a tracked Claude Doc, and whenever you open one
+to check it: `canopy:record_design_doc_version(doc_id, version, content=<export>,
+change_summary=…)`. A new label is appended to the version log; the same label just stamps the
+check. If the link no longer opens, record `reachable=False`. If the user changed its sharing,
+pass `visibility`. Canopy flags from these facts (you will see them as `health` on the doc):
+
+| flag | means | what to do |
+| --- | --- | --- |
+| `unverified` / `check_due` | no session has opened it (recently) | open it, record a version |
+| `changed_since_approval` | it moved on after sign-off | tell the owner; request a re-review if material |
+| `behind_pin` | an ADR/spec/plan was based on an older version | check the delta against that entity; stage changes if needed |
+| `gate_open` | work waits on its approval and the date is close | chase the review |
+| `restricted` | a shared doc is private in Claude again | ask the user to re-share it |
+| `broken` | the link does not open | find the new link, or supersede the doc |
+
+`canopy:get_doc_worklist` lists the docs due a check (oldest first); `get_workspace_context`
+reports the count as `design_docs.checks_due`.
+
+## 7. Review and approval
+
+`canopy:request_design_doc_review(doc_id)` puts the current version up for review (two-way
+door — you may do it when the user asks or the doc is ready). The doc's planners see it under
+**/me → Design docs to approve** and approve in the UI; approval records their name and the
+version. **You cannot approve** (an agent token gets 403) — hand over the link instead. A newer
+version after approval does not undo it; the doc shows "changed since approval".
+
+## 8. Report back
 
 Give the user the doc's title, its kind/format, what it is linked to, and its review state.
 For a Claude doc that is not yet shared, say plainly that it is personal (only they see it in

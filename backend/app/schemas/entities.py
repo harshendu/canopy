@@ -1833,6 +1833,8 @@ class MyWorkspaceResponse(BaseModel):
     stakeholder_decisions: list[ADRRead]
     blockers: list[BlockerRead] = []  # open blockers on my tasks or raised by me
     my_sprints: list[MySprintRead] = []  # "My sprint": my tasks in active sprints
+    # design docs in review this user may approve (USER_FLOWS §V8)
+    docs_to_review: list["DocReferenceRead"] = []
 
 
 # --- Document graph (link, don't store) ---

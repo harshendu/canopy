@@ -16,6 +16,7 @@ import type {
 import {
   FORMATS,
   FORMAT_LABEL,
+  HEALTH_LABEL,
   PROVIDER_LABEL,
   STAGES,
   STATUS_LABEL,
@@ -27,6 +28,8 @@ import {
   docTitle,
   formatLabel,
   groupByKind,
+  healthChips,
+  healthTone,
   kindLabel,
   linkChips,
   needsSharing,
@@ -38,6 +41,7 @@ import {
   versionLabel,
 } from "../lib/docs";
 import { useCurrentUser } from "../lib/useCurrentUser";
+import DocDetailPanel from "./DocDetailPanel";
 
 const STATUS_FILTERS: (DocReviewStatus | "untracked")[] = [
   "approved",
@@ -76,6 +80,7 @@ export default function DocsView({
   const [provider, setProvider] = useState<DocProvider | "">("");
   const [stage, setStage] = useState<DocStage | "">("");
   const [open, setOpen] = useState<number | null>(null);
+  const [detailId, setDetailId] = useState<number | null>(null);
 
   const query = new URLSearchParams({ scope_level: scope, scope_id: String(scopeId) });
   if (status) query.set("review_status", status);
@@ -235,6 +240,7 @@ export default function DocsView({
                     doc={d}
                     open={open === d.id}
                     onToggle={() => setOpen(open === d.id ? null : d.id)}
+                    onDetail={() => setDetailId(d.id)}
                     onRemove={mayWrite ? () => remove.mutate(d.id) : undefined}
                   />
                 ))}
@@ -244,6 +250,9 @@ export default function DocsView({
         </div>
       )}
       {remove.isError && <p className="text-xs text-red-600">{docErrorMessage(remove.error)}</p>}
+      {detailId !== null && (
+        <DocDetailPanel docId={detailId} mayWrite={mayWrite} onClose={() => setDetailId(null)} />
+      )}
     </div>
   );
 }
@@ -252,11 +261,13 @@ function DocRow({
   doc,
   open,
   onToggle,
+  onDetail,
   onRemove,
 }: {
   doc: DesignDoc;
   open: boolean;
   onToggle: () => void;
+  onDetail: () => void;
   onRemove?: () => void;
 }) {
   const chips = linkChips(doc);
@@ -303,6 +314,14 @@ function DocRow({
             not shared
           </span>
         )}
+        {healthChips(doc.health).map((f) => (
+          <span key={f.flag} className={`rounded px-1 py-0.5 text-[10px] ${healthTone(f)}`} title={f.message}>
+            {HEALTH_LABEL[f.flag]}
+          </span>
+        ))}
+        <button onClick={onDetail} className="text-xs text-canopy-700 hover:underline">
+          details
+        </button>
         {(chips.length > 0 || doc.summary) && (
           <button onClick={onToggle} className="text-xs text-slate-400 hover:text-slate-600">
             {open ? "less" : `${chips.length > 0 ? `${chips.length} link${chips.length > 1 ? "s" : ""}` : "more"}`}

@@ -242,6 +242,53 @@ def register(mcp, client) -> None:
         return await client.get("/docs", params=params)
 
     @mcp.tool
+    async def record_design_doc_version(
+        doc_id: int,
+        version: str | None = None,
+        content: str | None = None,
+        content_hash: str | None = None,
+        change_summary: str | None = None,
+        reachable: bool = True,
+        visibility: str | None = None,
+    ) -> dict:
+        """Record what you saw when you opened a tracked doc — after every republish, and on
+        each check. Pass the source's `version` label (a page artifact's published version, a
+        Claude Doc's revision, a commit); a new label is appended to the version log. Pass the
+        exported text as `content` to fingerprint it — it is hashed here, only the SHA-256 is
+        sent. `reachable=False` records that the link no longer opens (flags it broken).
+        `visibility` reports its sharing level in Claude (owner | users | org | public) — a
+        shared doc made private is flagged. Every call stamps `last_checked_at`. Returns
+        `new_version` and the doc with its health flags."""
+        return await client.post(
+            f"/docs/{doc_id}/revisions",
+            {
+                "version": version,
+                "content_hash": content_hash or _digest(content),
+                "change_summary": change_summary,
+                "reachable": reachable,
+                "visibility": visibility,
+            },
+        )
+
+    @mcp.tool
+    async def request_design_doc_review(doc_id: int, version: str | None = None) -> dict:
+        """Put a version of a shared doc up for review (draft → in_review; or approved →
+        in_review after a material change). The doc's planners see it under /me and approve it
+        in the canopy UI — approval is a human act you cannot take. A Claude doc must be shared
+        in Claude (409 `doc_not_shared`); a personal doc has no review (409 `doc_personal`)."""
+        return await client.post(f"/docs/{doc_id}/request-review", {"version": version})
+
+    @mcp.tool
+    async def get_doc_worklist(project_id: int | None = None, limit: int = 50) -> dict:
+        """Docs a session should open and re-check: Claude docs never opened since they were
+        registered, and tracked docs not re-checked within the check window — oldest first.
+        Open each one you can, then `record_design_doc_version` (or `reachable=False`)."""
+        params: dict = {"limit": limit}
+        if project_id is not None:
+            params["project_id"] = project_id
+        return await client.get("/docs/worklist", params=params)
+
+    @mcp.tool
     async def list_doc_kinds() -> list[dict]:
         """The workspace's document-kind catalog: key, label, lifecycle stage, whether coverage
         expects it, and how many docs use it. Any kind is allowed — pick an existing key before

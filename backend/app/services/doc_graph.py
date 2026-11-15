@@ -29,6 +29,7 @@ from app.models.integration import Connection
 from app.models.project import Project, Task
 from app.services import design_docs
 from app.services import mapping as ext_mapping
+from app.services.doc_health import ATTENTION_FLAGS, needs_attention
 from app.services.doc_kinds import (
     ensure_kind,
     expected_keys,
@@ -479,7 +480,25 @@ async def coverage(
     stage, and the best review state of each expected kind."""
     refs = await _refs_for_scope(session, scope_level, scope_id)
     catalog = await load_catalog(session)
-    return coverage_report(refs, catalog, scope_level=scope_level, scope_id=scope_id)
+    health = await design_docs.health_for(session, refs)
+    attention = {doc_id for doc_id, flags in health.items() if needs_attention(flags)}
+    return coverage_report(
+        refs, catalog, scope_level=scope_level, scope_id=scope_id, attention_ids=attention
+    )
+
+
+async def doc_attention_messages(
+    session: AsyncSession, scope_level: DocScope, scope_id: int
+) -> list[str]:
+    """The design-doc exceptions of a scope (rolled up), as digest lines."""
+    refs = await _refs_for_scope(session, scope_level, scope_id)
+    health = await design_docs.health_for(session, refs)
+    return [
+        flag.message
+        for flags in health.values()
+        for flag in flags
+        if flag.flag in ATTENTION_FLAGS
+    ]
 
 
 # Kept for callers that need the link rows of a scope (exports, the digest).

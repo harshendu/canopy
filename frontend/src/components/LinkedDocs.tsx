@@ -12,6 +12,8 @@ import type {
   EntityDoc,
 } from "../api/types";
 import {
+  ATTENTION_FLAGS,
+  HEALTH_LABEL,
   RELATION_HINT,
   RELATION_LABEL,
   VISIBILITY_LABEL,
@@ -20,6 +22,8 @@ import {
   docErrorMessage,
   docTitle,
   formatLabel,
+  healthChips,
+  healthTone,
   needsSharing,
   providerLabel,
   statusLabel,
@@ -140,6 +144,13 @@ export default function LinkedDocs({
             {doc.personal && (
               <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-500">only you</span>
             )}
+            {healthChips(doc.health)
+              .filter((f) => ATTENTION_FLAGS.has(f.flag) && f.flag !== "behind_pin")
+              .map((f) => (
+                <span key={f.flag} className={`rounded px-1 py-0.5 text-[10px] ${healthTone(f)}`} title={f.message}>
+                  {HEALTH_LABEL[f.flag]}
+                </span>
+              ))}
             {mayLink && link && (
               <button
                 onClick={() => unlink.mutate(link.id)}

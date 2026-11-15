@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from app.api.deps import (
     AdminUser,
     CurrentUser,
+    HumanOnly,
     Impersonator,
     PlannerWriter,
     SessionDep,
@@ -33,6 +34,7 @@ from app.models.base import (
 from app.models.doc import DocLink, DocReference
 from app.models.user import User
 from app.schemas.docs import (
+    DesignDocDetail,
     DesignDocRead,
     DocKindMergeIn,
     DocKindMergeOut,
@@ -44,6 +46,11 @@ from app.schemas.docs import (
     DocPromoteIn,
     DocRegisterIn,
     DocRegisterOut,
+    DocReviewIn,
+    DocRevisionIn,
+    DocRevisionOut,
+    DocRevisionRead,
+    DocWorklistRead,
     EntityDocRead,
 )
 from app.schemas.entities import (
@@ -54,6 +61,7 @@ from app.schemas.entities import (
 )
 from app.services import design_docs, doc_graph, doc_kinds, doc_views
 from app.services.design_docs import DocError, DocQuery, LinkSpec, RegisterInput
+from app.services.doc_health import needs_check
 
 router = APIRouter()
 
@@ -330,6 +338,28 @@ async def delete_link(session: SessionDep, user: CurrentUser, link_id: int) -> N
     await _changed()
 
 
+@router.get("/docs/worklist", response_model=DocWorklistRead)
+async def doc_worklist(
+    session: SessionDep,
+    user: CurrentUser,
+    impersonator: Impersonator,
+    project_id: int | None = None,
+    limit: int = 50,
+) -> DocWorklistRead:
+    """Docs a session should open and re-check — never checked since registration, or not
+    re-checked within `DOC_CHECK_DAYS` while tracked — oldest check first. The doc sentinel's
+    worklist and the count `get_workspace_context` reports."""
+    if project_id is not None:
+        docs = await design_docs.docs_in_project(session, project_id)
+    else:
+        docs = await design_docs.list_docs(session, user, DocQuery(), impersonator)
+    health = await design_docs.health_for(session, docs)
+    due = [d for d in docs if d.id is not None and needs_check(health.get(d.id, []))]
+    due.sort(key=lambda d: (d.last_checked_at is not None, d.last_checked_at or d.created_at))
+    reads = await doc_views.design_doc_reads(session, due[: max(1, min(limit, 200))])
+    return DocWorklistRead(total=len(due), docs=reads)
+
+
 # --- one doc -----------------------------------------------------------------------------
 
 
@@ -342,13 +372,13 @@ async def _visible(
         raise _http(exc) from exc
 
 
-@router.get("/docs/{doc_id}", response_model=DesignDocRead)
+@router.get("/docs/{doc_id}", response_model=DesignDocDetail)
 async def get_doc(
     session: SessionDep, user: CurrentUser, impersonator: Impersonator, doc_id: int
-) -> DesignDocRead:
-    """One doc with its links (and, from the review layer, its versions and health)."""
+) -> DesignDocDetail:
+    """One doc with its links, its health flags and its version log."""
     doc = await _visible(session, user, doc_id, impersonator)
-    return await doc_views.design_doc_read(session, doc)
+    return await doc_views.design_doc_detail(session, doc)
 
 
 @router.patch("/docs/{doc_id}", response_model=DesignDocRead)
@@ -440,3 +470,97 @@ async def promote_doc(
     await _changed(promoted)
     return await doc_views.design_doc_read(session, promoted)
 
+
+
+# --- versions, review, approval (USER_FLOWS §V8) ------------------------------------------
+
+
+@router.get("/docs/{doc_id}/revisions", response_model=list[DocRevisionRead])
+async def list_revisions(
+    session: SessionDep, user: CurrentUser, impersonator: Impersonator, doc_id: int
+) -> list[DocRevisionRead]:
+    doc = await _visible(session, user, doc_id, impersonator)
+    return (await doc_views.design_doc_detail(session, doc)).revisions
+
+
+@router.post("/docs/{doc_id}/revisions", response_model=DocRevisionOut)
+async def record_revision(
+    session: SessionDep, user: CurrentUser, doc_id: int, payload: DocRevisionIn
+) -> DocRevisionOut:
+    """Record a check: the version a session saw (appended to the log when new), whether the
+    doc could be opened, and its sharing level. Stamps `last_checked_at` every time. Send a
+    SHA-256 of the exported content, never the content."""
+    doc = await _visible(session, user, doc_id)
+    try:
+        result = await design_docs.record_revision(
+            session, user, doc,
+            version=payload.version,
+            content_hash=payload.content_hash,
+            change_summary=payload.change_summary,
+            reachable=payload.reachable,
+            visibility=payload.visibility,
+            snapshot_url=payload.snapshot_url,
+        )
+    except DocError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    await session.refresh(doc)
+    revision = None
+    if result.revision is not None:
+        await session.refresh(result.revision)
+        revision = DocRevisionRead.model_validate(result.revision)
+    await _changed(doc)
+    return DocRevisionOut(
+        doc=await doc_views.design_doc_read(session, doc),
+        new_version=result.new_version,
+        revision=revision,
+    )
+
+
+@router.post("/docs/{doc_id}/request-review", response_model=DesignDocRead)
+async def request_review(
+    session: SessionDep, user: CurrentUser, doc_id: int, payload: DocReviewIn
+) -> DesignDocRead:
+    """Put a version up for review (the doc must be shared in Claude). Open to the doc's
+    writers, agents included; the home's planners see it under /me."""
+    doc = await _visible(session, user, doc_id)
+    try:
+        await design_docs.request_review(session, user, doc, version=payload.version)
+    except DocError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    await session.refresh(doc)
+    await _changed(doc)
+    return await doc_views.design_doc_read(session, doc)
+
+
+@router.post("/docs/{doc_id}/approve", response_model=DesignDocRead)
+async def approve_doc(
+    session: SessionDep, user: CurrentUser, _human: HumanOnly, doc_id: int,
+    payload: DocReviewIn,
+) -> DesignDocRead:
+    """Approve a version — a human act by a planner on the doc's home (an agent token is
+    refused). Stamps the approved version; a later version raises "changed since approval"."""
+    doc = await _visible(session, user, doc_id)
+    try:
+        await design_docs.approve(session, user, doc, version=payload.version)
+    except DocError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    await session.refresh(doc)
+    await _changed(doc)
+    return await doc_views.design_doc_read(session, doc)
+
+
+@router.post("/docs/{doc_id}/archive", response_model=DesignDocRead)
+async def archive_doc(session: SessionDep, user: CurrentUser, doc_id: int) -> DesignDocRead:
+    """Retire a doc from default lists and coverage (links stay as history)."""
+    doc = await _visible(session, user, doc_id)
+    try:
+        await design_docs.archive(session, user, doc)
+    except DocError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    await session.refresh(doc)
+    await _changed(doc)
+    return await doc_views.design_doc_read(session, doc)

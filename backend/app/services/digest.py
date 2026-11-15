@@ -33,6 +33,7 @@ class DigestInputs:
     open_blockers: int
     at_risk_projects: list[str] = field(default_factory=list)
     outcomes: list[str] = field(default_factory=list)  # "statement (status)"
+    doc_attention: list[str] = field(default_factory=list)  # design-doc exceptions (§V8)
 
 
 def attention_items(inp: DigestInputs) -> list[str]:
@@ -54,6 +55,7 @@ def attention_items(inp: DigestInputs) -> list[str]:
         items.append(f"{inp.open_decisions} decision(s) awaiting resolution.")
     for project in inp.at_risk_projects:
         items.append(f"Project needs attention: {project}.")
+    items.extend(inp.doc_attention)
     return items
 
 

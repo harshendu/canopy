@@ -29,15 +29,18 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from fastapi import HTTPException
 from sqlalchemy import ColumnElement, and_, delete, false, or_, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from app.core.config import settings
 from app.models.architecture import ArchitectureComponent, ArchitectureDecision
 from app.models.base import (
     SHARED_VISIBILITIES,
     DocFormat,
     DocLinkEntity,
+    DocLinkHealth,
     DocProvider,
     DocRelation,
     DocReviewStatus,
@@ -55,6 +58,7 @@ from app.models.risk_register import RiskItem
 from app.models.spec import Spec
 from app.models.user import User
 from app.services import access
+from app.services.doc_health import HealthDoc, HealthFlag, HealthLink, doc_health
 from app.services.doc_kinds import FORMAT_MAX, ensure_kind, normalize_slug
 from app.services.doc_urls import DocUrlError, DocUrlInfo, classify_doc_url, same_document_key
 
@@ -1049,3 +1053,292 @@ async def docs_for_entity(
 
 def touch(doc: DocReference, when: datetime | None = None) -> None:
     doc.updated_at = when or utcnow()
+
+
+# --- versions, review, approval (USER_FLOWS §V8) ------------------------------------------
+
+
+@dataclass
+class RevisionResult:
+    doc: DocReference
+    revision: DocRevision | None  # the new version-log row (None when the version was seen)
+    new_version: bool
+
+
+async def record_revision(
+    session: AsyncSession,
+    user: User,
+    doc: DocReference,
+    *,
+    version: str | None,
+    content_hash: str | None = None,
+    change_summary: str | None = None,
+    reachable: bool = True,
+    visibility: DocVisibility | None = None,
+    snapshot_url: str | None = None,
+    source: str = "session",
+) -> RevisionResult:
+    """Record what a check saw: the version (appended to the log when new), whether the doc
+    could be opened, and its sharing level. Every call stamps `last_checked_at`, so "never
+    checked" and "checked, unchanged" stay distinguishable."""
+    await ensure_doc_writable(session, user, doc)
+    now = utcnow()
+    doc.last_checked_at = now
+    doc.link_health = DocLinkHealth.ok if reachable else DocLinkHealth.broken
+    if visibility is not None:
+        doc.visibility = visibility.value
+    revision: DocRevision | None = None
+    new_version = False
+    if reachable and version:
+        label = version.strip()[:VERSION_MAX]
+        new_version = label != doc.current_version
+        revision = await _append_revision(
+            session, doc, label, content_hash=content_hash, recorded_by=user.id, source=source,
+            change_summary=change_summary,
+        )
+        doc.current_version = label
+    if snapshot_url:
+        target = revision
+        if target is None and doc.current_version:
+            target = (
+                await session.execute(
+                    select(DocRevision).where(
+                        DocRevision.doc_id == doc.id, DocRevision.version == doc.current_version
+                    )
+                )
+            ).scalar_one_or_none()
+        if target is not None:
+            target.snapshot_url = snapshot_url
+    doc.updated_at = now
+    await session.flush()
+    return RevisionResult(doc, revision, new_version)
+
+
+def _require_reviewable(doc: DocReference) -> None:
+    if is_personal(doc):
+        raise DocError(
+            409, "doc_personal",
+            "A personal doc has no review. Share it in Claude and promote it first.",
+        )
+    if doc.review_status in (DocReviewStatus.superseded.value, DocReviewStatus.archived.value):
+        raise DocError(409, "doc_retired", "This doc is superseded or archived.")
+    require_shared(doc)
+
+
+async def request_review(
+    session: AsyncSession, user: User, doc: DocReference, *, version: str | None = None
+) -> DocReference:
+    """Put a version up for review (draft → in_review, or approved → in_review again after a
+    material change). Open to the doc's writers, agents included."""
+    await ensure_doc_writable(session, user, doc)
+    _require_reviewable(doc)
+    label = (version or doc.current_version or "").strip()[:VERSION_MAX] or None
+    if label and label != doc.current_version:
+        await _append_revision(
+            session, doc, label, content_hash=None, recorded_by=user.id, source="review"
+        )
+        doc.current_version = label
+    doc.review_status = DocReviewStatus.in_review.value
+    doc.review_version = label
+    doc.updated_at = utcnow()
+    await session.flush()
+    return doc
+
+
+async def ensure_can_approve(session: AsyncSession, user: User, doc: DocReference) -> None:
+    """Approval is a planner's call on the doc's home (admins exempt); a contributor — the
+    doc's author included — cannot approve."""
+    role = _role(user)
+    if role != UserRole.admin and role not in PLANNER_ROLES:
+        raise DocError(403, "not_approver", "Only a planner on this doc's project approves it.")
+    await ensure_doc_writable(session, user, doc)
+
+
+async def approve(
+    session: AsyncSession, user: User, doc: DocReference, *, version: str | None = None
+) -> DocReference:
+    """Sign off a version — the ONLY writer of the approved state (human-only at the route;
+    `tests/test_doc_review_single_writer.py` pins it). The doc must be shared in Claude."""
+    await ensure_can_approve(session, user, doc)
+    _require_reviewable(doc)
+    label = (version or doc.review_version or doc.current_version or "").strip()[:VERSION_MAX]
+    if label and label != doc.current_version:
+        await _append_revision(
+            session, doc, label, content_hash=None, recorded_by=user.id, source="review"
+        )
+        doc.current_version = label
+    now = utcnow()
+    doc.review_status = DocReviewStatus.approved.value
+    doc.approved_version = label or None
+    doc.approved_by_user_id = user.id
+    doc.approved_at = now
+    doc.review_version = None
+    doc.updated_at = now
+    await session.flush()
+    return doc
+
+
+async def archive(session: AsyncSession, user: User, doc: DocReference) -> DocReference:
+    """Retire a doc from default lists and coverage; its links stay as history."""
+    await ensure_doc_writable(session, user, doc)
+    doc.review_status = DocReviewStatus.archived.value
+    doc.updated_at = utcnow()
+    await session.flush()
+    return doc
+
+
+# --- health (USER_FLOWS §V8) -------------------------------------------------------------
+
+
+async def health_for(
+    session: AsyncSession, docs: Sequence[DocReference], *, now: datetime | None = None
+) -> dict[int, list[HealthFlag]]:
+    """Health flags for a batch of docs (one query for links, one per linked entity type, one
+    for gate targets)."""
+    when = now or utcnow()
+    ids = [d.id for d in docs if d.id is not None]
+    links = await links_for(session, ids)
+    pairs = [(link.entity_type, link.entity_id) for group in links.values() for link in group]
+    labels = await entity_labels(session, pairs)
+    gate_milestones = {
+        link.entity_id for group in links.values() for link in group
+        if link.relation == DocRelation.gate.value and link.entity_type == DocLinkEntity.milestone
+    }
+    gate_specs = {
+        link.entity_id for group in links.values() for link in group
+        if link.relation == DocRelation.gate.value and link.entity_type == DocLinkEntity.spec
+    }
+    milestones = {
+        m.id: m for m in (
+            await session.execute(select(Milestone).where(col(Milestone.id).in_(gate_milestones)))
+        ).scalars().all()
+    } if gate_milestones else {}
+    specs = {
+        s.id: s for s in (
+            await session.execute(select(Spec).where(col(Spec.id).in_(gate_specs)))
+        ).scalars().all()
+    } if gate_specs else {}
+
+    out: dict[int, list[HealthFlag]] = {}
+    for doc in docs:
+        if doc.id is None:
+            continue
+        hlinks: list[HealthLink] = []
+        for link in links.get(doc.id, []):
+            target_date = None
+            target_status = None
+            if link.entity_type == DocLinkEntity.milestone and link.entity_id in milestones:
+                target_date = milestones[link.entity_id].target_date
+                target_status = milestones[link.entity_id].status
+            elif link.entity_type == DocLinkEntity.spec and link.entity_id in specs:
+                target_status = str(specs[link.entity_id].status)
+            hlinks.append(HealthLink(
+                entity_type=link.entity_type,
+                entity_id=link.entity_id,
+                relation=link.relation,
+                pinned_version=link.pinned_version,
+                label=labels.get((link.entity_type, link.entity_id)),
+                target_date=target_date,
+                target_status=target_status,
+            ))
+        out[doc.id] = doc_health(
+            HealthDoc(
+                id=doc.id,
+                title=doc.title or doc.url,
+                provider=doc.provider,
+                visibility=doc.visibility,
+                personal=doc.private_to_user_id is not None,
+                review_status=doc.review_status,
+                current_version=doc.current_version,
+                approved_version=doc.approved_version,
+                last_checked_at=doc.last_checked_at,
+                link_health=str(doc.link_health),
+                created_at=doc.created_at,
+            ),
+            hlinks,
+            now=when,
+            check_days=settings.DOC_CHECK_DAYS,
+            gate_window_days=settings.DOC_GATE_WINDOW_DAYS,
+        )
+    return out
+
+
+async def docs_in_project(session: AsyncSession, project_id: int) -> list[DocReference]:
+    """Shared docs that bear on a project: filed under it or its tasks, or linked to it, its
+    tasks, decisions, specs or milestones."""
+    task_ids = [
+        t for t in (
+            await session.execute(select(col(Task.id)).where(col(Task.project_id) == project_id))
+        ).scalars().all() if t is not None
+    ]
+    adr_ids = [
+        a for a in (
+            await session.execute(
+                select(col(ArchitectureDecision.id)).where(
+                    col(ArchitectureDecision.project_id) == project_id
+                )
+            )
+        ).scalars().all() if a is not None
+    ]
+    spec_ids = [
+        s for s in (
+            await session.execute(select(col(Spec.id)).where(col(Spec.project_id) == project_id))
+        ).scalars().all() if s is not None
+    ]
+    milestone_ids = [
+        m for m in (
+            await session.execute(
+                select(col(Milestone.id)).where(col(Milestone.project_id) == project_id)
+            )
+        ).scalars().all() if m is not None
+    ]
+    linked: set[int] = set()
+    for entity_type, ids in (
+        (DocLinkEntity.project, [project_id]),
+        (DocLinkEntity.task, task_ids),
+        (DocLinkEntity.decision, adr_ids),
+        (DocLinkEntity.spec, spec_ids),
+        (DocLinkEntity.milestone, milestone_ids),
+    ):
+        linked.update(await doc_ids_linked_to(session, entity_type.value, ids))
+    home = and_(
+        col(DocReference.scope_level) == DocScope.project,
+        col(DocReference.scope_id) == project_id,
+    )
+    clauses: list[ColumnElement[bool]] = [home]
+    if task_ids:
+        clauses.append(and_(
+            col(DocReference.scope_level) == DocScope.task,
+            col(DocReference.scope_id).in_(task_ids),
+        ))
+    if linked:
+        clauses.append(col(DocReference.id).in_(sorted(linked)))
+    rows = await session.execute(
+        select(DocReference).where(
+            or_(*clauses), col(DocReference.private_to_user_id).is_(None)
+        ).order_by(col(DocReference.id))
+    )
+    return list(rows.scalars().all())
+
+
+async def docs_awaiting_approval(session: AsyncSession, user: User) -> list[DocReference]:
+    """Docs in review that this user may approve (a planner on their home)."""
+    role = _role(user)
+    if role != UserRole.admin and role not in PLANNER_ROLES:
+        return []
+    rows = (
+        await session.execute(
+            select(DocReference).where(
+                col(DocReference.review_status) == DocReviewStatus.in_review.value,
+                col(DocReference.private_to_user_id).is_(None),
+            ).order_by(col(DocReference.updated_at).desc())
+        )
+    ).scalars().all()
+    out: list[DocReference] = []
+    for doc in rows:
+        try:
+            await ensure_can_approve(session, user, doc)
+        except (DocError, HTTPException):  # 403 / 404 — not theirs to approve
+            continue
+        out.append(doc)
+    return out

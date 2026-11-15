@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     TRACKER_POLL_MINUTES: int | None = None
     JIRA_POLL_MINUTES: int = 10
 
+    # --- Design docs (USER_FLOWS §V8) ---
+    # A tracked doc linked to open work is "check due" once no session has opened it for this many
+    # days; a gate link turns into an alert this many days before its milestone.
+    DOC_CHECK_DAYS: int = 14
+    DOC_GATE_WINDOW_DAYS: int = 14
+
     # --- Work tracking ---
     # Delivery method given to newly created teams (kanban | sprint | both). Projects outside
     # any team are Kanban-only: there is no team to hold a sprint (USER_FLOWS §C11).
