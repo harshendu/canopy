@@ -15,7 +15,6 @@ from app.models.integration import Connection, ExternalRef, PullRequest
 from app.models.user import User
 from app.schemas.entities import (
     DocReferenceRead,
-    JiraIssueLink,
     PullRequestRead,
     TaskExternalLinksRead,
     TrackerItemLink,
@@ -139,12 +138,6 @@ async def collect_task_links(
     session: AsyncSession, task_id: int, user: User | None = None
 ) -> TaskExternalLinksRead:
     tracker = await tracker_link(session, task_id)
-    # `jira` is the pre-tracker field, kept for one release (same item when Jira owns it).
-    jira = (
-        JiraIssueLink(key=tracker.key, url=tracker.url)
-        if tracker is not None and tracker.provider == Provider.jira.value
-        else None
-    )
 
     pr_result = await session.execute(
         select(PullRequest)
@@ -167,4 +160,4 @@ async def collect_task_links(
     )
     docs = [DocReferenceRead.model_validate(d) for d in doc_result.scalars().all()]
 
-    return TaskExternalLinksRead(tracker=tracker, jira=jira, pull_requests=prs, docs=docs)
+    return TaskExternalLinksRead(tracker=tracker, pull_requests=prs, docs=docs)

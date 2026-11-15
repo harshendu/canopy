@@ -3,7 +3,6 @@
 Finalising follows the project's tracking mode: a native project gets canopy tasks; a
 mirrored one gets items in its tracker — ticket *content* (summary, description, story points)
 and the epic→story parent link, never status — which the next sync pulls back as canopy tasks.
-`push_draft_to_jira` is the pre-tracker alias.
 """
 
 from __future__ import annotations
@@ -119,14 +118,6 @@ def register(mcp, client) -> None:
         return await client.post(f"/draft-plans/{plan_id}/finalize", body)
 
     @mcp.tool
-    async def push_draft_to_jira(plan_id: int, connection_id: int | None = None) -> dict:
-        """Deprecated alias of `finalize_draft_plan` for a Jira-bound project (kept one
-        release): create/update Jira tickets from a reviewed draft plan (content only)."""
-        return await client.post(
-            f"/draft-plans/{plan_id}/push-to-jira", {"connection_id": connection_id}
-        )
-
-    @mcp.tool
     async def record_draft_push(plan_id: int, results: list[dict]) -> dict:
         """Record tracker items you created **yourself** for a draft plan (use when the
         tracker's writes are MCP-managed, so finalising can't write to it).
@@ -134,8 +125,9 @@ def register(mcp, client) -> None:
         After you create the items with your own tracker tools, call this to stamp each draft
         task with its new id/key and flip the plan to `synced`. `results` is a list of dicts:
         {"draft_task_id": 12, "provider": "linear", "external_id": "<id>", "external_key":
-        "ENG-42"} (the legacy {"jira_issue_id", "jira_key"} pair still works). Idempotent —
-        re-recording the same ids won't create duplicates, so a re-push stays safe."""
+        "ENG-42"} — `provider` may be left out when the project is bound to a tracker (it
+        defaults to that one). Idempotent — re-recording the same ids won't create duplicates,
+        so a re-push stays safe."""
         return await client.post(
             f"/draft-plans/{plan_id}/record-push", {"results": results}
         )

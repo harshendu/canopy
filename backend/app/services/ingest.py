@@ -49,10 +49,9 @@ async def resolve_assignee_engineer(
 ) -> int | None:
     """Map a tracker assignee onto an Engineer, creating one when unknown.
 
-    Match order: the provider's `EngineerIdentity` (the legacy `Engineer.jira_account_id` for
-    Jira), then email, then exact display name (case-insensitive) — a match back-fills the
-    identity — else a new active Engineer: the assignee is a real team member in the tracker,
-    so ownership lands on a real row here too.
+    Match order: the provider's `EngineerIdentity`, then email, then exact display name
+    (case-insensitive) — a match records the identity — else a new active Engineer: the
+    assignee is a real team member in the tracker, so ownership lands on a real row here too.
     """
     if not account_id and not display_name and not email:
         return None
@@ -68,12 +67,6 @@ async def resolve_assignee_engineer(
         ).scalars().first()
         if identity is not None:
             engineer = await session.get(Engineer, identity.engineer_id)
-        if engineer is None and provider == Provider.jira:
-            engineer = (
-                await session.execute(
-                    select(Engineer).where(Engineer.jira_account_id == account_id)
-                )
-            ).scalars().first()
     if engineer is None and email:
         engineer = (
             await session.execute(
@@ -88,14 +81,10 @@ async def resolve_assignee_engineer(
         ).scalars().first()
     if engineer is None:
         engineer = Engineer(
-            name=display_name or email or f"{provider.value}:{account_id}",
-            email=email,
-            jira_account_id=account_id if provider == Provider.jira else None,
+            name=display_name or email or f"{provider.value}:{account_id}", email=email
         )
         session.add(engineer)
         await session.flush()
-    elif provider == Provider.jira and account_id and engineer.jira_account_id is None:
-        engineer.jira_account_id = account_id
     assert engineer.id is not None  # guaranteed after flush
     if account_id:
         await _remember_identity(session, engineer.id, provider, account_id, display_name)

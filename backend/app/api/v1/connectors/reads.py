@@ -16,14 +16,16 @@ from app.api.v1.connectors._shared import (
     github_connector,
     jira_connector,
 )
-from app.models.integration import PullRequest
+from app.models.base import Provider
+from app.models.integration import ExternalRef, PullRequest
+from app.models.project import Task
 from app.schemas.entities import (
     DocFieldMapping,
     EpicDocSampleResponse,
     HarvestDocsResult,
     PullRequestRead,
 )
-from app.services import doc_graph
+from app.services import doc_graph, tracker_sync
 
 router = APIRouter()
 
@@ -49,9 +51,31 @@ async def jira_list_sprints(
 async def jira_sync_history(
     session: SessionDep, _: PlannerWriter, connection_id: int, issue_key: str
 ) -> dict[str, int]:
+    """Replay one issue's changelog into its task's history now (exact transitions replace the
+    approximate rows a sync recorded) — what the first sync and the nightly backfill do."""
     connection = await get_connection(session, connection_id)
-    added = await jira_connector(connection, session).sync_status_history(issue_key)
-    return {"added": added}
+    connector = jira_connector(connection, session)
+    ref = (
+        await session.execute(
+            select(ExternalRef)
+            .where(
+                ExternalRef.provider == Provider.jira,
+                ExternalRef.external_key == issue_key,
+                ExternalRef.entity_type == "task",
+                col(ExternalRef.detached_at).is_(None),
+            )
+            .order_by(col(ExternalRef.id).desc())
+        )
+    ).scalars().first()
+    task = await session.get(Task, ref.entity_id) if ref is not None else None
+    view = (
+        await tracker_sync.binding_for_task(session, task, connection_id)
+        if task is not None
+        else None
+    )
+    if task is None or task.id is None or view is None:
+        return {"added": 0}
+    return {"added": await tracker_sync.backfill_task_history(connector, view, task.id)}
 
 
 # --- Jira epic → document field mapping (the AI-driven, one-time setup) ---

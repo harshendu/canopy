@@ -41,7 +41,7 @@ from app.models.base import (
     RiskScope,
 )
 from app.models.draft import DraftPlan, DraftTask
-from app.models.integration import ExternalRef, JiraLink, PullRequest
+from app.models.integration import ExternalRef, PullRequest, TrackerBinding
 from app.models.leadership import LeadershipNote
 from app.models.outcome import Outcome
 from app.models.project import (
@@ -352,8 +352,9 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
                 & col(ExternalRef.entity_id).in_(mile_ids),
             )
         ),
-        delete(JiraLink).where(
-            col(JiraLink.target_type) == "project", col(JiraLink.target_id) == pid
+        # The project's tracker bindings (and links into it) go with it.
+        delete(TrackerBinding).where(
+            col(TrackerBinding.target_type) == "project", col(TrackerBinding.target_id) == pid
         ),
     ]
     for stmt in stmts:

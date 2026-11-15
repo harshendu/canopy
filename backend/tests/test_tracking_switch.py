@@ -344,12 +344,13 @@ async def test_a_tracker_connection_with_a_project_binds_it_and_delete_keeps_his
 ):
     admin = await _admin(client, db_session)
     project = await _native_project(client, admin)
-    body = {
-        "provider": "jira",
-        "name": "Jira",
-        "config": {"base_url": "https://jira.example.com", "project_id": project,
-                   "jira_project_key": "SHOP", "story_point_field": "customfield_10016"},
-    }
+    config = {"base_url": "https://jira.example.com", "jira_project_key": "SHOP",
+              "story_point_field": "customfield_10016"}
+    # The pre-binding shape (`config.project_id`) is refused, not silently ignored.
+    old_shape = {"provider": "jira", "name": "Jira", "config": {**config, "project_id": project}}
+    refused = await client.post("/api/v1/connectors/connections", json=old_shape, headers=admin)
+    assert refused.status_code == 422 and "beside config" in refused.json()["detail"]
+    body = {"provider": "jira", "name": "Jira", "project_id": project, "config": config}
     created = await client.post("/api/v1/connectors/connections", json=body, headers=admin)
     assert created.status_code == 201, created.text
     connection_id = created.json()["id"]
@@ -376,7 +377,9 @@ async def test_a_tracker_connection_with_a_project_binds_it_and_delete_keeps_his
     # GitHub connections (nothing names them) are still deleted outright.
     gh = await client.post(
         "/api/v1/connectors/connections",
-        json={"provider": "github", "name": "gh", "config": {"owner": "o", "repo": "r"}},
+        # (GitHub keeps its own `project_id` config key — it binds nothing.)
+        json={"provider": "github", "name": "gh",
+              "config": {"owner": "o", "repo": "r", "project_id": project}},
         headers=admin,
     )
     assert (
@@ -412,39 +415,3 @@ async def test_one_tracker_scope_feeds_one_project(client, db_session, monkeypat
     )
     assert other.status_code == 200, other.text
 
-
-
-async def test_switching_off_a_legacy_bound_project_stops_its_connection(client, db_session):
-    """A connection that predates bindings feeds its `config.project_id`; switching that project
-    to native records the binding as detached, so the connection stops feeding it."""
-    admin = await _admin(client, db_session)
-    project = Project(key="LEG", name="Legacy", tracking_mode="mirrored")
-    db_session.add(project)
-    await db_session.flush()
-    assert project.id is not None
-    connection = Connection(
-        provider=Provider.jira, name="Old Jira",
-        config={"base_url": "https://jira.example.com", "project_id": project.id,
-                "jira_project_key": "LEG"},
-    )
-    db_session.add(connection)
-    await db_session.commit()
-    project_id, connection_id = project.id, connection.id
-    before = (await client.get(f"/api/v1/projects/{project_id}/tracking", headers=admin)).json()
-    assert before["binding"] is None and before["legacy_connection_id"] == connection_id
-    assert (before["legacy_provider"], before["legacy_label"]) == ("jira", "Jira")
-
-    applied = await client.post(
-        f"/api/v1/projects/{project_id}/tracking/switch",
-        json={"to_mode": "native", "dry_run": False}, headers=admin,
-    )
-    assert applied.status_code == 200, applied.text
-    after = (await client.get(f"/api/v1/projects/{project_id}/tracking", headers=admin)).json()
-    assert after["mode"] == "native" and after["legacy_connection_id"] is None
-    assert [(h["provider"], h["scope"]) for h in after["history"]] == [
-        ("jira", {"project_key": "LEG"})
-    ]
-    db_session.expire_all()
-    fresh = await db_session.get(Connection, connection_id)
-    assert fresh is not None
-    assert await tracker_sync.bindings_for_connection(db_session, fresh) == []

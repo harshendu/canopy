@@ -4,6 +4,7 @@ health (risk / drift / progress / decision backlog) across an initiative's sub-p
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import delete as sa_delete
 from sqlmodel import col, select
 
 from app.api.deps import ArchitectWriter, CurrentUser, FeatureGate, SessionDep
@@ -19,6 +20,7 @@ from app.models.base import (
     TaskType,
     utcnow,
 )
+from app.models.integration import TrackerBinding
 from app.models.leadership import InitiativeLead
 from app.models.org import Pod, Team
 from app.models.outcome import Outcome
@@ -241,6 +243,13 @@ async def delete_initiative(
     # Design docs: unlink the initiative; a doc homed here moves to another place it serves.
     await design_docs.drop_links_to(session, DocLinkEntity.initiative, [initiative_id])
     await design_docs.release_docs_homed_at(session, DocScope.initiative, [initiative_id])
+    # Tracker bindings and links into it would sync into a missing initiative: they go too.
+    await session.execute(
+        sa_delete(TrackerBinding).where(
+            col(TrackerBinding.target_type) == "initiative",
+            col(TrackerBinding.target_id) == initiative_id,
+        )
+    )
     await session.delete(initiative)
     await session.commit()
 

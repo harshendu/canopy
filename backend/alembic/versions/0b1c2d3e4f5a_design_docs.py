@@ -1,7 +1,7 @@
 """design docs: doc identity + review lifecycle, links, version log, kind catalog
 
 Revision ID: 0b1c2d3e4f5a
-Revises: a9b0c1d2e3f4
+Revises: b0c1d2e3f4a5
 Create Date: 2026-11-15 09:00:00
 
 The design-doc layer over the document graph (USER_FLOWS §V5–§V8):
@@ -41,7 +41,7 @@ import sqlmodel
 from alembic import op
 
 revision = "0b1c2d3e4f5a"
-down_revision = "a9b0c1d2e3f4"
+down_revision = "b0c1d2e3f4a5"
 branch_labels = None
 depends_on = None
 

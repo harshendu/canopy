@@ -6,9 +6,8 @@ tasks (`ingest.upsert_task_from_external` — which records status history on ev
 wiring parents, epic → project mapping for initiatives, watermarks, the tracker's status map,
 changelog backfill, sprint/cycle mirroring, auto-replan and the live-refresh event.
 
-Bindings (`TrackerBinding`) attach a project or initiative to a scope in a connection. A legacy
-connection that still carries `config.project_id` (pre-bindings) is synced through an in-memory
-binding built from that config, so existing installs keep working until the binding is saved.
+Bindings (`TrackerBinding`) attach a project or initiative to a scope in a connection; a
+connection feeds exactly the bindings it has (USER_FLOWS §J0).
 """
 
 from __future__ import annotations
@@ -66,20 +65,32 @@ class LinkMapResult:
 
 @dataclass
 class BindingView:
-    """A resolved binding: a persisted `TrackerBinding`, or one derived from a legacy
-    connection's config (`row is None`)."""
+    """A persisted binding (`TrackerBinding`) with its provider and scope resolved for the
+    engine."""
 
-    connection_id: int
+    row: TrackerBinding
     provider: Provider
-    target_type: str  # project | initiative
-    target_id: int
     scope: Scope
-    sync_iterations: bool = False
-    row: TrackerBinding | None = None
 
     @property
     def id(self) -> int | None:
-        return self.row.id if self.row is not None else None
+        return self.row.id
+
+    @property
+    def connection_id(self) -> int:
+        return self.row.connection_id
+
+    @property
+    def target_type(self) -> str:  # project | initiative
+        return self.row.target_type
+
+    @property
+    def target_id(self) -> int:
+        return self.row.target_id
+
+    @property
+    def sync_iterations(self) -> bool:
+        return self.row.sync_iterations
 
 
 # --------------------------------------------------------------------------- #
@@ -92,19 +103,12 @@ def scope_of(row: TrackerBinding) -> Scope:
 
 
 def view_of(row: TrackerBinding) -> BindingView:
-    return BindingView(
-        connection_id=row.connection_id,
-        provider=Provider(str(row.provider)),
-        target_type=row.target_type,
-        target_id=row.target_id,
-        scope=scope_of(row),
-        sync_iterations=row.sync_iterations,
-        row=row,
-    )
+    return BindingView(row=row, provider=Provider(str(row.provider)), scope=scope_of(row))
 
 
-def legacy_mapping(config: dict[str, Any]) -> dict[str, Any]:
-    """The type/field mapping a pre-bindings Jira connection kept in its config."""
+def config_mapping(config: dict[str, Any]) -> dict[str, Any]:
+    """The type/field mapping a connection's config names (Jira's epic/story issue types and
+    story-point field) — a new binding's starting mapping."""
     out: dict[str, Any] = {}
     if config.get("epic_issue_type"):
         out["epic_types"] = [str(config["epic_issue_type"])]
@@ -115,8 +119,9 @@ def legacy_mapping(config: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def legacy_scope(config: dict[str, Any]) -> dict[str, Any]:
-    """The tracker scope a pre-bindings connection kept in its config (Jira project key…)."""
+def config_scope(config: dict[str, Any]) -> dict[str, Any]:
+    """The tracker scope a connection's config names (a Jira project key, a team key, a board…)
+    — a new binding's starting scope."""
     values: dict[str, Any] = {}
     if config.get("jira_project_key"):
         values["project_key"] = str(config["jira_project_key"])
@@ -126,42 +131,10 @@ def legacy_scope(config: dict[str, Any]) -> dict[str, Any]:
     return values
 
 
-def legacy_binding(connection: Connection) -> BindingView | None:
-    """A binding derived from a legacy connection's `config.project_id` (pre-bindings)."""
-    config = connection.config or {}
-    try:
-        project_id = int(config.get("project_id"))  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-    if connection.id is None:
-        return None
-    return BindingView(
-        connection_id=connection.id,
-        provider=Provider(str(connection.provider)),
-        target_type="project",
-        target_id=project_id,
-        scope=Scope(kind="project", values=legacy_scope(config), mapping=legacy_mapping(config)),
-        sync_iterations=bool(config.get("board_id")),
-    )
-
-
-async def has_binding_rows(session: AsyncSession, connection_id: int | None) -> bool:
-    """Whether the connection has any binding row (active or detached) — once it does, its
-    legacy `config.project_id` no longer binds anything (a detached project stays detached)."""
-    if connection_id is None:
-        return False
-    return (
-        await session.execute(
-            select(TrackerBinding.id).where(TrackerBinding.connection_id == connection_id)
-        )
-    ).first() is not None
-
-
 async def bindings_for_connection(
     session: AsyncSession, connection: Connection, *, kinds: tuple[str, ...] = ("project", "query")
 ) -> list[BindingView]:
-    """The active bindings a connection feeds (subtree links are re-synced explicitly), else the
-    legacy config binding of a connection that never had binding rows."""
+    """The active bindings a connection feeds (subtree links are re-synced explicitly)."""
     rows = (
         await session.execute(
             select(TrackerBinding).where(
@@ -171,16 +144,11 @@ async def bindings_for_connection(
             )
         )
     ).scalars().all()
-    if rows:
-        return [view_of(r) for r in rows]
-    if await has_binding_rows(session, connection.id):
-        return []
-    legacy = legacy_binding(connection)
-    return [legacy] if legacy is not None else []
+    return [view_of(r) for r in rows]
 
 
 async def binding_for_project(session: AsyncSession, project_id: int) -> BindingView | None:
-    """The project's active (non-subtree) binding, else a legacy connection pointing at it."""
+    """The project's active (non-subtree) binding."""
     row = (
         await session.execute(
             select(TrackerBinding).where(
@@ -191,25 +159,33 @@ async def binding_for_project(session: AsyncSession, project_id: int) -> Binding
             )
         )
     ).scalars().first()
-    if row is not None:
-        return view_of(row)
-    for connection in (
-        await session.execute(select(Connection).where(col(Connection.active).is_(True)))
-    ).scalars().all():
-        legacy = legacy_binding(connection)
-        if legacy is None or legacy.target_id != project_id:
-            continue
-        from app.connectors.tracker import is_tracker
+    return view_of(row) if row is not None else None
 
-        if is_tracker(legacy.provider) and not await has_binding_rows(session, connection.id):
-            return legacy
-    return None
+
+async def binding_for_task(
+    session: AsyncSession, task: Task, connection_id: int
+) -> BindingView | None:
+    """The active binding of `connection_id` that feeds the task's project — its project binding
+    first, else a tracker link (subtree) into it."""
+    rows = (
+        await session.execute(
+            select(TrackerBinding).where(
+                TrackerBinding.connection_id == connection_id,
+                TrackerBinding.target_type == "project",
+                TrackerBinding.target_id == task.project_id,
+                col(TrackerBinding.active).is_(True),
+            )
+        )
+    ).scalars().all()
+    if not rows:
+        return None
+    return view_of(sorted(rows, key=lambda r: (r.scope_kind == "subtree", r.id or 0))[0])
 
 
 def _watermark(tracker: WorkTracker, binding: BindingView) -> str | None:
     # A user's own credential carries its own cursor (a narrow-access pull mustn't move the
-    # service cursor); the service credential uses the binding's (or, legacy, the connection's).
-    if isinstance(tracker.connection, EffectiveCredential) or binding.row is None:
+    # service cursor); the service credential uses the binding's.
+    if isinstance(tracker.connection, EffectiveCredential):
         return tracker.connection.watermark
     return binding.row.watermark
 
@@ -217,7 +193,7 @@ def _watermark(tracker: WorkTracker, binding: BindingView) -> str | None:
 def _set_watermark(tracker: WorkTracker, binding: BindingView, value: str | None) -> None:
     if value is None:
         return
-    if isinstance(tracker.connection, EffectiveCredential) or binding.row is None:
+    if isinstance(tracker.connection, EffectiveCredential):
         tracker.connection.watermark = value
     else:
         binding.row.watermark = value
@@ -437,7 +413,7 @@ async def replan(session: AsyncSession, project_ids: set[int]) -> None:
 
 async def board_columns_for(session: AsyncSession, binding: BindingView) -> list[Any] | None:
     """The status map a mirrored project resolves categories against (None = heuristic)."""
-    if binding.row is None or not binding.row.status_map:
+    if not binding.row.status_map:
         return None
     from app.services.flow import ColumnDef
 
@@ -455,7 +431,7 @@ async def board_columns_for(session: AsyncSession, binding: BindingView) -> list
 async def refresh_status_map(tracker: WorkTracker, binding: BindingView) -> None:
     """Store the tracker's statuses (category + order) on the binding — the mirrored board's
     columns."""
-    if binding.row is None or not tracker.capabilities.status_categories:
+    if not tracker.capabilities.status_categories:
         return
     statuses: list[StatusDef] = await tracker.list_statuses(binding.scope)
     if statuses:
@@ -499,8 +475,7 @@ async def sync_binding(
     result.skipped += mapped.skipped
     _set_watermark(tracker, binding, page.watermark)
     result.watermark = _watermark(tracker, binding)
-    if binding.row is not None:
-        binding.row.last_synced_at = utcnow()
+    binding.row.last_synced_at = utcnow()
     await session.commit()
 
     if tracker.capabilities.status_history and mapped.created_task_ids:
@@ -564,7 +539,7 @@ async def ingest_target(
     session: AsyncSession, connection: Connection, project_id: int | None = None
 ) -> BindingView:
     """The binding fed items land in: the one named by `project_id`, else the connection's only
-    binding (or its legacy `config.project_id`)."""
+    binding."""
     bindings = await bindings_for_connection(session, connection)
     if project_id is not None:
         for binding in bindings:
@@ -573,7 +548,7 @@ async def ingest_target(
         raise IngestTargetError(f"connection is not bound to project {project_id}")
     if not bindings:
         raise IngestTargetError(
-            "connection has no binding (or configured project_id) to ingest into"
+            "connection feeds no project yet — bind one (switch its tracking) to ingest into"
         )
     if len(bindings) > 1:
         raise IngestTargetError("connection feeds several targets — pass project_id")
@@ -617,8 +592,7 @@ async def ingest_items(
     result.created += mapped.tasks_created
     result.updated += mapped.tasks_updated
     result.skipped += mapped.skipped
-    if binding.row is not None:
-        binding.row.last_synced_at = utcnow()
+    binding.row.last_synced_at = utcnow()
     await session.commit()
     if mapped.tasks_created or mapped.created_project_ids:
         await replan(session, touched)
@@ -750,7 +724,7 @@ async def backfill_pending(
     """The nightly top-up: replay the changelog of the next `limit` mirrored tasks of the
     binding's connection past its backfill cursor (wrapping round once every task was seen), so
     a large import ends up with exact history without a long first sync. Returns rows added."""
-    if binding.row is None or not tracker.capabilities.status_history:
+    if not tracker.capabilities.status_history:
         return 0
     session = tracker.session
     cursor = binding.row.backfill_cursor or 0
@@ -818,8 +792,8 @@ async def _upsert_sprint(
 
 async def sync_iterations(tracker: WorkTracker, binding: BindingView) -> SyncResult:
     """Mirror the tracker's sprints/cycles as tracker-owned canopy sprints of the project's team
-    and their members' membership (recorded). A project in no team only gets the legacy sprint
-    name of its active iteration on its tasks."""
+    and their members' membership (recorded). A project in no team has nowhere to hold a sprint
+    (sprints belong to a team; a team-less project runs Kanban), so nothing is mirrored."""
     session = tracker.session
     result = SyncResult(provider=binding.provider.value)
     if binding.target_type != "project":
@@ -828,12 +802,10 @@ async def sync_iterations(tracker: WorkTracker, binding: BindingView) -> SyncRes
     if project is None:
         return result
     team_id = await project_team_id(session, project)
+    if team_id is None:
+        return result
     for iteration in await tracker.fetch_iterations(binding.scope):
-        row = (
-            await _upsert_sprint(session, binding, iteration, team_id)
-            if team_id is not None
-            else None
-        )
+        row = await _upsert_sprint(session, binding, iteration, team_id)
         for ext_id in iteration.item_external_ids:
             ref = await mapping.get_ref(
                 session, binding.provider, ext_id, "task", connection_id=binding.connection_id
@@ -841,13 +813,9 @@ async def sync_iterations(tracker: WorkTracker, binding: BindingView) -> SyncRes
             task = await session.get(Task, ref.entity_id) if ref is not None else None
             if task is None:
                 continue
-            if row is not None:
-                if sprint_service.record_membership(
-                    session, task, row, source=StatusSource.sync
-                ) is not None:
-                    result.updated += 1
-            elif iteration.state == "active" and task.sprint != iteration.name:
-                task.sprint = iteration.name
+            if sprint_service.record_membership(
+                session, task, row, source=StatusSource.sync
+            ) is not None:
                 result.updated += 1
     await session.commit()
     return result

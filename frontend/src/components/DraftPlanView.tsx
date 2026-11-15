@@ -3,13 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import {
-  TRACKERS_KEY,
-  finalizeDraftPlan,
-  getProjectTracking,
-  getTrackers,
-  trackingKey,
-} from "../api/trackers";
+import { finalizeDraftPlan, getProjectTracking, trackingKey } from "../api/trackers";
 import type {
   Connection,
   DraftFinalizeResult,
@@ -75,7 +69,6 @@ export default function DraftPlanView({ projectId, mayPlan: mayPlanProp }: { pro
     queryFn: () => api.get<DraftPlan[]>(`/projects/${projectId}/draft-plans`),
   });
   const tracking = useQuery({ queryKey: trackingKey(projectId), queryFn: () => getProjectTracking(projectId) });
-  const catalog = useQuery({ queryKey: TRACKERS_KEY, queryFn: getTrackers, staleTime: 5 * 60 * 1000 });
   const t = tracking.data;
   const connections = useQuery({
     queryKey: ["connections"],
@@ -85,10 +78,10 @@ export default function DraftPlanView({ projectId, mayPlan: mayPlanProp }: { pro
 
   let target: FinalizeTarget | null = null;
   if (t) {
-    const connectionId = t.binding?.connection_id ?? t.legacy_connection_id;
+    const connectionId = t.binding?.connection_id ?? null;
     const connection = (connections.data ?? []).find((c) => c.id === connectionId) ?? null;
     const mode = finalizeModeOf(t);
-    const trackerLabel = trackingLabel(t, connection?.provider ?? null, catalog.data) ?? "tracker";
+    const trackerLabel = trackingLabel(t) ?? "tracker";
     target = {
       mode,
       trackerLabel,
@@ -313,7 +306,7 @@ function DraftPlanDetailPanel({
       <ul className="space-y-1">
         {tasks.length === 0 && <li className="text-xs text-slate-400">No tasks yet.</li>}
         {tasks.map((t) => {
-          const ticket = t.external_key ?? t.jira_key;
+          const ticket = t.external_key;
           return (
             <li key={t.id} className="flex flex-wrap items-center gap-2">
               <span
@@ -456,7 +449,7 @@ function DraftPlanDetailPanel({
               </div>
               <ul className="space-y-0.5">
                 {result.results.map((r) => {
-                  const key = r.external_key ?? r.jira_key;
+                  const key = r.external_key;
                   return (
                     <li key={r.draft_task_id} className={r.action === "failed" ? "text-red-700" : "text-slate-500"}>
                       {r.name}: {r.action}

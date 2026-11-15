@@ -156,9 +156,10 @@ async def test_flagship_task_surfaces_external_links(db_session):
 
     links = await collect_task_links(db_session, task.id)
     # A clickable Jira issue built from the demo connection's browsable base_url.
-    assert links.jira is not None
-    assert links.jira.key.startswith("SHOP-")
-    assert links.jira.url == f"https://jira.example.com/browse/{links.jira.key}"
+    assert links.tracker is not None
+    assert (links.tracker.provider, links.tracker.label) == ("jira", "Jira")
+    assert links.tracker.key.startswith("SHOP-")
+    assert links.tracker.url == f"https://jira.example.com/browse/{links.tracker.key}"
     # The GitHub PRs that implement it.
     assert {pr.number for pr in links.pull_requests} == {412, 415}
     # A design doc that lives in GitHub (source=repo).

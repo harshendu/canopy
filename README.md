@@ -135,7 +135,7 @@ All settings are environment variables, read from `.env` at the repo root (or `b
 | `GITHUB_WEBHOOK_SECRET`, `JIRA_WEBHOOK_SECRET`, `EVENTS_WEBHOOK_SECRET`, `<PROVIDER>_WEBHOOK_SECRET` | unset | HMAC secrets for `/webhooks/*` (other trackers post to `/webhooks/<provider>`). Each endpoint **rejects every request** (403) until its secret is set |
 | `TRACKERS_ENABLED` | `jira` | Work trackers a project can be bound to (comma-separated; empty = native tracking only) |
 | `TRACKING_DEFAULT_MODE` | `native` | Tracking mode reported for new projects (`native` — canopy owns status — or `mirrored`) |
-| `TRACKER_POLL_MINUTES` | `JIRA_POLL_MINUTES` (`10`) | Cadence of the worker's tracker reconciliation poll |
+| `TRACKER_POLL_MINUTES` | `10` | Cadence of the worker's tracker reconciliation poll (minutes) |
 | `FILE_DROP_BACKEND` (+ `FILE_DROP_*`) | disabled | Poll a local directory or S3 bucket for JSON/CSV exports to ingest (S3 needs the `[s3]` extra) |
 | `PLUGIN_MARKETPLACE_REF`, `PLUGIN_REPO_URL`, `PLUGIN_MCP_SERVER_PATH` | this repo | What the in-app *Agent Setup* page tells users to install — point them at your fork |
 

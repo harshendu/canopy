@@ -8,6 +8,7 @@ import {
   connectorFields,
   missingRequired,
   providerOptions,
+  splitMirrorProject,
 } from "./connectorFields";
 
 const CAPS = {
@@ -201,5 +202,25 @@ describe("buildConnectorConfig", () => {
   it("throws on invalid or non-object advanced JSON", () => {
     expect(() => buildConnectorConfig(CONNECTOR_FIELDS.jira, {}, "{not json")).toThrow(/valid JSON/);
     expect(() => buildConnectorConfig(CONNECTOR_FIELDS.jira, {}, "[1,2]")).toThrow(/JSON object/);
+  });
+});
+
+describe("splitMirrorProject", () => {
+  it("lifts a tracker's mirror project out of the config", () => {
+    expect(splitMirrorProject({ base_url: "https://x", project_id: 7 }, true)).toEqual({
+      config: { base_url: "https://x" },
+      projectId: 7,
+    });
+    // From the Advanced JSON too, and a bad value binds nothing.
+    expect(splitMirrorProject({ project_id: "9" }, true)).toEqual({ config: {}, projectId: 9 });
+    expect(splitMirrorProject({ project_id: "soon" }, true)).toEqual({ config: {}, projectId: null });
+    expect(splitMirrorProject({ team_key: "ENG" }, true)).toEqual({ config: { team_key: "ENG" }, projectId: null });
+  });
+
+  it("leaves GitHub and Drive configs alone (their project_id is their own)", () => {
+    expect(splitMirrorProject({ owner: "acme", project_id: 3 }, false)).toEqual({
+      config: { owner: "acme", project_id: 3 },
+      projectId: null,
+    });
   });
 });

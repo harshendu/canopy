@@ -9,9 +9,12 @@ from sqlmodel import func, select
 
 from app.core.security import hash_password
 from app.models.base import Provider, ReadStrategy, UserRole, WriteStrategy
+from app.models.draft import DraftPlan
 from app.models.integration import Connection, IntegrationSetting
+from app.models.project import Project
 from app.models.user import User
 from app.services import integration_policy
+from tests.helpers import jira_connection
 
 
 # --- resolver unit tests ---
@@ -137,17 +140,27 @@ async def test_admin_lists_defaults_and_patches(client, db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_push_to_jira_blocked_when_write_is_mcp(client, db_session) -> None:
+async def test_finalize_into_jira_blocked_when_write_is_mcp(client, db_session) -> None:
     await _seed(db_session)
     admin = await _headers(client, "admin@e.com")
+    project = Project(key="PLAT", name="Platform")
+    db_session.add(project)
+    await db_session.flush()
+    assert project.id is not None
+    await jira_connection(db_session, project.id)  # the project mirrors Jira
+    plan = DraftPlan(project_id=project.id, title="Plan")  # empty: nothing to write
+    db_session.add(plan)
+    await db_session.commit()
+    url = f"/api/v1/draft-plans/{plan.id}/finalize"
 
-    # Default policy (direct): the guard lets the request through to the plan lookup (404/400).
-    direct = await client.post("/api/v1/draft-plans/999/push-to-jira", json={}, headers=admin)
-    assert direct.status_code == 400
+    # Default policy (direct): the mirrored project's plan goes to its tracker.
+    direct = await client.post(url, json={}, headers=admin)
+    assert direct.status_code == 200, direct.text
+    assert (direct.json()["mode"], direct.json()["provider"]) == ("tracker", "jira")
 
     await client.patch(
         "/api/v1/admin/integrations/jira", json={"write_strategy": "mcp"}, headers=admin
     )
-    blocked = await client.post("/api/v1/draft-plans/999/push-to-jira", json={}, headers=admin)
+    blocked = await client.post(url, json={}, headers=admin)
     assert blocked.status_code == 403
     assert "MCP" in blocked.json()["detail"]

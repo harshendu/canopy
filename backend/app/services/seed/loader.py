@@ -84,7 +84,6 @@ from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import (
     Connection,
     ExternalRef,
-    JiraLink,
     PullRequest,
     TrackerBinding,
 )
@@ -942,16 +941,16 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
     # statuses as its board columns — what a full sync stores from Jira.
     await _add(session, TrackerBinding(
         connection_id=jira_id, provider=Provider.jira, target_type="project", target_id=fid,
-        scope_kind="project", scope=tracker_sync.legacy_scope(jira.config),
-        mapping=tracker_sync.legacy_mapping(jira.config),
+        scope_kind="project", scope=tracker_sync.config_scope(jira.config),
+        mapping=tracker_sync.config_mapping(jira.config),
         status_map=[{"name": n, "category": c, "position": i}
                     for i, (n, c) in enumerate(DEMO_JIRA_STATUSES)],
         sync_iterations=bool(jira.config.get("board_id"))))
+    # A tracker link: the epic and its subtree, linked into the flagship (§J9).
     epic_id, epic_key = refs.ds.jira_epic
-    link = await _add(session, JiraLink(
-        connection_id=jira_id, jira_issue_id=epic_id, jira_key=epic_key,
-        jira_issue_type="Epic", target_type="project", target_id=fid))
-    await tracker_links.mirror_jira_link(session, link)
+    await tracker_links.upsert_subtree_binding(
+        session, connection_id=jira_id, provider=Provider.jira, root_id=epic_id,
+        root_key=epic_key, root_type="Epic", target_type="project", target_id=fid)
     # The flagship is mirrored from Jira: the tasks Jira knows are Jira-owned (status locked to
     # the tracker on the board, each with its clickable <KEY>-… link); the rest of its tasks —
     # canopy-only work such as milestones and spikes — stay canopy-owned.

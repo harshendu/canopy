@@ -10,9 +10,7 @@ import type {
   BoardTaskItem,
   BoardViewer,
   StatusCategory,
-  TaskExternalLinks,
   TaskMoveRequest,
-  TrackerItemLink,
 } from "../api/types";
 
 /** The column the server puts cards without a status in (always first). */
@@ -203,15 +201,6 @@ const TRACKER_NAMES: Record<string, string> = { jira: "Jira", github: "GitHub" }
 /** Display name of the tracker that owns a mirrored card's status ("jira" → "Jira"). */
 export function trackerName(statusOwner: string): string {
   return TRACKER_NAMES[statusOwner] ?? statusOwner.charAt(0).toUpperCase() + statusOwner.slice(1);
-}
-
-/** The tracker item behind a task: the neutral `tracker` link, else the deprecated `jira`. */
-export function trackerItemOf(
-  links: Pick<TaskExternalLinks, "tracker" | "jira">,
-): TrackerItemLink | null {
-  if (links.tracker) return links.tracker;
-  if (links.jira) return { provider: "jira", label: "Jira", key: links.jira.key, url: links.jira.url };
-  return null;
 }
 
 // --------------------------------------------------------------------------- //

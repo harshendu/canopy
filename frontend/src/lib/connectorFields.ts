@@ -211,6 +211,18 @@ export function buildConnectorConfig(
   return { ...advanced, ...typed };
 }
 
+/** A tracker connection's mirror project travels beside its config as `project_id` (it binds
+ *  that project, §C12); GitHub and Drive keep theirs inside the config. Pure. */
+export function splitMirrorProject(
+  config: Record<string, unknown>,
+  isTracker: boolean,
+): { config: Record<string, unknown>; projectId: number | null } {
+  if (!isTracker || !("project_id" in config)) return { config, projectId: null };
+  const { project_id: raw, ...rest } = config;
+  const id = typeof raw === "number" ? raw : Number(raw);
+  return { config: rest, projectId: Number.isInteger(id) && id > 0 ? id : null };
+}
+
 /** The required typed fields left empty (the form says which before sending). */
 export function missingRequired(
   fields: readonly ConnectorField[],

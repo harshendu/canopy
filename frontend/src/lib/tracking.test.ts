@@ -220,14 +220,9 @@ describe("labels", () => {
     expect(ownershipLine({ mode: "native", canopy_owned: 0, tracker_owned: 0 }, null)).toBe("No tasks yet");
   });
 
-  it("names the tracker from the binding, else the legacy connection's provider", () => {
-    expect(trackingLabel({ binding: binding(), legacy_connection_id: null }, null)).toBe("Jira");
-    expect(trackingLabel({ binding: null, legacy_connection_id: 3 }, "generic", CATALOG)).toBe("Generic tracker");
-    expect(trackingLabel({ binding: null, legacy_connection_id: 3 }, null)).toBe("its tracker");
-    expect(
-      trackingLabel({ binding: null, legacy_connection_id: 3, legacy_label: "Linear" }, null),
-    ).toBe("Linear");
-    expect(trackingLabel({ binding: null, legacy_connection_id: null }, "jira")).toBeNull();
+  it("names the tracker from the binding", () => {
+    expect(trackingLabel({ binding: binding() })).toBe("Jira");
+    expect(trackingLabel({ binding: null })).toBeNull();
   });
 
   it("orders statuses and labels scope entries", () => {

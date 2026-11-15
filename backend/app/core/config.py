@@ -67,9 +67,8 @@ class Settings(BaseSettings):
     EVENTS_WEBHOOK_SECRET: str = ""
 
     # Cron cadence (minutes) of the tracker reconciliation poll (every bound tracker canopy reads
-    # directly). Unset falls back to the pre-tracker JIRA_POLL_MINUTES.
-    TRACKER_POLL_MINUTES: int | None = None
-    JIRA_POLL_MINUTES: int = 10
+    # directly).
+    TRACKER_POLL_MINUTES: int = 10
 
     # --- Design docs (USER_FLOWS §V8) ---
     # A tracked doc linked to open work is "check due" once no session has opened it for this many
@@ -123,10 +122,6 @@ class Settings(BaseSettings):
     FILE_DROP_S3_BUCKET: str = ""  # required when FILE_DROP_BACKEND=s3 (needs the [s3] extra)
     FILE_DROP_S3_PREFIX: str = "canopy-drops"  # key prefix within the bucket
     FILE_DROP_POLL_MINUTES: int = 10
-
-    @property
-    def tracker_poll_minutes(self) -> int:
-        return self.TRACKER_POLL_MINUTES or self.JIRA_POLL_MINUTES
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod

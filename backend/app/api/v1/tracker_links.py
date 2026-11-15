@@ -1,7 +1,7 @@
 """Tracker links: link one item of any work tracker (an initiative/epic/story) and its
 descendants to a canopy project or initiative; canopy maps the subtree idempotently. Writes are
-planner-gated; status stays the tracker's. `/jira-links` is the pre-tracker alias, kept for one
-release. See `app/services/tracker_links.py` and USER_FLOWS §J9.
+planner-gated; status stays the tracker's. See `app/services/tracker_links.py` and USER_FLOWS
+§J9.
 """
 
 from typing import Literal

@@ -31,7 +31,6 @@ import {
   placementOf,
   sameOrder,
   toMoveRequest,
-  trackerItemOf,
   trackerName,
   trackingFailure,
   viewerForRole,
@@ -475,14 +474,6 @@ describe("WIP and labels", () => {
     const roomy = { ...full, lanes: full.lanes.map((l) => ({ ...l, scope_wip: l.scope_wip && 1 })) };
     expect(wouldBlockOnWip(roomy, { taskId: 1, to_status: "Doing" })).toBe(false);
     expect(wouldBlockOnWip(full, { taskId: 1, after_task_id: 1 })).toBe(false);
-  });
-
-  it("names a task's tracker item, preferring the neutral link", () => {
-    const jira = { key: "SHOP-1", url: "https://jira.example.com/browse/SHOP-1" };
-    expect(trackerItemOf({ jira, tracker: null })).toEqual({ provider: "jira", label: "Jira", ...jira });
-    const linear = { provider: "linear", label: "Linear", key: "ENG-7", url: null };
-    expect(trackerItemOf({ jira, tracker: linear })).toEqual(linear);
-    expect(trackerItemOf({ jira: null })).toBeNull();
   });
 
   it("names trackers and cards", () => {

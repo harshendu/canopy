@@ -9,6 +9,7 @@ from app.models.base import Provider
 from app.models.integration import Connection
 from app.models.project import Project, Task
 from app.services.file_drop import LocalDropStorage, S3DropStorage, process_drops
+from tests.helpers import bind_project
 
 
 # --- local backend ---
@@ -92,9 +93,10 @@ async def test_process_drops_ingests_and_moves(db_session, tmp_path) -> None:
     project = Project(key="PLAT", name="Platform")
     db_session.add(project)
     await db_session.flush()
-    conn = Connection(provider=Provider.jira, name="j", config={"project_id": project.id})
+    conn = Connection(provider=Provider.jira, name="j", config={})
     db_session.add(conn)
     await db_session.flush()
+    await bind_project(db_session, conn, project.id)
 
     conn_dir = tmp_path / str(conn.id)
     conn_dir.mkdir()

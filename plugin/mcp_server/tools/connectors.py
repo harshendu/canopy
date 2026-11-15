@@ -1,5 +1,5 @@
 """Connector tools: work-tracker sync, links and ingest (Jira, Linear, a generic tracker…) +
-GitHub/Drive reads. The `*_jira_*` names are the pre-tracker aliases, kept for one release."""
+GitHub/Drive reads."""
 
 from __future__ import annotations
 
@@ -19,10 +19,6 @@ def register(mcp, client) -> None:
         tracking mode for new projects. Check capabilities before promising an action."""
         return await client.get("/meta/trackers")
 
-    async def _sync(connection_id: int, incremental: bool) -> dict:
-        suffix = "/sync/incremental" if incremental else "/sync"
-        return await client.post(f"/connectors/connections/{connection_id}{suffix}")
-
     @mcp.tool
     async def sync_tracker(connection_id: int, incremental: bool = True) -> dict:
         """Pull a tracker connection's items into canopy — every project/initiative it is
@@ -31,12 +27,8 @@ def register(mcp, client) -> None:
         refreshes the tracker's statuses (a mirrored board's columns). The tracker stays the
         owner of its items' status; canopy never writes status back. For one project use
         `sync_project_tracking`."""
-        return await _sync(connection_id, incremental)
-
-    @mcp.tool
-    async def trigger_jira_sync(connection_id: int, incremental: bool = True) -> dict:
-        """Deprecated alias of `sync_tracker` (kept one release) — sync a Jira connection."""
-        return await _sync(connection_id, incremental)
+        suffix = "/sync/incremental" if incremental else "/sync"
+        return await client.post(f"/connectors/connections/{connection_id}{suffix}")
 
     @mcp.tool
     async def link_tracker_item(
@@ -83,43 +75,6 @@ def register(mcp, client) -> None:
         return await client.delete(f"/tracker-links/{link_id}")
 
     @mcp.tool
-    async def link_jira_ticket(
-        jira_key: str,
-        target_type: str,
-        target_id: int,
-        connection_id: int,
-    ) -> dict:
-        """Deprecated alias of `link_tracker_item` for Jira (kept one release). Its link ids
-        are the `/jira-links` ones — manage them with the `*_jira_*` tools, or list the same
-        links (with tracker-link ids) via `list_tracker_links`."""
-        return await client.post(
-            "/jira-links",
-            {
-                "connection_id": connection_id,
-                "jira_key": jira_key,
-                "target_type": target_type,
-                "target_id": target_id,
-            },
-        )
-
-    @mcp.tool
-    async def list_jira_links(target_type: str, target_id: int) -> list[dict]:
-        """Deprecated alias of `list_tracker_links` (Jira links, `/jira-links` ids)."""
-        return await client.get(
-            "/jira-links", params={"target_type": target_type, "target_id": target_id}
-        )
-
-    @mcp.tool
-    async def resync_jira_link(link_id: int) -> dict:
-        """Deprecated alias of `resync_tracker_link` (a `/jira-links` id)."""
-        return await client.post(f"/jira-links/{link_id}/resync")
-
-    @mcp.tool
-    async def unlink_jira_ticket(link_id: int) -> dict:
-        """Deprecated alias of `unlink_tracker_item` (a `/jira-links` id)."""
-        return await client.delete(f"/jira-links/{link_id}")
-
-    @mcp.tool
     async def list_open_prs(connection_id: int) -> list[dict]:
         """List open pull requests for a GitHub connection."""
         return await client.get(f"/connectors/github/{connection_id}/pulls")
@@ -163,12 +118,6 @@ def register(mcp, client) -> None:
             },
         )
 
-    async def _ingest(connection_id: int, items: list[dict], project_id: int | None) -> dict:
-        body: dict = {"issues": items}
-        if project_id is not None:
-            body["project_id"] = project_id
-        return await client.post(f"/connectors/connections/{connection_id}/ingest/issues", body)
-
     @mcp.tool
     async def ingest_work_items(
         connection_id: int, items: list[dict], project_id: int | None = None
@@ -185,12 +134,10 @@ def register(mcp, client) -> None:
         "assignee_account_id", "estimate": 3}. Epics become summary tasks; re-ingesting updates
         (never duplicates); status is mirrored read-only. Items land in the connection's bound
         project — pass `project_id` when it feeds several. New tasks trigger a replan."""
-        return await _ingest(connection_id, items, project_id)
-
-    @mcp.tool
-    async def ingest_jira_issues(connection_id: int, issues: list[dict]) -> dict:
-        """Deprecated alias of `ingest_work_items` (kept one release) for Jira issues."""
-        return await _ingest(connection_id, issues, None)
+        body: dict = {"issues": items}
+        if project_id is not None:
+            body["project_id"] = project_id
+        return await client.post(f"/connectors/connections/{connection_id}/ingest/issues", body)
 
     @mcp.tool
     async def ingest_github_pull_requests(connection_id: int, pull_requests: list[dict]) -> dict:

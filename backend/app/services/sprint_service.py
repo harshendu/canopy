@@ -2,9 +2,9 @@
 
 A team runs its work as `kanban`, `sprint` or `both`, across all its projects (the setting is
 on `Team`). Sprints belong to a team (optionally one pod). Membership is one sprint per task,
-written ONLY through `record_membership`, which keeps `Task.sprint_id` (and the legacy
-`Task.sprint` name) in step and appends `TaskSprintHistory` — commitment, scope change and
-carry-over are computed from that history (pure maths in `app/services/sprints.py`).
+written ONLY through `record_membership`, which sets `Task.sprint_id` and appends
+`TaskSprintHistory` — commitment, scope change and carry-over are computed from that history
+(pure maths in `app/services/sprints.py`).
 
 Ownership mirrors status ownership: a canopy-owned sprint is planned and run here; a sprint
 mirrored from a tracker is read-only. A mirrored task's membership belongs to its tracker when
@@ -24,14 +24,12 @@ from app.core.config import settings
 from app.models.base import (
     CANOPY_OWNER,
     DeliveryMethod,
-    Provider,
     SprintState,
     StatusCategory,
     StatusSource,
     TaskType,
     utcnow,
 )
-from app.models.integration import Connection
 from app.models.org import Team
 from app.models.project import Project, Task, TaskStatusHistory
 from app.models.sprint import Sprint, TaskSprintHistory
@@ -171,24 +169,16 @@ async def sprint_tasks(session: AsyncSession, sprint_id: int) -> list[Task]:
 
 
 async def tracker_syncing_sprints(session: AsyncSession, project_id: int) -> str | None:
-    """The provider whose sprints this project mirrors, if any (a Jira connection bound to the
-    project with a `board_id`). Phase 3 replaces this with the binding's `sync_iterations`."""
-    rows = (
-        await session.execute(
-            select(Connection).where(
-                Connection.provider == Provider.jira, col(Connection.active).is_(True)
-            )
-        )
-    ).scalars().all()
-    for connection in rows:
-        config = connection.config or {}
-        try:
-            bound = int(config.get("project_id", 0)) == project_id
-        except (TypeError, ValueError):
-            bound = False
-        if bound and config.get("board_id"):
-            return connection.provider.value
-    return None
+    """The provider whose sprints/cycles this project mirrors, if any: its binding syncs
+    iterations and the tracker has them."""
+    from app.connectors.tracker import tracker_class
+    from app.services.tracker_sync import binding_for_project
+
+    binding = await binding_for_project(session, project_id)
+    if binding is None or not binding.sync_iterations:
+        return None
+    cls = tracker_class(binding.provider)
+    return binding.provider.value if cls is not None and cls.capabilities.iterations else None
 
 
 async def membership_owner(session: AsyncSession, task: Task) -> str:
@@ -229,7 +219,6 @@ def record_membership(
         source=source.value,
     )
     task.sprint_id = target
-    task.sprint = sprint.name if sprint is not None else None
     session.add(row)
     return row
 

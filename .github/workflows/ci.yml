@@ -190,6 +190,11 @@ jobs:
               tools = asyncio.run(tools)
           print(f"canopy MCP server registered {len(tools)} tools")
           assert len(tools) >= 100, "expected the curated canopy tool set to register"
+          # The pre-tracker aliases were retired one release after the tracker layer shipped.
+          names = set(tools) if isinstance(tools, dict) else {t.name for t in tools}
+          retired = {"trigger_jira_sync", "link_jira_ticket", "list_jira_links", "resync_jira_link",
+                     "unlink_jira_ticket", "ingest_jira_issues", "push_draft_to_jira"}
+          assert not names & retired, f"retired tool names still registered: {sorted(names & retired)}"
           PY
       - name: Refuse to serve beyond loopback without an auth token
         run: |

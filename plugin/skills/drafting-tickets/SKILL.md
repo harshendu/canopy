@@ -41,10 +41,11 @@ from the Reviews queue. Don't route one through the other.
 
 ## Conventions
 - The draft is the review surface — iterate there, not in the tracker.
-- Story points need the binding's estimate field (Jira: the connection's `story_point_field`,
-  e.g. `customfield_10016`); without it only summary/description are written.
+- Story points need the binding's estimate field — its `mapping.estimate_field` (e.g.
+  `customfield_10016`, set with `canopy:set_project_tracking`; for Jira the connection's
+  `story_point_field` is the fallback); without one only summary/description are written.
+  New items take the mapping's types too (its first `epic_types` entry, its `item_type`).
 - When the tracker's writes are MCP-managed, finalising can't write to it: create the items
   with your own tools and record them with `canopy:record_draft_push` (see `mcp-ingest`).
 - Report what was created/updated (with the new keys) and any failures — a failure doesn't
   abort the rest, and a re-finalise retries it.
-- `push_draft_to_jira` is the deprecated alias (kept one release).

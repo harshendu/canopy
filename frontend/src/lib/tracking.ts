@@ -198,8 +198,7 @@ function present(value: unknown): boolean {
 
 /**
  * The scope keys the server reads from a tracker connection's config when it binds a project
- * (`tracker_sync.legacy_scope`). Only these: the config's `project_id` is canopy's own project
- * (the one to mirror into), never a tracker's — Linear's scope has a `project_id` of its own.
+ * (`tracker_sync.config_scope`); the rest of a scope is set on the project's Tracking tab.
  */
 export const CONFIG_SCOPE_KEYS: readonly string[] = ["project_key", "team_key", "board_id", "jql"];
 
@@ -223,7 +222,7 @@ export function prefillScope(
   return formValues(fields, configScope(config));
 }
 
-/** The type/field mapping a connection's config carries (the server's `legacy_mapping`). */
+/** The type/field mapping a connection's config carries (the server's `config_mapping`). */
 export function prefillMapping(
   config: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> {
@@ -328,20 +327,9 @@ export function linkableConnections(
   });
 }
 
-/** The tracker a project's tracking names: its binding's, else (bound only through a
- *  pre-binding connection) the label the server reports, else that connection's provider
- *  when known. */
-export function trackingLabel(
-  tracking: Pick<ProjectTracking, "binding" | "legacy_connection_id" | "legacy_label">,
-  legacyProvider: string | null,
-  catalog?: TrackerCatalog | null,
-): string | null {
-  if (tracking.binding) return tracking.binding.label;
-  if (tracking.legacy_connection_id !== null) {
-    if (tracking.legacy_label) return tracking.legacy_label;
-    return legacyProvider ? providerLabel(legacyProvider, catalog) : "its tracker";
-  }
-  return null;
+/** The tracker a project's tracking names: its binding's (null when nothing is bound). */
+export function trackingLabel(tracking: Pick<ProjectTracking, "binding">): string | null {
+  return tracking.binding?.label ?? null;
 }
 
 /** "Native — canopy owns every status" / "Mirrored from Jira". */

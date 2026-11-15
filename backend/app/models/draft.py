@@ -48,13 +48,9 @@ class DraftTask(TimestampMixin, table=True):
     description: str | None = Field(default=None, sa_column=Column(Text))
     type: TaskType = Field(default=TaskType.task)  # task | summary (epic/phase) | milestone
     estimate_days: int = 1  # canopy duration sense (working days)
-    story_points: float | None = None  # pushed to the Jira story-point custom field
+    story_points: float | None = None  # pushed to the tracker's estimate field
     sort_order: int = 0
 
-    # Set after a successful push to Jira; their presence makes a re-push an update.
-    # Legacy (kept in step with `external_*` for one release, then dropped).
-    jira_issue_id: str | None = None
-    jira_key: str | None = None  # human key, e.g. "PROJ-123"
     # Where finalising put it: an item in a tracker (`external_*`), or a native canopy task
     # (`task_id`). Either makes a re-finalise an update rather than a duplicate.
     external_provider: str | None = None

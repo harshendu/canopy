@@ -18,7 +18,6 @@ import {
   boardQueryKey,
   canMove,
   fold,
-  trackerItemOf,
   trackerName,
   trackingFailure,
   viewerForRole,
@@ -235,7 +234,7 @@ function TaskStatusField({
   if (task.type === "summary") return null;
 
   if (!canopyOwned) {
-    const item = links.data ? trackerItemOf(links.data) : null;
+    const item = links.data?.tracker ?? null;
     const tracker = item?.label ?? trackerName(task.status_owner);
     const url = item?.url;
     return (
@@ -384,7 +383,13 @@ function TaskSprintField({
           </select>
         ) : (
           <span className="mt-1 block text-sm text-slate-700">
-            {current ? label(current) : (task.sprint ?? "Backlog (no sprint)")}
+            {current
+              ? label(current)
+              : task.sprint_id == null
+                ? "Backlog (no sprint)"
+                : sprints.data
+                  ? `Sprint #${task.sprint_id}`
+                  : "Loading…"}
           </span>
         )}
       </label>
@@ -592,9 +597,9 @@ function TaskFields({
   );
 }
 
-/** A task's links out to the systems that own the work: its tracker item, the GitHub PRs
- *  implementing it, and the design docs (GitHub/Drive) scoped to it. Read-only — canopy links,
- *  it never stores the resources (doc CRUD lives on the project Docs tab). */
+/** A task's links out to the systems that own the work: its tracker item and the GitHub PRs
+ *  implementing it. Read-only — canopy links, it never stores the resources. Design docs have
+ *  their own panel (`LinkedDocs`). */
 function ExternalLinksSection({ taskId }: { taskId: number }) {
   const links = useQuery({
     queryKey: ["task-links", taskId],
@@ -604,7 +609,7 @@ function ExternalLinksSection({ taskId }: { taskId: number }) {
   const data = links.data;
   if (!data) return <p className="text-xs text-slate-400">Loading…</p>;
 
-  const item = trackerItemOf(data);
+  const item = data.tracker;
   const empty = !item && data.pull_requests.length === 0;
   if (empty) return <p className="text-xs text-slate-400">No linked tracker item or pull requests.</p>;
 
