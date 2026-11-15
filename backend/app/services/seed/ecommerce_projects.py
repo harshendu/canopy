@@ -18,6 +18,7 @@ from app.services.seed.catalog import (
     BlockerSpec,
     ComponentSpec,
     CriterionSpec,
+    DocLinkSpec,
     DocSpec,
     DraftSpec,
     DraftTaskSpec,
@@ -38,6 +39,16 @@ from app.services.seed.catalog import (
 )
 
 _REPO = "https://github.com/example-shop/checkout/blob/main"
+# Fictional Claude artifact links (claude.ai/artifact/<22-character id>) — they open nothing.
+_CLAUDE = "https://claude.ai/artifact"
+_CLAUDE_IDS = (
+    "Dm0CheckoutTechDesign1",
+    "Dm0CheckoutPrototype01",
+    "Dm0GuestOptionsPage001",
+    "Dm0CheckoutThreatModel",
+    "Dm0LatencyNotesLeo0001",
+)
+_LEO = "leo@shop.example.com"  # a demo user (see ecommerce.py) — owns the personal doc
 _WIKI = "https://wiki.example.com"
 _DRIVE = "https://drive.google.com/file/d"
 
@@ -213,6 +224,51 @@ _ONEPAGE = ProjectSpec(
                 "repo", "Integrate tokenized payments"),
         DocSpec("tech_design", "Checkout session design",
                 f"{_DRIVE}/doc-checkout-session/view", "drive", "Checkout session service"),
+        # Design docs made in Claude (fictional artifact links): tracked, versioned, linked.
+        DocSpec("tech_design", "One-page checkout: technical design",
+                f"{_CLAUDE}/checkout-technical-design-{_CLAUDE_IDS[0]}", "agent",
+                format="document", review_status="approved", version="r14",
+                approved_version="r12", visibility="org",
+                summary="Server-side session as the source of truth; the client renders a "
+                        "single page from session state. Covers retries and idempotency.",
+                links=(
+                    DocLinkSpec("decision",
+                                "Server-side checkout session as the source of truth", "basis"),
+                    DocLinkSpec("spec", "One-page checkout", "basis"),
+                    DocLinkSpec("milestone", "Checkout GA", "gate"),
+                )),
+        DocSpec("design", "One-page checkout prototype",
+                f"{_CLAUDE}/{_CLAUDE_IDS[1]}", "agent", format="prototype",
+                review_status="in_review", version="v3", visibility="org",
+                summary="Clickable prototype of cart review, address, delivery and payment "
+                        "on one page, with the guest path.",
+                links=(
+                    DocLinkSpec("spec", "One-page checkout"),
+                    DocLinkSpec("task", "One-page checkout UX"),
+                    DocLinkSpec("task", "Guest checkout"),
+                )),
+        DocSpec("rfc", "Guest checkout: options compared",
+                f"{_CLAUDE}/{_CLAUDE_IDS[2]}", "agent", format="page",
+                review_status="draft", version="v2", visibility="org",
+                summary="Three ways to let guests check out, scored on fraud exposure, "
+                        "conversion and data retention.",
+                links=(
+                    DocLinkSpec("decision", "Guest checkout without account creation", "basis"),
+                )),
+        DocSpec("threat_model", "Checkout threat model",
+                f"{_CLAUDE}/{_CLAUDE_IDS[3]}", "agent", format="document",
+                review_status="approved", version="r3", approved_version="r3",
+                visibility="users", kind_stage="design",
+                summary="Card data never touches checkout servers; tokens only. Lists the "
+                        "abuse cases the guest path adds.",
+                links=(
+                    DocLinkSpec("decision",
+                                "Server-side checkout session as the source of truth"),
+                )),
+        DocSpec("research", "Notes: checkout latency experiments",
+                f"{_CLAUDE}/{_CLAUDE_IDS[4]}", "agent", format="document",
+                version="r5", visibility="owner", personal_for=_LEO,
+                summary="Personal working notes on address-step latency."),
     ),
     blockers=(
         BlockerSpec("Integrate tokenized payments",

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { Outcome, OutcomeScope, OutcomeStatus } from "../api/types";
+import DocsToggle from "./DocsToggle";
 
 const STATUSES: OutcomeStatus[] = [
   "pending",
@@ -159,6 +160,13 @@ export default function OutcomesPanel({
                   </button>
                 )}
               </div>
+              <DocsToggle
+                entityType="outcome"
+                entityId={o.id}
+                projectId={scope === "project" ? scopeId : undefined}
+                initiativeId={scope === "initiative" ? scopeId : undefined}
+                mayLink={mayWrite}
+              />
             </li>
           ))}
         </ul>

@@ -25,7 +25,7 @@ from reportlab.platypus import (
 from app.models.base import TaskType
 from app.models.project import Task
 from app.schemas.entities import ProjectSummary
-from app.services.snapshot import InitiativeSnapshot, PortfolioSnapshot, ProjectSnapshot
+from app.services.snapshot import DocRow, InitiativeSnapshot, PortfolioSnapshot, ProjectSnapshot
 
 _HEADER_BG = colors.HexColor("#166534")  # canopy green
 _CRITICAL = colors.HexColor("#dc2626")
@@ -256,8 +256,22 @@ def project_pdf(snap: ProjectSnapshot) -> bytes:
         adr_table.setStyle(_table_style())
         story.append(adr_table)
 
+    story += _docs_section(snap.docs)
     doc.build(story)
     return buf.getvalue()
+
+
+def _docs_section(docs: list[DocRow]) -> list[object]:
+    """The design docs the work runs on: kind, review status, version and link (§V9)."""
+    if not docs:
+        return []
+    rows: list[list[object]] = [["Design doc", "Kind", "Status", "Version", "Link"]]
+    for d in docs:
+        link = d.url if len(d.url) <= 60 else d.url[:57] + "…"
+        rows.append([_p(d.title), _p(d.kind), d.status, _p(d.version), _p(link)])
+    table = Table(rows, repeatRows=1, colWidths=[140, 70, 60, 70, 135])
+    table.setStyle(_table_style())
+    return [Spacer(1, 14), Paragraph("Design docs", _styles["Heading2"]), table]
 
 
 def initiative_pdf(snap: InitiativeSnapshot) -> bytes:
@@ -290,6 +304,7 @@ def initiative_pdf(snap: InitiativeSnapshot) -> bytes:
     stats.setStyle(_table_style())
     story += [stats, Spacer(1, 14), Paragraph("Sub-projects", _styles["Heading2"])]
     story.append(_summary_table(r.projects))
+    story += _docs_section(snap.docs)
     doc.build(story)
     return buf.getvalue()
 

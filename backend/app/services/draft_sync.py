@@ -23,7 +23,8 @@ from sqlmodel import select
 from app.connectors import get_connector
 from app.connectors.tracker import WorkTracker, is_tracker
 from app.core.events import publish
-from app.models.base import TaskType, TrackingMode, utcnow
+from app.models.base import DocLinkEntity, TaskType, TrackingMode, utcnow
+from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
 from app.models.integration import Connection
 from app.models.project import Project, Task
@@ -33,7 +34,7 @@ from app.schemas.entities import (
     DraftPushTaskResult,
     DraftRecordPushResult,
 )
-from app.services import integration_policy, tracker_sync
+from app.services import design_docs, integration_policy, tracker_sync
 from app.services.features import feature_enabled
 from app.services.tracker_types import KIND_EPIC, KIND_ITEM, ItemDraft, ItemPatch, ItemRef, Scope
 from app.services.workflow import TrackingError, initialise_native_task
@@ -96,6 +97,29 @@ def _existing_ref(task: DraftTask, provider: str) -> ItemRef | None:
     return ItemRef(external_id=task.external_id, key=task.external_key)
 
 
+def cite_doc(description: str | None, doc: DocReference | None) -> str | None:
+    """A ticket's description with the design doc it was planned from cited at the end (a
+    content write — never status). Idempotent: a description that already carries the link is
+    left alone. Pure."""
+    if doc is None:
+        return description
+    if description and doc.url in description:
+        return description
+    line = f"Design doc: {doc.title or doc.url} — {doc.url}"
+    return f"{description.rstrip()}\n\n{line}" if description else line
+
+
+async def plan_source_doc(session: AsyncSession, plan: DraftPlan) -> DocReference | None:
+    """The plan's source doc, when it may be cited on shared work: tracked, not personal, and
+    shared at its source (a Claude doc shared in Claude)."""
+    if plan.source_doc_id is None:
+        return None
+    doc = await session.get(DocReference, plan.source_doc_id)
+    if doc is None or doc.private_to_user_id is not None:
+        return None
+    return doc if design_docs.shared_at_source(doc) else None
+
+
 async def push_plan_to_tracker(
     session: AsyncSession,
     plan: DraftPlan,
@@ -117,6 +141,7 @@ async def push_plan_to_tracker(
     scope = await _scope_for(session, connection, plan.project_id)
     tasks = await _plan_tasks(session, plan.id or 0)
     by_id = {t.id: t for t in tasks}
+    source_doc = await plan_source_doc(session, plan)
     provider = str(connection.provider.value)
     results: list[DraftPushTaskResult] = []
     created = updated = failed = 0
@@ -130,7 +155,9 @@ async def push_plan_to_tracker(
                     scope,
                     ref,
                     ItemPatch(
-                        title=task.name, description=task.description, estimate=task.story_points
+                        title=task.name,
+                        description=cite_doc(task.description, source_doc),
+                        estimate=task.story_points,
                     ),
                 )
                 updated += 1
@@ -141,7 +168,7 @@ async def push_plan_to_tracker(
                     ItemDraft(
                         title=task.name,
                         kind=KIND_EPIC if task.type == TaskType.summary else KIND_ITEM,
-                        description=task.description,
+                        description=cite_doc(task.description, source_doc),
                         estimate=task.story_points,
                         parent=_existing_ref(parent, provider) if parent is not None else None,
                     ),
@@ -230,6 +257,11 @@ async def materialize_native(
             )
         )
     await session.flush()
+    # The doc the plan came from becomes context on every task it produced (§V9).
+    source_doc = await plan_source_doc(session, plan)
+    if source_doc is not None:
+        for task_id in task_for.values():
+            await design_docs.upsert_link(session, source_doc, DocLinkEntity.task, task_id)
     await tracker_sync.replan(session, {plan.project_id})
     return created, updated, results
 

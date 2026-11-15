@@ -7,12 +7,25 @@ and own all formatting. Kept separate from the ORM so the renderers stay pure an
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from app.models.architecture import ArchitectureDecision
 from app.models.project import Milestone, Project, Task
 from app.schemas.entities import InitiativeRollup, ProjectSummary
+
+
+@dataclass
+class DocRow:
+    """One shared design doc in a snapshot (§V9): what it is, its review state and version,
+    and where it lives — the link, never the content."""
+
+    title: str
+    kind: str
+    status: str  # approved | in review | draft | link | superseded
+    version: str
+    provider: str
+    url: str
 
 
 @dataclass
@@ -24,12 +37,14 @@ class ProjectSnapshot:
     milestones: list[Milestone]
     decisions: list[ArchitectureDecision]
     engineer_names: dict[int, str]
+    docs: list[DocRow] = field(default_factory=list)
 
 
 @dataclass
 class InitiativeSnapshot:
     generated_at: datetime
     rollup: InitiativeRollup
+    docs: list[DocRow] = field(default_factory=list)
 
 
 @dataclass

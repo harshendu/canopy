@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { Retrospective, RetrospectiveDetail } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, isPlanner } from "../lib/permissions";
+import DocsToggle from "./DocsToggle";
 
 export default function RetrosView({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
@@ -148,6 +149,14 @@ function RetroDetail({
       <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-3 text-xs text-slate-700">
         {r.body}
       </pre>
+
+      <DocsToggle
+        entityType="retro"
+        entityId={retroId}
+        projectId={projectId}
+        mayLink={mayManage}
+        label="design docs"
+      />
 
       {mayManage && (
         <div className="flex flex-wrap items-center gap-2">

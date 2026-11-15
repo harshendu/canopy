@@ -549,3 +549,31 @@ describe("reviewing with Claude", () => {
     expect(timeAgo(null, now)).toBe("");
   });
 });
+
+describe("doc links", () => {
+  it("reads as the doc and the work it serves", async () => {
+    const { buildContext, itemFacts, itemKindLabel, itemTitle, visibleFacts, groupItems } =
+      await import("./proposals");
+    const task: ProposalItem = item({
+      entity_type: "task",
+      ref: "step",
+      payload: { name: "Retry the payment step" },
+    });
+    const link: ProposalItem = item({
+      id: 2,
+      entity_type: "doc_link",
+      payload: { doc_id: 7, entity_type: "task", entity_ref: "step", relation: "basis" },
+    });
+    const ctx = buildContext({ items: [task, link], lookups: { doc: { "7": "Checkout design" } } });
+    expect(itemKindLabel(link)).toBe("Link doc to work");
+    expect(itemTitle(link, ctx)).toBe("Checkout design → Retry the payment step");
+    expect(visibleFacts(link, itemFacts(link, ctx)).map((f) => f.label)).toEqual(["Relation"]);
+    expect(groupItems([task, link]).map((g) => g.group.key)).toEqual(["schedule", "docs"]);
+    const onAdr: ProposalItem = item({
+      id: 3,
+      entity_type: "doc_link",
+      payload: { doc_id: 7, entity_type: "decision", entity_id: 4 },
+    });
+    expect(itemTitle(onAdr, ctx)).toBe("Checkout design → decision #4");
+  });
+});

@@ -6,6 +6,7 @@ import type { Milestone } from "../api/types";
 import { horizon, type Horizon } from "../lib/horizon";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { isPlanner } from "../lib/permissions";
+import DocsToggle from "./DocsToggle";
 
 const COLUMNS: { key: Horizon; label: string; hint: string }[] = [
   { key: "now", label: "Now", hint: "≤ 30 days / overdue" },
@@ -84,6 +85,13 @@ export default function RoadmapView({ projectId }: { projectId: number }) {
                     <div className="text-xs text-slate-400">
                       {m.target_date ?? "no date"} · {m.status}
                     </div>
+                    <DocsToggle
+                      entityType="milestone"
+                      entityId={m.id}
+                      projectId={projectId}
+                      mayLink={mayWrite}
+                      defaultRelation="gate"
+                    />
                   </li>
                 ))}
                 {items.length === 0 && <li className="text-xs text-slate-300">—</li>}

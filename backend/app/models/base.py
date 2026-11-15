@@ -135,6 +135,9 @@ class Provider(StrEnum):
     # Work trackers beyond Jira (USER_FLOWS §J0) — opt-in through TRACKERS_ENABLED.
     linear = "linear"
     generic = "generic"
+    # Claude artifacts through the organization's Compliance API — read-only, metadata only
+    # (versions, sharing, existence) for docs canopy already tracks (USER_FLOWS §V11).
+    claude = "claude"
 
 
 # `provider` columns are VARCHAR (not a native DB enum), so adding a tracker is one enum member
@@ -237,7 +240,12 @@ class ProjectHealth(StrEnum):
 
 # --- Document graph (link, don't store) ---
 class DocKind(StrEnum):
-    """The kind of document a reference points at (canopy links it; never stores it)."""
+    """The built-in document kinds that seed the workspace kind catalog (`DocKindDef`).
+
+    A doc's `kind` is an **open slug** (USER_FLOWS §V5): any kind is allowed, and reports read
+    the kind's lifecycle *stage* from the catalog, never its name. These members are only the
+    starting set, kept so code can name the common kinds without string literals.
+    """
 
     prd = "prd"
     design = "design"
@@ -246,6 +254,8 @@ class DocKind(StrEnum):
     release = "release"
     qa = "qa"
     runbook = "runbook"
+    research = "research"
+    rfc = "rfc"
     other = "other"
 
 
@@ -258,12 +268,14 @@ class DocScope(StrEnum):
 
 
 class DocSource(StrEnum):
-    """How a document reference entered canopy."""
+    """How a document reference entered canopy (stored as VARCHAR, validated here)."""
 
     jira_epic = "jira_epic"  # harvested from a Jira epic's fields / links
     manual = "manual"  # added by hand in canopy
     repo = "repo"  # from a GitHub repo doc
     drive = "drive"  # from a Google Drive folder
+    agent = "agent"  # registered by a Claude session through the MCP tools
+    claude_sync = "claude_sync"  # suggested by the organization artifact sync
 
 
 class DocLinkHealth(StrEnum):
@@ -273,6 +285,110 @@ class DocLinkHealth(StrEnum):
     ok = "ok"
     stale = "stale"
     broken = "broken"
+
+
+# The design-doc layer over the document graph (USER_FLOWS §V5-§V8). Every set below is stored
+# as a plain VARCHAR column and validated by its StrEnum at the API boundary (the work-tracking
+# pattern above), so a new value never needs a dialect-branched enum migration.
+class DocProvider(StrEnum):
+    """Where a document lives, derived from its URL (`app/services/doc_urls.py`)."""
+
+    claude = "claude"  # a Claude Doc or a published artifact on claude.ai
+    gdrive = "gdrive"
+    github = "github"
+    figma = "figma"
+    confluence = "confluence"
+    jira = "jira"
+    web = "web"  # anything else reachable over https
+
+
+class DocFormat(StrEnum):
+    """The common media of a document. `format` is an open slug; these are the known values
+    the classifier infers and the UI labels."""
+
+    document = "document"
+    page = "page"
+    prototype = "prototype"
+    diagram = "diagram"
+    image = "image"
+    deck = "deck"
+    canvas = "canvas"
+    sheet = "sheet"
+    other = "other"
+
+
+class DocReviewStatus(StrEnum):
+    """A tracked design doc's lifecycle. NULL on a row means an untracked plain link."""
+
+    draft = "draft"
+    in_review = "in_review"
+    approved = "approved"
+    superseded = "superseded"
+    archived = "archived"
+
+
+class DocVisibility(StrEnum):
+    """Who can open the document at its source, as last reported by a session or a person.
+
+    Canopy cannot see sharing in Claude itself, so `unknown` is the honest default.
+    """
+
+    owner = "owner"  # only its author (private)
+    users = "users"  # named people
+    org = "org"  # everyone in the organization
+    public = "public"  # anyone with the link
+    unknown = "unknown"
+
+
+# Visibilities that count as "shared" for the sharing rule (a doc must be shared in Claude
+# before it joins the shared graph or backs a decision).
+SHARED_VISIBILITIES = frozenset({DocVisibility.users, DocVisibility.org, DocVisibility.public})
+
+
+class DocRelation(StrEnum):
+    """What a link from a doc to an entity means."""
+
+    basis = "basis"  # the entity was derived from / decided on this doc; pins a version
+    gate = "gate"  # the entity should not complete until the doc is approved (advisory)
+    reference = "reference"  # context for whoever does the work
+
+
+class DocLinkEntity(StrEnum):
+    """The canopy entities a design doc can be linked to."""
+
+    project = "project"
+    initiative = "initiative"
+    task = "task"
+    decision = "decision"
+    spec = "spec"
+    milestone = "milestone"
+    outcome = "outcome"
+    risk = "risk"
+    retro = "retro"
+    component = "component"
+
+
+class DocStage(StrEnum):
+    """The delivery-lifecycle stage a doc kind belongs to (the catalog's `stage`). Coverage and
+    the lifecycle views read this, never the kind's name."""
+
+    frame = "frame"
+    define = "define"
+    design = "design"
+    decide = "decide"
+    plan = "plan"
+    build = "build"
+    release = "release"
+    learn = "learn"
+    other = "other"
+
+
+class DocSnapshotStore(StrEnum):
+    """Where a person keeps frozen copies of approved docs (their default; each freeze can
+    override it)."""
+
+    repo = "repo"
+    drive = "drive"
 
 
 # --- Specs (spec-driven development: intent as the source of truth) ---
@@ -342,6 +458,14 @@ class ProposalEntity(StrEnum):
     outcome = "outcome"
     decision = "decision"
     doc_reference = "doc_reference"
+    doc_link = "doc_link"  # link a tracked design doc to the work it serves (USER_FLOWS §V9)
+
+
+# `proposalitem.entity_type` is VARCHAR (not a native DB enum) since the design-doc lifecycle
+# revision, so a new stageable entity is one enum member — no dialect-branched migration.
+ProposalEntityType = sa.Enum(
+    ProposalEntity, native_enum=False, create_constraint=False, length=32
+)
 
 
 class ProposalAction(StrEnum):

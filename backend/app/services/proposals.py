@@ -45,7 +45,11 @@ from app.models.architecture import ArchitectureDecision
 from app.models.base import (
     CANOPY_OWNER,
     ADRStatus,
+    DocLinkEntity,
+    DocRelation,
     DocScope,
+    DocSource,
+    DocVisibility,
     OutcomeScope,
     ProposalAction,
     ProposalEntity,
@@ -58,7 +62,7 @@ from app.models.base import (
     StatusSource,
     utcnow,
 )
-from app.models.doc import DocReference
+from app.models.doc import DocLink, DocReference
 from app.models.outcome import Outcome
 from app.models.project import Blocker, Dependency, Initiative, Milestone, Project, Task
 from app.models.proposal import Proposal, ProposalItem
@@ -80,7 +84,7 @@ from app.schemas.entities import (
     TaskUpdate,
 )
 from app.schemas.proposal import ProposalReviseRequest
-from app.services import sprint_service, workflow
+from app.services import design_docs, sprint_service, workflow
 from app.services.features import feature_enabled
 from app.services.metadata import normalize_tags
 from app.services.org import project_team_id
@@ -145,6 +149,13 @@ class _MilestonePatch(BaseModel):
     description: str | None = None
     target_date: date | None = None
     status: str | None = None  # planned | at_risk | hit | missed
+
+
+class _DocLinkPayload(BaseModel):
+    doc_id: int
+    entity_type: DocLinkEntity
+    entity_id: int
+    relation: DocRelation = DocRelation.reference
 
 
 class _DecisionPayload(BaseModel):
@@ -229,7 +240,11 @@ _ALLOWED_FIELDS: dict[tuple[ProposalEntity, ProposalAction], frozenset[str]] = {
         }
     ),
     (ProposalEntity.doc_reference, ProposalAction.create): frozenset(
-        {"scope_level", "scope_id", "url", "kind", "title", "owner_engineer_id"}
+        {"scope_level", "scope_id", "url", "kind", "title", "owner_engineer_id", "visibility"}
+    ),
+    # Link a tracked design doc (or one staged in this proposal) to the work it serves.
+    (ProposalEntity.doc_link, ProposalAction.create): frozenset(
+        {"doc_id", "entity_type", "entity_id", "relation"}
     ),
 }
 
@@ -245,6 +260,19 @@ _REF_KEYS: dict[tuple[ProposalEntity, ProposalAction], dict[str, str]] = {
         "task_ref": "task_id",
         "blocking_task_ref": "blocking_task_id",
     },
+    (ProposalEntity.doc_link, ProposalAction.create): {
+        "doc_ref": "doc_id",  # a doc_reference.create item in this proposal
+        "entity_ref": "entity_id",  # a task / milestone / decision / risk / outcome created here
+    },
+}
+
+# The staged entity a `doc_link.entity_ref` may name, per link target type.
+_LINKABLE_REF_ENTITIES: dict[str, ProposalEntity] = {
+    DocLinkEntity.task.value: ProposalEntity.task,
+    DocLinkEntity.milestone.value: ProposalEntity.milestone,
+    DocLinkEntity.decision.value: ProposalEntity.decision,
+    DocLinkEntity.risk.value: ProposalEntity.risk,
+    DocLinkEntity.outcome.value: ProposalEntity.outcome,
 }
 
 # The display label field per entity (folded into before/current snapshots).
@@ -256,6 +284,7 @@ _LABEL_FIELDS: dict[ProposalEntity, str] = {
     ProposalEntity.outcome: "statement",
     ProposalEntity.decision: "title",
     ProposalEntity.doc_reference: "url",
+    ProposalEntity.doc_link: "relation",
 }
 
 _RISK_TERMINAL = {RiskStatus.resolved, RiskStatus.accepted, RiskStatus.occurred}
@@ -290,6 +319,7 @@ _ID_FIELD_KINDS: dict[str, str] = {
     "proposed_by_id": "engineer",
     "project_id": "project",
     "spec_id": "spec",
+    "doc_id": "doc",
 }
 
 _M = TypeVar("_M")
@@ -316,6 +346,7 @@ def _entity_model(entity: ProposalEntity) -> type[Any]:
         ProposalEntity.outcome: Outcome,
         ProposalEntity.decision: ArchitectureDecision,
         ProposalEntity.doc_reference: DocReference,
+        ProposalEntity.doc_link: DocLink,
     }[entity]
 
 
@@ -495,6 +526,8 @@ def _shape_validate(
         return OutcomeUpdate.model_validate(concrete).model_dump(exclude_unset=True)
     if entity == ProposalEntity.decision:
         return _DecisionPayload.model_validate(concrete).model_dump()
+    if entity == ProposalEntity.doc_link:
+        return _DocLinkPayload.model_validate(concrete).model_dump()
     return DocReferenceCreate.model_validate(concrete).model_dump()
 
 
@@ -525,6 +558,12 @@ async def check_items(
     issues: list[ItemIssue] = []
     projects = await _scope_project_ids(session, scope_level, scope_id)
     declared_refs: set[str] = set()
+    # what each ref handle names, for links that must point at the right kind of entity
+    ref_types = {
+        item.ref: item.entity_type
+        for item in items
+        if item.ref and item.action == ProposalAction.create
+    }
 
     for index, item in enumerate(items):
         try:
@@ -535,7 +574,8 @@ async def check_items(
                 if item.entity_id is not None:
                     raise ValueError("a create item must not set entity_id")
                 await _check_create(
-                    session, item, fields, projects, declared_refs, scope_level, scope_id
+                    session, item, fields, projects, declared_refs, scope_level, scope_id,
+                    ref_types,
                 )
                 if item.ref:
                     if item.ref in declared_refs:
@@ -571,6 +611,7 @@ async def _check_create(
     declared_refs: set[str],
     scope_level: ProposalScope,
     scope_id: int,
+    ref_types: dict[str, ProposalEntity] | None = None,
 ) -> None:
     entity = item.entity_type
     payload = dict(item.payload or {})
@@ -613,11 +654,66 @@ async def _check_create(
             raise ValueError("blocker reason is required")
     elif entity in (ProposalEntity.risk, ProposalEntity.outcome, ProposalEntity.doc_reference):
         await _check_polymorphic_scope(session, entity, fields, projects, scope_level, scope_id)
+        if entity == ProposalEntity.doc_reference:
+            await _check_doc_shareable(session, fields)
     elif entity == ProposalEntity.decision:
         if fields.get("project_id") not in projects:
             raise ValueError("decision project is outside this proposal's scope")
         if not str(fields.get("title") or "").strip():
             raise ValueError("decision title is required")
+    elif entity == ProposalEntity.doc_link:
+        await _check_doc_link(
+            session, payload, fields, projects, scope_level, scope_id, ref_types or {}
+        )
+
+
+async def _check_doc_link(
+    session: AsyncSession,
+    payload: dict[str, Any],
+    fields: dict[str, Any],
+    projects: set[int],
+    scope_level: ProposalScope,
+    scope_id: int,
+    ref_types: dict[str, ProposalEntity],
+) -> None:
+    """A staged doc link: the doc is a shared, tracked doc (or a doc staged here), shared in
+    Claude; the target is in this proposal's scope (or created by it)."""
+    doc_ref = payload.get("doc_ref")
+    if doc_ref is not None:
+        if ref_types.get(str(doc_ref)) != ProposalEntity.doc_reference:
+            raise ValueError(f"doc_ref '{doc_ref}' does not name a doc staged in this proposal")
+    else:
+        doc = await session.get(DocReference, int(fields["doc_id"]))
+        if doc is None or doc.private_to_user_id is not None:
+            raise ValueError(f"doc {fields['doc_id']} not found")
+        try:
+            design_docs.require_shared(doc)
+        except design_docs.DocError as exc:
+            raise ValueError(exc.message) from exc
+    target_type = str(_jsonable(fields.get("entity_type")))
+    entity_ref = payload.get("entity_ref")
+    if entity_ref is not None:
+        wanted = _LINKABLE_REF_ENTITIES.get(target_type)
+        if wanted is None or ref_types.get(str(entity_ref)) != wanted:
+            raise ValueError(
+                f"entity_ref '{entity_ref}' does not name a {target_type} staged in this proposal"
+            )
+        return
+    try:
+        target = await design_docs.resolve_entity(
+            session, DocLinkEntity(target_type), int(fields["entity_id"])
+        )
+    except design_docs.DocError as exc:
+        raise ValueError(f"{target_type} {fields.get('entity_id')} not found") from exc
+    in_scope = (
+        target.project_id in projects
+        if target.project_id is not None
+        else scope_level == ProposalScope.initiative and target.initiative_id == scope_id
+    )
+    if not in_scope:
+        raise ValueError(
+            f"{target_type} {fields.get('entity_id')} is outside this proposal's scope"
+        )
 
 
 async def _check_status(session: AsyncSession, project_id: int, status: str) -> None:
@@ -649,6 +745,19 @@ async def _check_sprint(session: AsyncSession, task: Task, sprint_id: int | None
         raise ValueError(f"sprint {sprint_id} is not a sprint of this task's team")
     if sprint.state == SprintState.completed.value:
         raise ValueError(f"sprint {sprint_id} is completed")
+
+
+async def _check_doc_shareable(session: AsyncSession, fields: dict[str, Any]) -> None:
+    """The sharing rule for a staged doc link: a Claude doc must be shared in Claude before it
+    joins shared work (USER_FLOWS §V5)."""
+    try:
+        info = design_docs.classify(str(fields.get("url") or ""), strict=False)
+        visibility = DocVisibility(str(_jsonable(fields.get("visibility")) or "unknown"))
+        await design_docs.require_shareable(session, info, visibility, fields.get("title"))
+    except design_docs.DocError as exc:
+        raise ValueError(exc.message) from exc
+    except ValueError as exc:
+        raise ValueError(f"invalid doc link: {exc}") from exc
 
 
 async def _check_polymorphic_scope(
@@ -929,23 +1038,36 @@ async def _apply_item(
         assert adr.id is not None
         return adr.id
 
-    # doc_reference.create — idempotent per (scope, url), like the harvest path.
-    existing = await session.execute(
-        select(DocReference).where(
-            DocReference.scope_level == DocScope(str(_jsonable(fields["scope_level"]))),
-            DocReference.scope_id == int(fields["scope_id"]),
-            col(DocReference.url) == str(fields["url"]),
+    if entity == ProposalEntity.doc_link:
+        doc = await _require(session, DocReference, int(fields["doc_id"]))
+        try:
+            design_docs.require_shared(doc)
+        except design_docs.DocError as exc:
+            raise ValueError(exc.message) from exc
+        link = await design_docs.upsert_link(
+            session, doc, DocLinkEntity(str(_jsonable(fields["entity_type"]))),
+            int(fields["entity_id"]), DocRelation(str(_jsonable(fields.get("relation"))
+                                                     or DocRelation.reference.value)),
         )
+        assert link.id is not None
+        return link.id
+
+    # doc_reference.create — the shared register-or-link path: one document is one record, and
+    # a document already tracked elsewhere gets a link to this scope instead of a copy.
+    result = await design_docs.register_core(
+        session,
+        info=design_docs.classify(str(fields["url"]), strict=False),
+        kind=fields.get("kind"),
+        title=fields.get("title"),
+        scope_level=DocScope(str(_jsonable(fields["scope_level"]))),
+        scope_id=int(fields["scope_id"]),
+        source=DocSource.agent,
+        created_by=None,
+        visibility=DocVisibility(str(_jsonable(fields.get("visibility")) or "unknown")),
+        owner_engineer_id=fields.get("owner_engineer_id"),
     )
-    found = existing.scalars().first()
-    if found is not None:
-        assert found.id is not None
-        return found.id
-    doc = DocReference(**fields)
-    session.add(doc)
-    await session.flush()
-    assert doc.id is not None
-    return doc.id
+    assert result.doc.id is not None
+    return result.doc.id
 
 
 _UNSET = object()
@@ -1081,6 +1203,12 @@ def _referenced_ids(items: list[ProposalItem]) -> dict[str, set[int]]:
             level = blob.get("scope_level")
             if level in ("task", "project", "initiative"):
                 note(str(level), blob.get("scope_id"))
+            # a doc link's target, when a lookup bucket can name it
+            target = blob.get("entity_type")
+            if item.entity_type == ProposalEntity.doc_link and target in (
+                "task", "project", "initiative", "spec"
+            ):
+                note(str(target), blob.get("entity_id"))
     return found
 
 
@@ -1101,6 +1229,14 @@ async def collect_lookups(
     await names("task", Task, "name")
     await names("engineer", Engineer, "name")
     await names("spec", Spec, "title")
+    if wanted.get("doc"):
+        docs = await session.execute(
+            select(DocReference).where(
+                col(DocReference.id).in_(sorted(wanted["doc"])),
+                col(DocReference.private_to_user_id).is_(None),
+            )
+        )
+        lookups["doc"] = {str(r.id): str(r.title or r.url) for r in docs.scalars().all()}
     if wanted.get("project"):
         projects = await session.execute(
             select(Project).where(col(Project.id).in_(sorted(wanted["project"])))

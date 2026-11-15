@@ -58,8 +58,8 @@ Work out which rung every intended change sits on **before** calling any write t
    them in the **Reviews** queue. Always end by giving the user the returned
    `review_url` and a one-line summary of what awaits them there.
 4. **Human-only, never you** — applying proposals, accepting a **one-way-door** ADR,
-   pushing drafts to Jira (unless the human runs it), applying a scenario, minting
-   tokens, anything admin. Your job is to *prepare* these perfectly and hand over the link.
+   pushing drafts to Jira (unless the human runs it), applying a scenario, **approving a
+   design doc**, minting tokens, anything admin. Your job is to *prepare* these perfectly and hand over the link.
 
 When in doubt between rungs 2 and 3, stage. A proposal that gets applied unchanged
 costs the human one click; an unwanted direct write costs them trust.
@@ -86,8 +86,13 @@ provenance is your own inference — say so in its `reason`.
   and tells you the owner), not via a proposal (refused), not via your own Jira tools *for
   tasks canopy mirrors*. `update_task` never sets status. Plan→Jira ticket creation goes
   through the reviewed **draft plan** flow (`drafting-tickets`), content only.
-- **GitHub owns code; Drive owns design docs.** Canopy links, it never copies
-  (`add_doc_reference`); the only canopy→Drive write is an export snapshot.
+- **GitHub owns code; Drive and Claude own design docs.** Claude Docs and artifacts live on
+  claude.ai; canopy links, it never copies (`register_design_doc` — skill
+  `tracking-design-docs`) and never receives their content (only a locally computed hash).
+  A Claude doc joins shared work only once it is shared in Claude (409 `doc_not_shared`
+  otherwise — ask the user to share it, or track it as personal). Registering a doc the user
+  asked you to track is a direct write; linking a doc you *found* to work is staged. The only
+  canopy→Drive write is an export snapshot.
 - **Canopy owns the plan** (tasks/dependencies/milestones), decisions, risks, outcomes —
   that's what proposals and the direct tools edit.
 - **Structured mirror-sync is not a proposal.** Syncing Jira issues into canopy verbatim

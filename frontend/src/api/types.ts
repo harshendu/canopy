@@ -356,6 +356,9 @@ export interface ReviewSummary {
   rejected: number;
   pending: number;
   can_accept: boolean;
+  /** Advisory: every design doc the decision rests on (basis) or waits for (gate) is approved. */
+  docs_ready?: boolean;
+  docs_pending?: string[];
 }
 
 export interface FitnessFunction {
@@ -589,6 +592,8 @@ export interface User {
   role: UserRole;
   function: UserFunction;
   is_active: boolean;
+  /** Where this person keeps frozen copies of approved design docs (§V9). */
+  doc_snapshot_store?: "repo" | "drive" | null;
 }
 
 export interface Token {
@@ -1050,6 +1055,8 @@ export interface MyWorkspace {
   blockers: Blocker[];
   /** "My sprint": my tasks in active sprints (§C11). */
   my_sprints: MySprint[];
+  /** Design docs in review this user may approve (§V8). */
+  docs_to_review?: DocReference[];
 }
 
 export interface MyToday {
@@ -1091,6 +1098,9 @@ export interface DraftPlan {
   source: string | null;
   synced_at: string | null;
   created_at: string;
+  /** The tracked design doc the plan was drafted from, and the version read (§V9). */
+  source_doc_id?: number | null;
+  source_doc_version?: string | null;
 }
 
 export interface DraftTask {
@@ -1350,36 +1360,218 @@ export interface SpecDetail extends Spec {
   criteria_total: number;
   criteria_met: number;
   acceptance_ratio: number;
+  /** Advisory: the source docs (basis / gate links) are approved. */
+  docs_ready?: boolean;
+  docs_pending?: string[];
 }
 
-// --- Document graph (link, don't store) ---
-export type DocKind =
-  | "prd"
-  | "design"
-  | "tech_design"
-  | "architecture"
-  | "release"
-  | "qa"
-  | "runbook"
-  | "other";
+// --- Document graph (link, don't store) + design docs (USER_FLOWS §V5) ---
+/** Any kind is allowed — an open slug backed by the workspace kind catalog. */
+export type DocKind = string;
 export type DocScope = "project" | "initiative" | "task";
-export type DocSource = "jira_epic" | "manual" | "repo" | "drive";
+export type DocSource = "jira_epic" | "manual" | "repo" | "drive" | "agent" | "claude_sync";
 export type DocLinkHealth = "unchecked" | "ok" | "stale" | "broken";
+export type DocProvider =
+  | "claude"
+  | "gdrive"
+  | "github"
+  | "figma"
+  | "confluence"
+  | "jira"
+  | "web";
+export type DocReviewStatus = "draft" | "in_review" | "approved" | "superseded" | "archived";
+export type DocVisibility = "owner" | "users" | "org" | "public" | "unknown";
+export type DocRelation = "basis" | "gate" | "reference";
+export type DocLinkEntity =
+  | "project"
+  | "initiative"
+  | "task"
+  | "decision"
+  | "spec"
+  | "milestone"
+  | "outcome"
+  | "risk"
+  | "retro"
+  | "component";
+export type DocStage =
+  | "frame"
+  | "define"
+  | "design"
+  | "decide"
+  | "plan"
+  | "build"
+  | "release"
+  | "learn"
+  | "other";
 
 export interface DocReference {
   id: number;
-  scope_level: DocScope;
-  scope_id: number;
+  /** The doc's home; null only for a personal doc not filed under anything. */
+  scope_level: DocScope | null;
+  scope_id: number | null;
   kind: DocKind;
   title: string | null;
   url: string;
-  source: DocSource;
+  source: string;
   owner_engineer_id: number | null;
   connection_id: number | null;
   external_field: string | null;
   link_health: DocLinkHealth;
   last_checked_at: string | null;
   created_at: string;
+  provider?: string;
+  external_id?: string | null;
+  format?: string;
+  private_to_user_id?: number | null;
+  visibility?: string;
+  review_status?: DocReviewStatus | null;
+  review_version?: string | null;
+  current_version?: string | null;
+  approved_version?: string | null;
+  approved_by_user_id?: number | null;
+  approved_at?: string | null;
+  summary?: string | null;
+  supersedes_id?: number | null;
+  created_by_user_id?: number | null;
+  updated_at?: string | null;
+  /** When the source last changed, per the organization artifact sync (§V11). */
+  source_updated_at?: string | null;
+}
+
+export interface DocLink {
+  id: number;
+  doc_id: number;
+  entity_type: DocLinkEntity;
+  entity_id: number;
+  relation: DocRelation;
+  pinned_version: string | null;
+  pinned_at: string | null;
+  created_by_user_id: number | null;
+  created_at: string;
+  /** The target's display name. */
+  label: string | null;
+}
+
+export type DocHealthFlagName =
+  | "unverified"
+  | "check_due"
+  | "changed_since_approval"
+  | "behind_pin"
+  | "gate_open"
+  | "restricted"
+  | "broken";
+
+/** One reason a doc needs a look (computed server-side, never stored). */
+export interface DocHealthFlag {
+  flag: DocHealthFlagName;
+  severity: "info" | "warning" | "error";
+  message: string;
+  entity_type: string | null;
+  entity_id: number | null;
+}
+
+export interface DocRevision {
+  id: number;
+  doc_id: number;
+  version: string;
+  content_hash: string | null;
+  change_summary: string | null;
+  snapshot_url: string | null;
+  recorded_by_user_id: number | null;
+  source: string;
+  created_at: string;
+}
+
+/** A doc with its catalog entry, its labelled links and its health. */
+export interface DesignDoc extends DocReference {
+  kind_label: string;
+  stage: DocStage | string;
+  personal: boolean;
+  links: DocLink[];
+  health?: DocHealthFlag[];
+}
+
+export interface DesignDocDetail extends DesignDoc {
+  revisions: DocRevision[];
+}
+
+export interface DocRevisionResult {
+  doc: DesignDoc;
+  new_version: boolean;
+  revision: DocRevision | null;
+}
+
+export interface DocWorklist {
+  total: number;
+  docs: DesignDoc[];
+}
+
+export interface EntityDoc {
+  link: DocLink;
+  doc: DesignDoc;
+}
+
+export interface DocRegisterResult {
+  doc: DesignDoc;
+  created: boolean;
+}
+
+/** Counts from the organization artifact sync's last run (USER_FLOWS §V11). */
+export interface ArtifactSyncReport {
+  full: boolean;
+  complete: boolean;
+  listed: number;
+  paired: number;
+  newly_paired: number;
+  updated: number;
+  new_versions: number;
+  sharing_changed: number;
+  missing: number;
+  unmatched: number | null;
+  identities: number;
+  ran_at: string;
+}
+
+export interface ArtifactSyncStatus {
+  available: boolean;
+  connection_id?: number | null;
+  connection_name?: string | null;
+  last_sync?: ArtifactSyncReport | null;
+}
+
+/** One of your own Claude artifacts no doc you can see tracks yet — metadata, listed live. */
+export interface ArtifactSuggestion {
+  artifact_id: string;
+  artifact_type: string;
+  title: string | null;
+  format: string;
+  read_mode: string;
+  visibility: string;
+  version: string | null;
+  updated_at: string | null;
+}
+
+export interface ArtifactSuggestions {
+  available: boolean;
+  complete: boolean;
+  items: ArtifactSuggestion[];
+}
+
+export interface DocKindDef {
+  key: string;
+  label: string;
+  stage: DocStage | string;
+  expected: boolean;
+  builtin: boolean;
+  sort_order: number;
+  doc_count: number;
+}
+
+export interface DocCoverageKind {
+  kind: string;
+  label: string;
+  stage: string;
+  state: "approved" | "in_review" | "draft" | "linked" | "missing";
 }
 
 export interface DocCoverage {
@@ -1389,6 +1581,9 @@ export interface DocCoverage {
   present: DocKind[];
   missing: DocKind[];
   by_kind: Record<string, number>;
+  expected?: DocCoverageKind[];
+  by_stage?: { stage: string; total: number; approved: number }[];
+  needs_attention?: number;
 }
 
 export interface PullRequest {
@@ -1609,7 +1804,8 @@ export type ProposalEntityType =
   | "risk"
   | "outcome"
   | "decision"
-  | "doc_reference";
+  | "doc_reference"
+  | "doc_link";
 export type ProposalActionType = "create" | "update" | "resolve";
 
 export interface ProposalItem {
@@ -1673,11 +1869,25 @@ export interface Proposal {
   revision_note: string | null;
   /** resolved display name of the author */
   created_by: string | null;
+  /** The design doc the changes were derived from, as it stands now (§V9). */
+  source_doc_id?: number | null;
+  source_doc_version?: string | null;
+  source_doc?: ProposalSourceDoc | null;
+}
+
+export interface ProposalSourceDoc {
+  id: number;
+  title: string | null;
+  url: string;
+  provider: string;
+  current_version: string | null;
+  /** The doc moved on since the proposal read it. */
+  moved_on: boolean;
 }
 
 /** Display names for the ids a proposal's items mention: `{kind: {"<id>": name}}`. */
 export type ProposalLookups = Partial<
-  Record<"task" | "engineer" | "project" | "initiative" | "spec", Record<string, string>>
+  Record<"task" | "engineer" | "project" | "initiative" | "spec" | "doc", Record<string, string>>
 >;
 
 export interface ProposalDetail extends Proposal {
@@ -1762,6 +1972,7 @@ export interface PreviewCounts {
   outcomes_edited: number;
   decisions_added: number;
   docs_added: number;
+  docs_linked?: number;
 }
 
 export interface ProposalPreview {

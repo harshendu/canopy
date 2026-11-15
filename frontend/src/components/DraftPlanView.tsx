@@ -152,6 +152,13 @@ export default function DraftPlanView({ projectId, mayPlan: mayPlanProp }: { pro
                     <StatusBadge status={p.status} />
                   </div>
                   {p.source && <div className="mt-0.5 text-xs text-slate-400">{p.source}</div>}
+                  {p.source_doc_id != null && (
+                    <div className="mt-0.5 text-xs text-violet-600">
+                      drafted from a tracked design doc
+                      {p.source_doc_version ? ` (${p.source_doc_version})` : ""} — finalising links
+                      it to the tasks
+                    </div>
+                  )}
                 </button>
                 {selectedId === p.id && (
                   <DraftPlanDetailPanel

@@ -129,6 +129,19 @@ describe("connectorFields", () => {
     expect(providerOptions(catalog).map((o) => o.value)).toEqual(["jira", "linear", "generic", "github", "gdrive"]);
     expect(providerOptions(undefined).map((o) => o.label)).toEqual(["Jira", "GitHub", "Google Drive"]);
   });
+
+  it("offers the Claude artifact sync to admins only, with its own fields", () => {
+    expect(providerOptions(undefined).map((o) => o.value)).not.toContain("claude");
+    expect(providerOptions(undefined, { admin: true }).map((o) => o.value)).toEqual([
+      "jira",
+      "github",
+      "gdrive",
+      "claude",
+    ]);
+    expect(connectorFields("claude", null, { mirroring: false }).map((f) => f.key)).toEqual([
+      "api_version",
+    ]);
+  });
 });
 
 describe("buildConnectorConfig", () => {

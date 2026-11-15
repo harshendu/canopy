@@ -17,14 +17,21 @@ from app.connectors import get_connector
 from app.connectors.gdrive import GoogleDriveConnector
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
-from app.models.base import Provider
+from app.models.base import DocScope, Provider
+from app.models.doc import DocReference
 from app.models.integration import Connection
 from app.models.project import Milestone, Project, Task
 from app.models.team import Allocation, Engineer
 from app.models.user import User
 from app.schemas.entities import ExportToDriveRequest, ExportToDriveResult
-from app.services import export_csv, export_pdf, integration_policy
-from app.services.snapshot import InitiativeSnapshot, PortfolioSnapshot, ProjectSnapshot
+from app.services import design_docs, doc_graph, export_csv, export_pdf, integration_policy
+from app.services.doc_kinds import load_catalog, resolve_kind
+from app.services.snapshot import (
+    DocRow,
+    InitiativeSnapshot,
+    PortfolioSnapshot,
+    ProjectSnapshot,
+)
 
 router = APIRouter()
 
@@ -112,14 +119,43 @@ async def _project_snapshot(session: SessionDep, project_id: int) -> ProjectSnap
         milestones=milestones,
         decisions=decisions,
         engineer_names=engineer_names,
+        docs=await _doc_rows(session, await design_docs.docs_in_project(session, project_id)),
     )
+
+
+_STATUS_TEXT = {"in_review": "in review", None: "link"}
+
+
+async def _doc_rows(session: SessionDep, docs: list[DocReference]) -> list[DocRow]:
+    """Shared design docs for a snapshot — never personal ones, never archived ones (§V9)."""
+    catalog = await load_catalog(session)
+    rows = []
+    for doc in docs:
+        if doc.private_to_user_id is not None or doc.review_status == "archived":
+            continue
+        version = doc.current_version or ""
+        if doc.review_status == "approved" and doc.approved_version not in (None, version):
+            version = f"{doc.approved_version} approved, now {version}"
+        rows.append(DocRow(
+            title=doc.title or doc.url,
+            kind=resolve_kind(catalog, doc.kind).label,
+            status=_STATUS_TEXT.get(doc.review_status, doc.review_status or "link"),
+            version=version,
+            provider=doc.provider,
+            url=doc.url,
+        ))
+    rows.sort(key=lambda r: (r.kind, r.title))
+    return rows
 
 
 async def _initiative_snapshot(
     session: SessionDep, user: User, initiative_id: int
 ) -> InitiativeSnapshot:
     rollup = await initiative_rollup(session, user, initiative_id)
-    return InitiativeSnapshot(generated_at=datetime.now(UTC), rollup=rollup)
+    refs = await doc_graph.scope_refs(session, DocScope.initiative, initiative_id)
+    return InitiativeSnapshot(
+        generated_at=datetime.now(UTC), rollup=rollup, docs=await _doc_rows(session, refs)
+    )
 
 
 async def _portfolio_snapshot(session: SessionDep, user: User) -> PortfolioSnapshot:

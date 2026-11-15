@@ -11,7 +11,15 @@ from app.api.deps import ArchitectWriter, CurrentUser, FeatureGate, SessionDep
 from app.api.v1.projects import open_project_risk_counts, summarize_project
 from app.models.activity import ActivityEvent
 from app.models.architecture import ArchitectureDecision, DriftEvent
-from app.models.base import ADRStatus, ProjectHealth, StatusCategory, TaskType, utcnow
+from app.models.base import (
+    ADRStatus,
+    DocLinkEntity,
+    DocScope,
+    ProjectHealth,
+    StatusCategory,
+    TaskType,
+    utcnow,
+)
 from app.models.integration import TrackerBinding
 from app.models.leadership import InitiativeLead
 from app.models.org import Pod, Team
@@ -38,6 +46,7 @@ from app.schemas.entities import (
     ProjectSummary,
 )
 from app.schemas.leadership import InitiativeAccess, InitiativeLeadIn, InitiativeLeadRead
+from app.services import design_docs, doc_graph
 from app.services import digest as digest_service
 from app.services.access import (
     directed_team_ids,
@@ -231,6 +240,9 @@ async def delete_initiative(
     ).scalars().all()
     for project in projects:
         project.initiative_id = None
+    # Design docs: unlink the initiative; a doc homed here moves to another place it serves.
+    await design_docs.drop_links_to(session, DocLinkEntity.initiative, [initiative_id])
+    await design_docs.release_docs_homed_at(session, DocScope.initiative, [initiative_id])
     # Tracker bindings and links into it would sync into a missing initiative: they go too.
     await session.execute(
         sa_delete(TrackerBinding).where(
@@ -437,6 +449,9 @@ async def initiative_digest(
         open_blockers=open_blockers,
         at_risk_projects=at_risk,
         outcomes=[f"{o.statement} ({o.status})" for o in outcomes],
+        doc_attention=await doc_graph.doc_attention_messages(
+            session, DocScope.initiative, initiative_id
+        ),
     )
     attention = digest_service.attention_items(inputs)
     return InitiativeDigest(

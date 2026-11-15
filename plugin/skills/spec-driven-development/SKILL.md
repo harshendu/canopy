@@ -15,10 +15,12 @@ is **self-audited** (met / unmet / waived) against the implementation. See
 ## Workflow
 
 ### 1. Draft the spec from intent
-Gather the inputs: the PRD / design doc (via the document graph — `list_doc_references` for the
+Gather the inputs: the PRD / design doc (via the document graph — `list_design_docs` for the
 project, or a `source_url`), the governing decision (`list_adrs` → an `adr_id`), and the codebase
 context (`read_repo_file`). Then `create_spec(project_id, title, problem, context, out_of_scope,
-source_url, adr_id)`. Write `problem` as *what + why*, and use `out_of_scope` to bound it — a
+source_url, adr_id)`. **Link the PRD/design doc as the spec's basis** —
+`link_design_doc(doc_id, "spec", spec_id, "basis")` (register it first with the
+`tracking-design-docs` skill if it lives in Claude). Write `problem` as *what + why*, and use `out_of_scope` to bound it — a
 spec that doesn't say what it is *not* invites scope creep.
 
 ### 2. Write checkable acceptance criteria
@@ -28,12 +30,15 @@ project", not "it's fast". Put *how it will be checked* in `verification` (a tes
 function, a demo step). These criteria are the contract the agent self-audits against.
 
 ### 3. Review and approve
-Refine with the architect/PM. When the spec is ready to build, `set_spec_status(spec_id,
-"approved")`.
+Refine with the architect/PM. `get_spec` reports `docs_ready` (advisory): are its source docs
+approved? If not, say which (`docs_pending`) before approving. When the spec is ready to build,
+`set_spec_status(spec_id, "approved")` — approving **pins** each source doc to its current
+version, so a later edit to the PRD flags the spec for a re-check.
 
 ### 4. Plan and link the work
 Generate the tickets from the spec using the **`drafting-tickets`** skill (create a draft
-plan whose `source` references this spec, push to Jira, sync back), then link the resulting tasks
+plan whose `source` references this spec — and `source_doc_id` the PRD it came from — push to
+Jira, sync back), then link the resulting tasks
 to the spec with `link_task_to_spec(task_id, spec_id)`. Move the spec to `in_progress`. Keep
 batches small — a criterion that needs a 2,000-line change is a criterion that needs splitting.
 

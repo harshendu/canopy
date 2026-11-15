@@ -345,6 +345,8 @@ def stage_items(
             counts["decisions_added"] += 1
         elif entity == ProposalEntity.doc_reference:
             counts["docs_added"] += 1
+        elif entity == ProposalEntity.doc_link:
+            counts["docs_linked"] += 1
 
     plan.counts = PreviewCounts(**counts)
     return plan

@@ -14,6 +14,7 @@ from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, HumanOnly, PlannerWriter, SessionDep
 from app.core.events import publish
+from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
 from app.models.project import Project
 from app.schemas.entities import (
@@ -54,6 +55,19 @@ async def list_draft_plans(
     return list(rows.scalars().all())
 
 
+async def _check_source_doc(session: SessionDep, doc_id: int | None) -> None:
+    """A plan is shared work: its source must be a shared, tracked design doc (§V9)."""
+    if doc_id is None:
+        return
+    doc = await session.get(DocReference, doc_id)
+    if doc is None or doc.private_to_user_id is not None:
+        raise HTTPException(
+            status_code=422,  # (the starlette constant was renamed; keep the number)
+            detail={"code": "invalid_source_doc",
+                    "message": "The source doc must be a shared, tracked design doc."},
+        )
+
+
 @router.post(
     "/projects/{project_id}/draft-plans",
     response_model=DraftPlanRead,
@@ -65,6 +79,7 @@ async def create_draft_plan(
     if await session.get(Project, project_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     await ensure_project_editable(session, user, project_id)
+    await _check_source_doc(session, payload.source_doc_id)
     plan = DraftPlan(project_id=project_id, **payload.model_dump())
     session.add(plan)
     await session.commit()
@@ -91,7 +106,10 @@ async def update_draft_plan(
 ) -> DraftPlan:
     plan = await _get_plan(session, plan_id)
     await ensure_project_editable(session, user, plan.project_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.get("source_doc_id") is not None:
+        await _check_source_doc(session, changes["source_doc_id"])
+    for field, value in changes.items():
         setattr(plan, field, value)
     await session.commit()
     await session.refresh(plan)

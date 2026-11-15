@@ -24,6 +24,8 @@ class RetroInputs:
     adr_accepted: int = 0
     adr_superseded: int = 0
     outcomes: list[str] = field(default_factory=list)  # "statement — current/target unit (status)"
+    # design docs that moved on after they were approved: "Title (approved r12, now r14)" (§V9)
+    docs_changed_after_approval: list[str] = field(default_factory=list)
 
 
 def _churn_pct(superseded: int, total: int) -> int:
@@ -65,6 +67,13 @@ def generate_project_retro(inputs: RetroInputs) -> str:
         f"- Open drift events: {inputs.open_drift_events}.",
         f"- Decisions: {inputs.adr_accepted} accepted, {inputs.adr_superseded} superseded "
         f"of {inputs.adr_total} total (churn {churn}%).",
+        "",
+        "## Design docs that changed after approval",
+        *(
+            [f"- {d}" for d in inputs.docs_changed_after_approval]
+            if inputs.docs_changed_after_approval
+            else ["- _None — every approved design doc still matches what was signed off._"]
+        ),
         "",
         "## What went well",
         "- _Add notes…_",

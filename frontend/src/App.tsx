@@ -39,6 +39,7 @@ const BusinessReview = lazy(() => import("./pages/BusinessReview"));
 const TeamView = lazy(() => import("./pages/TeamView")); // board, sprints, charts — on demand
 // Configuration pages, rendered from the tracker catalog — on demand.
 const Connectors = lazy(() => import("./pages/Connectors"));
+const DocsLibrary = lazy(() => import("./pages/DocsLibrary"));
 const AdminIntegrations = lazy(() => import("./pages/AdminIntegrations"));
 
 function Loading() {
@@ -150,6 +151,14 @@ export default function App() {
         <Route path="/me" element={<MyWorkspace />} />
         <Route path="/me/today" element={<MyToday />} />
         <Route path="/decisions" element={<Decisions />} />
+        <Route
+          path="/docs"
+          element={
+            <Suspense fallback={<Loading />}>
+              <DocsLibrary />
+            </Suspense>
+          }
+        />
         <Route path="/admin/users" element={<AdminUsers />} />
         <Route path="/admin/features" element={<AdminFeatures />} />
         <Route
