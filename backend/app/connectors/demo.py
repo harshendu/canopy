@@ -394,11 +394,87 @@ def _handle_gdrive(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json={"files": []}, request=request)
 
 
+# --------------------------------------------------------------------------- #
+# Claude Compliance API (the organization artifact sync, USER_FLOWS §V11) — the list endpoint
+# only. Ids follow the tagged form (`cart_01<link id>`) of the seeded artifact links; the last
+# two are untracked, so they show up as their owners' suggestions.
+# --------------------------------------------------------------------------- #
+_CLAUDE_OWNERS = {
+    "rahul": "user_01DemoRahulVerma000001",
+    "lucia": "user_01DemoLuciaFerreira001",
+    "sarah": "user_01DemoSarahChen000001",
+    "leo": "user_01DemoLeoMartins00001",
+}
+
+
+def _claude_artifacts() -> list[dict[str, Any]]:
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC).replace(microsecond=0)
+
+    def ts(days: float) -> str:
+        return (now - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+
+    def row(
+        link_id: str, kind: str, read_mode: str, owner: str, days: float, title: str,
+        versions: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        listed = [
+            {"id": v, "created_at": ts(days + len(versions) - i - 1), "name": title}
+            for i, v in enumerate(versions)
+        ]
+        return {
+            "id": f"cart_01{link_id}",
+            "artifact_type": kind,
+            "organization_uuid": "00000000-0000-4000-8000-00000000d3e0",
+            "owner_user_id": _CLAUDE_OWNERS[owner],
+            "published_version_id": versions[-1] if versions else None,
+            "read_mode": read_mode,
+            "updated_at": ts(days),
+            "user": {"id": _CLAUDE_OWNERS[owner], "email_address": f"{owner}@shop.example.com"},
+            "versions": listed,
+        }
+
+    return [
+        row("Dm0CheckoutTechDesign1", "claude_docs", "org", "rahul", 1,
+            "One-page checkout: technical design"),
+        row("Dm0CheckoutPrototype01", "code", "org", "lucia", 6,
+            "One-page checkout prototype", ("v1", "v2", "v3")),
+        # republished since the guest-checkout decision was based on v2
+        row("Dm0GuestOptionsPage001", "code", "org", "sarah", 0.5,
+            "Guest checkout: options compared", ("v1", "v2", "v3")),
+        row("Dm0CheckoutThreatModel", "claude_docs", "users", "rahul", 20,
+            "Checkout threat model"),
+        row("Dm0LatencyNotesLeo0001", "claude_docs", "owner", "leo", 2,
+            "Notes: checkout latency experiments"),
+        row("Dm0ReturnsFlowSketch01", "code", "owner", "leo", 3,
+            "Returns flow sketch", ("v1",)),
+        row("Dm0SavedAddressesPrd01", "claude_docs", "org", "sarah", 4,
+            "Saved addresses: PRD"),
+    ]
+
+
+def _handle_claude(request: httpx.Request) -> httpx.Response:
+    if request.method.upper() != "GET" or request.url.path != "/v1/compliance/apps/code/artifacts":
+        return httpx.Response(404, json={"error": {"type": "not_found"}}, request=request)
+    rows = _claude_artifacts()
+    owners = request.url.params.get_list("user_ids[]")
+    if owners:
+        rows = [r for r in rows if r["owner_user_id"] in owners]
+    since = request.url.params.get("updated_at[gte]")
+    if since:
+        rows = [r for r in rows if r["updated_at"] >= since]
+    return httpx.Response(
+        200, json={"data": rows, "has_more": False, "next_page": None}, request=request
+    )
+
+
 _HANDLERS: dict[str, Callable[[httpx.Request], httpx.Response]] = {
     "linear": _handle_linear,
     "jira": _handle_jira,
     "github": _handle_github,
     "gdrive": _handle_gdrive,
+    "claude": _handle_claude,
 }
 
 

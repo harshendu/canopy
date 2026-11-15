@@ -23,7 +23,7 @@ export interface ConnectorField {
 }
 
 /** The providers whose fields are written by hand (every other tracker renders its schema). */
-export type BuiltinProvider = "jira" | "github" | "gdrive";
+export type BuiltinProvider = "jira" | "github" | "gdrive" | "claude";
 
 export const MIRROR_PROJECT_LABEL = "Mirror into canopy project (optional)";
 
@@ -65,18 +65,40 @@ export const CONNECTOR_FIELDS: Record<BuiltinProvider, ConnectorField[]> = {
     { key: "project_id", label: "canopy project", kind: "project" },
   ],
   gdrive: [{ key: "project_id", label: "canopy project", kind: "project" }],
+  // The organization artifact sync (USER_FLOWS §V11): the token is the Compliance API key.
+  claude: [
+    {
+      key: "api_version",
+      label: "API version (optional)",
+      kind: "text",
+      placeholder: "2026-10-21",
+      help: "The anthropic-version header. Organization ids to limit it to go in Advanced as organization_ids.",
+    },
+  ],
 };
+
+/** What the Claude artifacts connection does, shown next to its form. */
+export const CLAUDE_SYNC_HELP =
+  "Metadata only: canopy lists your organization's Claude artifacts through the Compliance API " +
+  "to keep the docs it already tracks current — published version, who can open them, whether " +
+  "they still exist. It never downloads content and never registers anything by itself.";
 
 const BUILTIN_OPTIONS: { value: string; label: string }[] = [
   { value: "github", label: "GitHub" },
   { value: "gdrive", label: "Google Drive" },
 ];
 
+/** Admin-only: the organization's Claude artifacts (the server refuses anyone else). */
+const ADMIN_OPTIONS: { value: string; label: string }[] = [
+  { value: "claude", label: "Claude artifacts (organization)" },
+];
+
 /** The provider picker: every tracker this instance enables — those canopy reads directly first
- *  (the usual pick), each group by label — then GitHub and Google Drive. Until the catalog loads
- *  (or on a server without one), Jira stands in. */
+ *  (the usual pick), each group by label — then GitHub and Google Drive, and for an admin the
+ *  Claude artifact sync. Until the catalog loads (or on a server without one), Jira stands in. */
 export function providerOptions(
   catalog: TrackerCatalog | null | undefined,
+  { admin = false }: { admin?: boolean } = {},
 ): { value: string; label: string }[] {
   const trackers = catalog
     ? catalog.trackers
@@ -88,7 +110,7 @@ export function providerOptions(
         )
         .map((t) => ({ value: t.provider, label: t.label || t.provider }))
     : [{ value: "jira", label: "Jira" }];
-  return [...trackers, ...BUILTIN_OPTIONS];
+  return [...trackers, ...BUILTIN_OPTIONS, ...(admin ? ADMIN_OPTIONS : [])];
 }
 
 function schemaKind(field: SchemaField): ConnectorFieldKind {
@@ -120,7 +142,9 @@ export function connectorFields(
   tracker: TrackerInfo | null,
   { mirroring }: { mirroring: boolean },
 ): ConnectorField[] {
-  if (provider === "github" || provider === "gdrive") return CONNECTOR_FIELDS[provider];
+  if (provider === "github" || provider === "gdrive" || provider === "claude") {
+    return CONNECTOR_FIELDS[provider];
+  }
   if (provider === "jira") {
     const label = tracker?.label || "Jira";
     return CONNECTOR_FIELDS.jira.map((f) => (f.kind === "project" ? mirrorField(label) : f));

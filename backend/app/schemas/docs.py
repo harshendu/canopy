@@ -43,6 +43,10 @@ class DocRegisterIn(BaseModel):
     track: bool = True  # start the review lifecycle at `draft` (false = a plain link)
     supersedes_id: int | None = None
     links: list[DocLinkSpecIn] = Field(default_factory=list, max_length=50)
+    # Register one of your own artifacts from the organization sync's suggestions (§V11): the
+    # artifact id it listed. canopy checks it is yours, records the pairing and applies the
+    # listed version and sharing.
+    source_artifact_id: str | None = Field(default=None, max_length=128)
 
     @field_validator("kind")
     @classmethod
@@ -192,3 +196,32 @@ class DocKindMergeIn(BaseModel):
 class DocKindMergeOut(BaseModel):
     merged: int
     into: str
+
+
+class DocArtifactSyncRead(BaseModel):
+    """Whether the organization artifact sync is on, and what its last run saw (counts only)."""
+
+    available: bool
+    connection_id: int | None = None
+    connection_name: str | None = None
+    last_sync: dict | None = None
+
+
+class DocSuggestionRead(BaseModel):
+    """One of your own Claude artifacts that no doc you can see tracks yet. Metadata from the
+    Compliance API listing — never content, never stored."""
+
+    artifact_id: str
+    artifact_type: str
+    title: str | None
+    format: str
+    read_mode: str
+    visibility: str
+    version: str | None
+    updated_at: datetime | None
+
+
+class DocSuggestionsRead(BaseModel):
+    available: bool
+    complete: bool = True  # false: the listing hit its page cap — the list may be partial
+    items: list[DocSuggestionRead] = Field(default_factory=list)

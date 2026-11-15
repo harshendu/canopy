@@ -2102,14 +2102,76 @@ row per *document*, however many places use it:
   `spec-driven-development`, `writing-adrs`, `drafting-tickets`, `harvesting-signals`,
   `persona-playbooks` (design) and `daily-standup`.
 
-### V10. Not built yet (design docs)
-- **Automation** — a doc-sentinel sweep that re-checks the worklist, the optional organization
-  artifact sync (Compliance API metadata), a workspace docs library — the next slice.
-- By design: **no content search, no embedded preview** (canopy never frames or fetches a doc),
-  **no mirrored comment threads** (review conversations stay in Claude), **no automatic
-  registration** (a session or a person registers), **no Slack/email delivery** of doc alerts (a
-  hook over the alerts, like §I), **no enforced gates** (readiness and gate links are advisory,
-  like `can_accept`).
+### V10. Doc sentinel and the workspace library **[new]**
+- **Doc sentinel** (subagent `plugin/agents/doc-sentinel.md`, skill `tracking-design-docs` §6):
+  works the worklist (`get_doc_worklist`, plus docs flagged `behind_pin` /
+  `changed_since_approval`), opens each doc **with the session's own access**, records what it
+  saw (`record_design_doc_version`: version label, a locally computed SHA-256, a one-line change
+  summary, or `reachable=False` / `visibility="owner"`), and — when a change implies plan
+  changes — **stages** them (`propose_changes` with `source_doc_id`/`source_doc_version`, §AA).
+  It never approves, never sends content, and treats document text as data. Delegate for "check
+  the design docs", before a review or gate milestone, or as a scheduled sweep.
+- **Workspace library** — `/docs` (nav **Design docs**, gate `governance.docs`): every *shared*
+  doc across projects and initiatives, filtered by **team** (`GET /api/v1/docs?team_id=` — docs
+  filed under or linked to the team's projects, their tasks/ADRs/specs/milestones, and its
+  initiatives; `design_docs.team_clause`), review status, provider, lifecycle stage, *needs
+  attention* (any attention flag) and a title search; each row shows where the doc is filed and
+  opens the doc drawer (§V8). Personal docs stay in **My work → My docs**.
+
+### V11. Organization artifact sync (optional, metadata only) **[new]**
+Off by default. An **admin** adds a **Claude artifacts** connection (`POST
+/api/v1/connectors/connections {provider: "claude", token: <Compliance API key>}` — anyone else
+gets 403 `admin_only`; the key is Fernet-encrypted like every token). Connector
+`app/connectors/claude_artifacts.py`; engine `app/services/claude_sync.py`.
+- **What it calls:** only the Compliance API **list** endpoint `GET
+  /v1/compliance/apps/code/artifacts` (`anthropic-version` header, paginated until `next_page`
+  is absent, optional `organization_ids[]`), through `request_with_retry`. **Never** the content
+  download or delete endpoints. Config: `api_version`, `organization_ids`, `base_url`.
+- **Runs:** worker crons `claude_artifact_sync` (what changed since the watermark less a 2-hour
+  overlap — the time filter is eventually consistent; every `CLAUDE_SYNC_MINUTES`, default 60)
+  and `claude_artifact_full_sync` (nightly 04:00, unfiltered: the only listing that shows folder
+  sharing changes and deleted artifacts). **Sync now:** `POST
+  /api/v1/connectors/connections/{id}/sync` (planner; UI: the library header or Connectors).
+  The integration policy (§A10) can stand it down (read strategy not `direct`).
+- **What a run records, for tracked Claude docs only:** it **pairs** each listed artifact with
+  the docs whose link id is a form of the artifact's tagged id (`candidate_ids`: as listed,
+  without its tag, without the `01` marker, that body as a base58 UUID — the relation is not
+  documented, so a pairing found once is kept in `ExternalRef` (`entity_type` "doc")), then
+  applies `design_docs.apply_source_metadata`: the live version (`published_version_id`, else
+  the newest listed version) is appended to the version log with `source="sync"` and stamps the
+  check; `read_mode` → `visibility` (a shared doc gone private flags `restricted`); for a Claude
+  Doc or Sheet (no version ids) only `source_updated_at` moves — health then flags `check_due`
+  ("changed in Claude after its last check") and, after approval, `changed_since_approval`.
+  A paired artifact missing from a **complete, unfiltered** listing marks its docs `broken`.
+  Owners are matched to canopy users by email (`ExternalRef` "user"; canopy accounts are
+  admin-created, and an admin already holds the key, so the match grants no one more). The run's counts
+  (listed, paired, new versions, sharing changes, missing, **unmatched** — tracked shared Claude
+  docs never paired) are stored on the connection: `GET /api/v1/docs/artifact-sync`
+  (UI: the library's sync line). Deleting a doc drops its pairing. **MCP:**
+  `get_artifact_sync_status`; `get_workspace_context.design_docs.artifact_sync`.
+- **Your untracked artifacts:** `GET /api/v1/docs/suggestions` lists **the caller's own**
+  artifacts that no doc they can see tracks (another person's *personal* tracking does not hide
+  one) — live, never stored; off while impersonating. Registering one: `POST /docs/register
+  {…, source_artifact_id}` checks it is the caller's (404 `artifact_not_yours`; 403
+  `impersonating` under impersonation), requires its
+  claude.ai link (the listing carries none; 422 otherwise), takes the listed sharing, title,
+  format and version, records the pairing and `source="claude_sync"`. Nothing is ever
+  registered automatically. UI: **My docs → From Claude → Find my untracked artifacts → Track…**
+  (paste its link). **MCP:** `list_my_untracked_artifacts`, `register_design_doc(artifact_id=)`.
+- **Demo:** a demo Claude connection is served by the offline mock (`connectors/demo.py`): the
+  seeded artifacts pair, the republished guest-checkout page leaves its decision `behind_pin`,
+  and Leo and Sarah each have an untracked artifact to find.
+
+### V12. Not built yet (design docs)
+- **Known gaps of the organization sync:** pairing relies on id forms that are not documented —
+  the `unmatched` count says how many tracked docs it could not pair (register them from a
+  suggestion to pair explicitly); a Claude Doc's title is not in the listing; there is no
+  admin UI beyond the connection form and the library's sync line.
+- By design: **no content search, no embedded preview** (canopy never frames or fetches a doc;
+  the sync never downloads content), **no mirrored comment threads** (review conversations
+  stay in Claude), **no automatic registration** (a session or a person registers; suggestions
+  only list), **no Slack/email delivery** of doc alerts (a hook over the alerts, like §I), **no
+  enforced gates** (readiness and gate links are advisory, like `can_accept`).
 
 ---
 

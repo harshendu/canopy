@@ -1928,6 +1928,8 @@ class DocReferenceRead(BaseModel):
     supersedes_id: int | None = None
     created_by_user_id: int | None = None
     updated_at: datetime | None = None
+    # when the source last changed, per the organization artifact sync (§V11)
+    source_updated_at: datetime | None = None
 
 
 class DocCoverageKind(BaseModel):

@@ -295,7 +295,8 @@ def register(mcp, client) -> None:
         - `open_proposals`: staged changes already awaiting review (don't duplicate them —
           `revise_proposal` an open one instead of staging a near-copy).
         - `design_docs.checks_due`: tracked design docs a session should open and re-check
-          (`get_doc_worklist`; skill `tracking-design-docs`).
+          (`get_doc_worklist`; skill `tracking-design-docs`). `design_docs.artifact_sync`:
+          whether the organization artifact sync keeps versions/sharing current server-side.
         - `dashboard_url` / `reviews_url`: where to send the user to look and to commit.
         """
         context: dict = {
@@ -355,6 +356,11 @@ def register(mcp, client) -> None:
                     for d in worklist.get("docs", [])
                 ],
             }
+            try:
+                sync = await client.get("/docs/artifact-sync")
+                context["design_docs"]["artifact_sync"] = bool(sync.get("available"))
+            except httpx.HTTPStatusError:  # an older backend without the sync
+                context["design_docs"]["artifact_sync"] = False
         except httpx.HTTPStatusError:
             context["design_docs"] = None  # governance.docs gated off (or an older backend)
         try:

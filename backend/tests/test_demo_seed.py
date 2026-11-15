@@ -52,7 +52,7 @@ async def test_seed_loader_builds_a_full_coherent_dataset(db_session):
     assert counts["blockers"] >= 5
     assert counts["scenarios"] == 5  # one rich what-if per initiative
     assert counts["status_history"] > 0
-    assert counts["connections"] == 3
+    assert counts["connections"] == 4  # jira, github, gdrive + the Claude artifact sync
     assert counts["proposals"] == 2  # open change proposals awaiting review
 
 
@@ -253,6 +253,22 @@ async def test_demo_jira_sync_uses_offline_mock(client, db_session, monkeypatch)
     )
     assert pulls.status_code == 200
     assert len(pulls.json()) >= 1
+
+    # The Claude artifact sync (USER_FLOWS §V11) lists the demo organization offline: the
+    # seeded artifacts pair, and the republished guest-checkout page leaves its decision behind.
+    claude = next(c for c in conns if c["provider"] == "claude")
+    synced = await client.post(
+        f"/api/v1/connectors/connections/{claude['id']}/sync", headers=admin
+    )
+    assert synced.status_code == 200, synced.text
+    status = (await client.get("/api/v1/docs/artifact-sync", headers=admin)).json()
+    last = status["last_sync"]
+    assert last["paired"] >= 4 and last["new_versions"] >= 1 and last["missing"] == 0
+    docs = (await client.get("/api/v1/docs", params={"provider": "claude"},
+                             headers=admin)).json()
+    guest = next(d for d in docs if d["title"] == "Guest checkout: options compared")
+    assert guest["current_version"] == "v3"
+    assert "behind_pin" in {f["flag"] for f in guest["health"]}
 
 
 def _check_references(ds: Dataset) -> None:

@@ -2,9 +2,18 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { DesignDoc, DocRegisterResult, DocVisibility, Project } from "../api/types";
+import type {
+  ArtifactSuggestion,
+  ArtifactSuggestions,
+  ArtifactSyncStatus,
+  DesignDoc,
+  DocRegisterResult,
+  DocVisibility,
+  Project,
+} from "../api/types";
 import {
   VISIBILITY_LABEL,
+  artifactTypeLabel,
   classifyUrl,
   docErrorMessage,
   docTitle,
@@ -12,6 +21,7 @@ import {
   isSharedVisibility,
   providerLabel,
   slugify,
+  suggestionTitle,
 } from "../lib/docs";
 import { useCurrentUser } from "../lib/useCurrentUser";
 
@@ -75,6 +85,7 @@ export default function MyDocs() {
           <option value="drive">Google Drive</option>
         </select>
       </label>
+      <ClaudeSuggestions onTracked={invalidate} />
       {items.length === 0 ? (
         <p className="text-sm text-slate-400">
           Nothing tracked privately. Claude sessions can add docs here as you work.
@@ -242,5 +253,127 @@ function PromoteForm({ doc, onDone }: { doc: DesignDoc; onDone: () => void }) {
       </div>
       {promote.isError && <p className="text-red-600">{docErrorMessage(promote.error)}</p>}
     </div>
+  );
+}
+
+/** Your own Claude artifacts nobody tracks yet (USER_FLOWS §V11) — only when an admin turned on
+ *  the organization artifact sync. Listed live on request (metadata only, never stored); nothing
+ *  is tracked until you pick it and paste its link. */
+function ClaudeSuggestions({ onTracked }: { onTracked: () => void }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [tracking, setTracking] = useState<string | null>(null);
+  // own query roots: a `docs` event must not re-list the organization
+  const status = useQuery({
+    queryKey: ["artifact-sync"],
+    queryFn: () => api.get<ArtifactSyncStatus>("/docs/artifact-sync"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const suggestions = useQuery({
+    queryKey: ["artifact-suggestions"],
+    queryFn: () => api.get<ArtifactSuggestions>("/docs/suggestions"),
+    enabled: open,
+    staleTime: 60 * 1000,
+  });
+  if (!status.data?.available) return null;
+  const items = suggestions.data?.items ?? [];
+  return (
+    <div className="mb-3 rounded border border-slate-200 bg-slate-50 p-2 text-xs">
+      <div className="flex items-center justify-between">
+        <span className="font-medium text-slate-600">From Claude</span>
+        <button onClick={() => setOpen((v) => !v)} className="text-canopy-700 hover:underline">
+          {open ? "Hide" : "Find my untracked artifacts"}
+        </button>
+      </div>
+      {open && (
+        <div className="mt-2 space-y-1">
+          {suggestions.isLoading && <p className="text-slate-400">Listing your artifacts…</p>}
+          {suggestions.isError && <p className="text-red-600">{docErrorMessage(suggestions.error)}</p>}
+          {suggestions.data && items.length === 0 && (
+            <p className="text-slate-400">Every artifact of yours is tracked already.</p>
+          )}
+          {suggestions.data && !suggestions.data.complete && (
+            <p className="text-amber-700">The list was cut short — some artifacts may be missing.</p>
+          )}
+          <ul className="space-y-1">
+            {items.map((a) => (
+              <li key={a.artifact_id} className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="max-w-[16rem] truncate text-slate-700">{suggestionTitle(a)}</span>
+                  <span className="rounded bg-white px-1 py-0.5 text-[10px] text-slate-500">
+                    {artifactTypeLabel(a.artifact_type)} · {VISIBILITY_LABEL[a.visibility as DocVisibility] ?? a.visibility}
+                    {a.updated_at && <> · edited {a.updated_at.slice(0, 10)}</>}
+                  </span>
+                  <button
+                    onClick={() => setTracking(tracking === a.artifact_id ? null : a.artifact_id)}
+                    className="ml-auto text-canopy-700 hover:underline"
+                  >
+                    {tracking === a.artifact_id ? "Cancel" : "Track…"}
+                  </button>
+                </div>
+                {tracking === a.artifact_id && (
+                  <TrackSuggestion
+                    artifact={a}
+                    onDone={() => {
+                      setTracking(null);
+                      void qc.invalidateQueries({ queryKey: ["artifact-suggestions"] });
+                      onTracked();
+                    }}
+                  />
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrackSuggestion({ artifact, onDone }: { artifact: ArtifactSuggestion; onDone: () => void }) {
+  const [url, setUrl] = useState("");
+  const [kind, setKind] = useState(artifact.artifact_type === "claude_docs" ? "design" : "other");
+  const hint = url.trim() ? classifyUrl(url) : null;
+  const isClaude = hint?.provider === "claude" && hint.https;
+  const track = useMutation({
+    mutationFn: () =>
+      api.post<DocRegisterResult>("/docs/register", {
+        url: url.trim(),
+        kind: slugify(kind),
+        personal: true,
+        source_artifact_id: artifact.artifact_id,
+      }),
+    onSuccess: onDone,
+  });
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (isClaude) track.mutate();
+      }}
+      className="ml-2 flex flex-wrap items-center gap-2"
+    >
+      <input
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder="Its link (Share → Copy link)"
+        className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1"
+        aria-label="Artifact link"
+      />
+      <input
+        value={kind}
+        onChange={(e) => setKind(e.target.value)}
+        className="w-24 rounded border border-slate-300 px-2 py-1"
+        aria-label="Kind"
+      />
+      <button
+        disabled={!isClaude || track.isPending}
+        className="rounded bg-canopy-500 px-2 py-1 font-medium text-white disabled:opacity-50"
+      >
+        Track
+      </button>
+      {url.trim() !== "" && !isClaude && <p className="w-full text-slate-500">Paste its claude.ai link.</p>}
+      {track.isError && <p className="w-full text-red-600">{docErrorMessage(track.error)}</p>}
+    </form>
   );
 }

@@ -4,9 +4,11 @@ Computed from a doc, its links and the dates/status of what its gate links point
 stored. Two families (USER_FLOWS §V8):
 
 * **check flags** — `unverified` (a Claude doc no session has opened since it was registered)
-  and `check_due` (a tracked doc not re-checked within `DOC_CHECK_DAYS`). They feed the
+  and `check_due` (a tracked doc not re-checked within `DOC_CHECK_DAYS`, or — with the
+  organization artifact sync on — edited in Claude after its last check). They feed the
   sentinel's worklist and the session orientation, not the alerts.
-* **attention flags** — `changed_since_approval`, `behind_pin` (a basis link pinned an older
+* **attention flags** — `changed_since_approval` (a newer version than the approved one, or
+  for a Claude Doc the sync saw an edit after approval), `behind_pin` (a basis link pinned an older
   version), `gate_open` (work that should wait for approval is close), `restricted` (a shared
   Claude doc was made private) and `broken` (a check could not open it). They feed the project
   alerts, the initiative digest and the coverage `needs_attention` count.
@@ -41,6 +43,9 @@ class HealthDoc:
     last_checked_at: datetime | None
     link_health: str
     created_at: datetime | None = None
+    # when the source last changed (the organization artifact sync; Claude Docs and Sheets)
+    source_updated_at: datetime | None = None
+    approved_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +101,16 @@ def doc_health(
     elif (
         tracked
         and doc.last_checked_at is not None
+        and doc.source_updated_at is not None
+        and doc.source_updated_at > doc.last_checked_at
+    ):
+        flags.append(HealthFlag(
+            "check_due", "info",
+            f"Design doc {_name(doc)} changed in Claude after its last check.",
+        ))
+    elif (
+        tracked
+        and doc.last_checked_at is not None
         and now - doc.last_checked_at > timedelta(days=check_days)
     ):
         days = (now - doc.last_checked_at).days
@@ -122,6 +137,17 @@ def doc_health(
             "changed_since_approval", "warning",
             f"Design doc {_name(doc)} changed after approval ({doc.approved_version} → "
             f"{doc.current_version}).",
+        ))
+    elif (
+        doc.review_status == "approved"
+        and doc.approved_at is not None
+        and doc.source_updated_at is not None
+        and doc.source_updated_at > doc.approved_at
+    ):
+        flags.append(HealthFlag(
+            "changed_since_approval", "warning",
+            f"Design doc {_name(doc)} was edited in Claude after it was approved "
+            f"({doc.approved_at.date()}).",
         ))
     for link in links:
         if (

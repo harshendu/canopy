@@ -4,6 +4,8 @@
 
 import { ApiError } from "../api/client";
 import type {
+  ArtifactSuggestion,
+  ArtifactSyncReport,
   DesignDoc,
   DocHealthFlag,
   DocHealthFlagName,
@@ -357,4 +359,45 @@ export function healthChips(flags: DocHealthFlag[] | undefined): DocHealthFlag[]
 /** A short form of a content hash for the version timeline. */
 export function shortHash(hash: string | null): string {
   return hash ? hash.slice(0, 8) : "";
+}
+
+// --- the organization artifact sync (USER_FLOWS §V11) ------------------------------------
+
+export const ARTIFACT_TYPE_LABEL: Record<string, string> = {
+  claude_docs: "Claude Doc",
+  code: "Page",
+  claude_slides: "Slides",
+  claude_design: "Design",
+  claude_design_systems: "Design system",
+  claude_sheets: "Sheet",
+  claude_dashboards: "Dashboard",
+  claude_motion: "Motion",
+  other: "Artifact",
+};
+
+export function artifactTypeLabel(type: string): string {
+  return ARTIFACT_TYPE_LABEL[type] ?? "Artifact";
+}
+
+/** A suggestion's name: the listing has no title for a Claude Doc or Sheet. */
+export function suggestionTitle(s: Pick<ArtifactSuggestion, "title" | "artifact_type">): string {
+  return s.title?.trim() || `Untitled ${artifactTypeLabel(s.artifact_type).toLowerCase()}`;
+}
+
+/** Who recorded a version, for the timeline (`DocRevision.source`). */
+export function revisionSourceLabel(source: string): string | null {
+  if (source === "sync") return "org sync";
+  if (source === "review") return "put up for review";
+  return null; // a session, the UI or registration: the default, not worth a label
+}
+
+/** One line on the sync's last run, counts only. */
+export function syncSummary(report: ArtifactSyncReport): string {
+  const parts = [`${report.paired} tracked ${report.paired === 1 ? "doc" : "docs"} seen`];
+  if (report.new_versions) parts.push(`${report.new_versions} new ${report.new_versions === 1 ? "version" : "versions"}`);
+  if (report.sharing_changed) parts.push(`${report.sharing_changed} sharing ${report.sharing_changed === 1 ? "change" : "changes"}`);
+  if (report.missing) parts.push(`${report.missing} no longer found`);
+  if (report.unmatched) parts.push(`${report.unmatched} not matched to an artifact`);
+  const scope = report.full ? (report.complete ? "full listing" : "partial listing") : "changes only";
+  return `${parts.join(" · ")} (${scope}, ${report.ran_at.slice(0, 16).replace("T", " ")} UTC)`;
 }

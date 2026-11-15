@@ -10,6 +10,7 @@ everyone else, including an impersonating admin.
 
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Response, status
 
 from app.api.deps import (
@@ -36,6 +37,7 @@ from app.models.user import User
 from app.schemas.docs import (
     DesignDocDetail,
     DesignDocRead,
+    DocArtifactSyncRead,
     DocKindMergeIn,
     DocKindMergeOut,
     DocKindRead,
@@ -50,6 +52,8 @@ from app.schemas.docs import (
     DocRevisionIn,
     DocRevisionOut,
     DocRevisionRead,
+    DocSuggestionRead,
+    DocSuggestionsRead,
     DocWorklistRead,
     EntityDocRead,
 )
@@ -59,7 +63,7 @@ from app.schemas.entities import (
     DocReferenceRead,
     DocReferenceUpdate,
 )
-from app.services import design_docs, doc_graph, doc_kinds, doc_views
+from app.services import claude_sync, design_docs, doc_graph, doc_kinds, doc_views
 from app.services.design_docs import DocError, DocQuery, LinkSpec, RegisterInput
 from app.services.doc_health import needs_check
 
@@ -100,9 +104,11 @@ async def list_docs(
     personal: bool | None = None,
     entity_type: DocLinkEntity | None = None,
     entity_id: int | None = None,
+    team_id: int | None = None,
 ) -> list[DesignDocRead]:
     """Docs the caller may see, newest first. A scope filter returns docs homed there *and*
-    docs linked to that same entity. `review_status=untracked` lists plain links."""
+    docs linked to that same entity. `review_status=untracked` lists plain links. `team_id`
+    keeps the docs bearing on a team's projects and initiatives (the `/docs` library)."""
     stage_kinds: list[str] | None = None
     if stage is not None:
         catalog = await doc_kinds.load_catalog(session)
@@ -120,6 +126,7 @@ async def list_docs(
             entity_type=entity_type,
             entity_id=entity_id,
             stage_kinds=stage_kinds,
+            team_id=team_id,
         ),
         impersonator,
     )
@@ -162,6 +169,7 @@ async def create_doc(
 async def register_doc(
     session: SessionDep,
     user: CurrentUser,
+    impersonator: Impersonator,
     scope: TokenScopeDep,
     payload: DocRegisterIn,
     response: Response,
@@ -187,8 +195,46 @@ async def register_doc(
         links=[LinkSpec(s.entity_type, s.entity_id, s.relation) for s in payload.links],
     )
     source = DocSource.agent if scope == TokenScope.agent else DocSource.manual
+    artifact = None
+    connection = None
+    if payload.source_artifact_id:
+        if impersonator is not None:  # the artifact would be someone else's
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": "impersonating",
+                        "message": "Register your own artifacts as yourself."},
+            )
+        connection = await claude_sync.active_connection(session)
+        if connection is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "artifact_sync_off",
+                        "message": "The organization artifact sync is not configured."},
+            )
+        try:
+            artifact = await claude_sync.find_own_artifact(
+                session, user, claude_sync.connector_for(connection, session),
+                payload.source_artifact_id,
+            )
+        except DocError as exc:
+            raise _http(exc) from exc
+        except httpx.HTTPError as exc:
+            raise _sync_failed(exc) from exc
+        # The listing is the fresher word on sharing, medium, title and version.
+        data.visibility = claude_sync.visibility_for(artifact.read_mode)
+        data.format = data.format or claude_sync.TYPE_FORMATS.get(artifact.artifact_type)
+        data.title = data.title or artifact.title
+        data.version = data.version or artifact.version_label
+        source = DocSource.claude_sync
     try:
+        if artifact is not None and design_docs.classify(data.url).provider != DocProvider.claude:
+            raise DocError(
+                422, "not_a_claude_link",
+                "A suggested artifact is registered with its claude.ai link.",
+            )
         result = await design_docs.register(session, user, data, source=source)
+        if artifact is not None and connection is not None:
+            await claude_sync.pair(session, result.doc, artifact, connection.id)
     except DocError as exc:
         raise _http(exc) from exc
     await session.commit()
@@ -358,6 +404,69 @@ async def doc_worklist(
     due.sort(key=lambda d: (d.last_checked_at is not None, d.last_checked_at or d.created_at))
     reads = await doc_views.design_doc_reads(session, due[: max(1, min(limit, 200))])
     return DocWorklistRead(total=len(due), docs=reads)
+
+
+# --- the organization artifact sync (USER_FLOWS §V11) ------------------------------------
+
+
+def _sync_failed(exc: httpx.HTTPError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail={
+            "code": "artifact_sync_failed",
+            "message": f"The Claude Compliance API did not answer: {type(exc).__name__}",
+        },
+    )
+
+
+@router.get("/docs/artifact-sync", response_model=DocArtifactSyncRead)
+async def artifact_sync_status(session: SessionDep, _: CurrentUser) -> DocArtifactSyncRead:
+    """Whether the organization artifact sync is configured, and its last run's counts."""
+    connection = await claude_sync.active_connection(session)
+    if connection is None:
+        return DocArtifactSyncRead(available=False)
+    last = (connection.config or {}).get("last_sync")
+    return DocArtifactSyncRead(
+        available=True,
+        connection_id=connection.id,
+        connection_name=connection.name,
+        last_sync=last if isinstance(last, dict) else None,
+    )
+
+
+@router.get("/docs/suggestions", response_model=DocSuggestionsRead)
+async def artifact_suggestions(
+    session: SessionDep, user: CurrentUser, impersonator: Impersonator
+) -> DocSuggestionsRead:
+    """Your own Claude artifacts that no doc you can see tracks yet — listed live from the
+    organization's Compliance API (metadata only), never stored, never registered for you.
+    Not available while impersonating: it would list someone else's artifacts."""
+    connection = await claude_sync.active_connection(session)
+    if connection is None or impersonator is not None:
+        return DocSuggestionsRead(available=False)
+    try:
+        listing = await claude_sync.suggestions_for(
+            session, user, claude_sync.connector_for(connection, session)
+        )
+    except httpx.HTTPError as exc:
+        raise _sync_failed(exc) from exc
+    return DocSuggestionsRead(
+        available=True,
+        complete=listing.complete,
+        items=[
+            DocSuggestionRead(
+                artifact_id=a.id,
+                artifact_type=a.artifact_type,
+                title=a.title,
+                format=claude_sync.TYPE_FORMATS.get(a.artifact_type, "other"),
+                read_mode=a.read_mode,
+                visibility=claude_sync.visibility_for(a.read_mode).value,
+                version=a.version_label,
+                updated_at=a.updated_at,
+            )
+            for a in listing.items
+        ],
+    )
 
 
 # --- one doc -----------------------------------------------------------------------------

@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     # days; a gate link turns into an alert this many days before its milestone.
     DOC_CHECK_DAYS: int = 14
     DOC_GATE_WINDOW_DAYS: int = 14
+    # The optional organization artifact sync (a `claude` connection, USER_FLOWS §V11): how
+    # often the worker lists what changed. A full listing (sharing changes, deletions) runs
+    # nightly regardless.
+    CLAUDE_SYNC_MINUTES: int = 60
 
     # --- Work tracking ---
     # Delivery method given to newly created teams (kanban | sprint | both). Projects outside

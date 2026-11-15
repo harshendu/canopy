@@ -17,6 +17,7 @@ import {
   healthTone,
   humanize,
   providerLabel,
+  revisionSourceLabel,
   shortHash,
   statusLabel,
   versionLabel,
@@ -190,6 +191,9 @@ export default function DocDetailPanel({
                         <span className="ml-1 rounded bg-emerald-100 px-1 text-emerald-700">approved</span>
                       )}
                       <span className="ml-2 text-slate-400">{r.created_at.slice(0, 10)}</span>
+                      {revisionSourceLabel(r.source) && (
+                        <span className="ml-2 text-slate-400">· {revisionSourceLabel(r.source)}</span>
+                      )}
                       {r.content_hash && (
                         <span className="ml-2 font-mono text-slate-400" title={r.content_hash}>
                           {shortHash(r.content_hash)}
@@ -207,6 +211,7 @@ export default function DocDetailPanel({
               )}
               <p className="mt-1 text-[11px] text-slate-400">
                 Last checked {doc.last_checked_at ? doc.last_checked_at.slice(0, 10) : "never"}.
+                {doc.source_updated_at && <> Edited in Claude {doc.source_updated_at.slice(0, 10)} (org sync).</>}
               </p>
             </section>
 

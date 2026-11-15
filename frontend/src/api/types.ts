@@ -1441,6 +1441,8 @@ export interface DocReference {
   supersedes_id?: number | null;
   created_by_user_id?: number | null;
   updated_at?: string | null;
+  /** When the source last changed, per the organization artifact sync (§V11). */
+  source_updated_at?: string | null;
 }
 
 export interface DocLink {
@@ -1519,6 +1521,47 @@ export interface EntityDoc {
 export interface DocRegisterResult {
   doc: DesignDoc;
   created: boolean;
+}
+
+/** Counts from the organization artifact sync's last run (USER_FLOWS §V11). */
+export interface ArtifactSyncReport {
+  full: boolean;
+  complete: boolean;
+  listed: number;
+  paired: number;
+  newly_paired: number;
+  updated: number;
+  new_versions: number;
+  sharing_changed: number;
+  missing: number;
+  unmatched: number | null;
+  identities: number;
+  ran_at: string;
+}
+
+export interface ArtifactSyncStatus {
+  available: boolean;
+  connection_id?: number | null;
+  connection_name?: string | null;
+  last_sync?: ArtifactSyncReport | null;
+}
+
+/** One of your own Claude artifacts no doc you can see tracks yet — metadata, listed live. */
+export interface ArtifactSuggestion {
+  artifact_id: string;
+  artifact_type: string;
+  title: string | null;
+  format: string;
+  read_mode: string;
+  visibility: string;
+  version: string | null;
+  updated_at: string | null;
+}
+
+export interface ArtifactSuggestions {
+  available: boolean;
+  complete: boolean;
+  items: ArtifactSuggestion[];
 }
 
 export interface DocKindDef {

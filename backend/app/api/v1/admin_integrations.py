@@ -27,16 +27,16 @@ async def list_integration_settings(
         c.provider for c in (await session.execute(select(Connection))).scalars().all()
     }
     # Synthesize the default (direct/direct) for any provider without a stored row. Trackers
-    # are listed when this instance enables them (TRACKERS_ENABLED) or has a connection to one.
+    # are listed when this instance enables them (TRACKERS_ENABLED) or has a connection to one;
+    # the Claude artifact sync (opt-in, §V11) once a connection to it exists.
     return [
         IntegrationSettingRead.model_validate(
             by_provider.get(provider) or IntegrationSetting(provider=provider)
         )
         for provider in Provider
-        if not is_tracker(provider)
-        or tracker_enabled(provider)
-        or provider in in_use
+        if provider in in_use
         or provider in by_provider
+        or (provider != Provider.claude and (not is_tracker(provider) or tracker_enabled(provider)))
     ]
 
 

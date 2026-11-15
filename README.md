@@ -172,11 +172,12 @@ to a tracker from its **Tracking** tab (or by picking it when adding the connect
 ## Claude Code plugin
 
 The [`plugin/`](plugin) directory is a [Claude Code](https://claude.com/claude-code) plugin: an MCP
-server with **140+ curated tools** (one per architect intent, not a mirror of the REST API), **16
+server with **150+ curated tools** (one per architect intent, not a mirror of the REST API), **17
 skills** (runbooks such as `planning-roadmaps`, `writing-adrs`, `syncing-trackers`,
-`working-the-board`, `spec-driven-development` and `updating-canopy`, the session operating
-guide) and **7 subagents** (`gantt-planner`, `tracker-sync`, `risk-analyst`, `drift-sentinel`,
-`scenario-architect`, `delivery-enricher`, `signal-harvester`).
+`working-the-board`, `spec-driven-development`, `tracking-design-docs` and `updating-canopy`,
+the session operating guide) and **8 subagents** (`gantt-planner`, `tracker-sync`,
+`risk-analyst`, `drift-sentinel`, `scenario-architect`, `delivery-enricher`,
+`signal-harvester`, `doc-sentinel`).
 
 **1. Mint a token.** In the dashboard, open **Agent Setup** (`/agent-setup`) and generate an *agent
 token*. It acts with your permissions, minus one-way-door actions, and can be revoked at any time.

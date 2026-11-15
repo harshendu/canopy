@@ -550,6 +550,8 @@ def demo_connections(flagship_project_id: int) -> list[DemoConnection]:
         DemoConnection("gdrive", "Google Drive — Shop docs", {
             "demo": True, "folder_id": "demo-folder",
         }),
+        # The organization artifact sync (USER_FLOWS §V11) over the offline Compliance API mock.
+        DemoConnection("claude", "Claude artifacts — shop.example.com", {"demo": True}),
     ]
 
 

@@ -126,6 +126,7 @@ def register(mcp, client) -> None:
         content_hash: str | None = None,
         supersedes_id: int | None = None,
         track: bool = True,
+        artifact_id: str | None = None,
     ) -> dict:
         """Track a design doc — a Claude Doc, an artifact (page, prototype, diagram, image
         page), or any other doc — in canopy, right after it is published for tracked work.
@@ -150,6 +151,10 @@ def register(mcp, client) -> None:
           risk | retro | component; relation basis (pins the version) | gate | reference.
         - `content`: optional exported text to hash locally; only the SHA-256 is sent.
         - `track`: start the review lifecycle at draft (false = a plain link).
+        - `artifact_id`: when registering one of the user's own artifacts from
+          `list_my_untracked_artifacts`, its `artifact_id` — canopy checks it is theirs, pairs
+          the doc with it for the organization sync, and takes the listed sharing, title and
+          version (404 `artifact_not_yours` otherwise).
         """
         body: dict = {
             "url": url,
@@ -166,6 +171,7 @@ def register(mcp, client) -> None:
             "content_hash": content_hash or _digest(content),
             "supersedes_id": supersedes_id,
             "track": track,
+            "source_artifact_id": artifact_id,
         }
         return await client.post("/docs/register", body)
 
@@ -292,6 +298,27 @@ def register(mcp, client) -> None:
         if project_id is not None:
             params["project_id"] = project_id
         return await client.get("/docs/worklist", params=params)
+
+    @mcp.tool
+    async def list_my_untracked_artifacts() -> dict:
+        """The user's own Claude artifacts that canopy does not track yet — only when the
+        organization artifact sync is configured (`available`; an admin adds it with the
+        organization's Compliance API key). Each item: `artifact_id`, `artifact_type`, `title`
+        (none for a Claude Doc — the listing has none), implied `format`, `visibility` and
+        `version`. Metadata only, listed live, never stored. Nothing is registered for the
+        user: offer the ones that belong to tracked work, ask for each one's claude.ai link
+        (the listing has no link) and register it with `register_design_doc(...,
+        artifact_id=…)`. `available: false` means the sync is off — track docs as usual."""
+        return await client.get("/docs/suggestions")
+
+    @mcp.tool
+    async def get_artifact_sync_status() -> dict:
+        """Whether the organization artifact sync is on, and its last run's counts (listed,
+        paired, new versions, sharing changes, missing, unmatched). When it is on, the server
+        keeps page artifacts' versions, sharing and existence current by itself, and a
+        Claude Doc's edits flag it `check_due` — a session's checks then matter for content
+        (what changed, does a decision still hold), not for version bookkeeping."""
+        return await client.get("/docs/artifact-sync")
 
     @mcp.tool
     async def list_doc_kinds() -> list[dict]:

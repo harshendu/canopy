@@ -135,6 +135,9 @@ class Provider(StrEnum):
     # Work trackers beyond Jira (USER_FLOWS §J0) — opt-in through TRACKERS_ENABLED.
     linear = "linear"
     generic = "generic"
+    # Claude artifacts through the organization's Compliance API — read-only, metadata only
+    # (versions, sharing, existence) for docs canopy already tracks (USER_FLOWS §V11).
+    claude = "claude"
 
 
 # `provider` columns are VARCHAR (not a native DB enum), so adding a tracker is one enum member

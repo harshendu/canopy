@@ -281,6 +281,7 @@ export function sameJson(a: unknown, b: unknown): boolean {
 // --------------------------------------------------------------------------- //
 
 const FALLBACK_LABELS: Record<string, string> = {
+  claude: "Claude artifacts",
   gdrive: "Google Drive",
   github: "GitHub",
   jira: "Jira",

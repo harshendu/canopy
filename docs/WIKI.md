@@ -123,8 +123,9 @@ curated MCP tools** (one per architect *intent*, not a 1:1 mirror of REST routes
   `mapping-epic-docs`, `tracking-design-docs` (Claude docs + artifacts as tracked design docs),
   `planning-sprints`, `working-the-board`, `spec-driven-development`, `daily-standup`
   (`syncing-jira` / `drafting-jira-tickets` remain one release as pointers).
-- **7 subagents** (isolated multi-step work): `gantt-planner`, `tracker-sync`, `risk-analyst`,
-  `drift-sentinel`, `scenario-architect`, `delivery-enricher`, `signal-harvester`.
+- **8 subagents** (isolated multi-step work): `gantt-planner`, `tracker-sync`, `risk-analyst`,
+  `drift-sentinel`, `scenario-architect`, `delivery-enricher`, `signal-harvester`,
+  `doc-sentinel` (opens tracked design docs, records versions, stages what a change implies).
 
 Both front doors call the **same REST API** (`/api/v1/...`), so anything you can click you can also
 ask Claude to do — and vice-versa.

@@ -51,6 +51,10 @@ class DocReference(TimestampMixin, table=True):
     # the result of the last check (a session opened it, or the org sync saw it)
     link_health: DocLinkHealth = Field(default=DocLinkHealth.unchecked)
     last_checked_at: datetime | None = None
+    # When the source last changed, as the organization artifact sync reports it (USER_FLOWS
+    # §V11). Set for Claude Docs and Sheets, which list no version ids: a change after the last
+    # session check (or after approval) is how they flag. NULL without the sync.
+    source_updated_at: datetime | None = None
 
     # --- identity + medium ---
     provider: str = Field(default=DocProvider.web.value, max_length=32, index=True)

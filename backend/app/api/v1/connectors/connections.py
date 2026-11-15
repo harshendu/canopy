@@ -11,7 +11,14 @@ from sqlmodel import col, select
 from app.api.deps import ArchitectWriter, CurrentUser, SessionDep
 from app.connectors.tracker import is_tracker, tracker_class, tracker_enabled, tracker_label
 from app.core.crypto import encrypt_token
-from app.models.base import Provider, ReadStrategy, TrackingMode, WriteStrategy, utcnow
+from app.models.base import (
+    Provider,
+    ReadStrategy,
+    TrackingMode,
+    UserRole,
+    WriteStrategy,
+    utcnow,
+)
 from app.models.integration import (
     Connection,
     ExternalRef,
@@ -99,11 +106,22 @@ def _project_id(config: dict) -> int | None:
 
 @router.post("/connections", response_model=ConnectionRead, status_code=status.HTTP_201_CREATED)
 async def create_connection(
-    session: SessionDep, _: ArchitectWriter, payload: ConnectionCreate
+    session: SessionDep, user: ArchitectWriter, payload: ConnectionCreate
 ) -> Connection:
     """Create a connection. A tracker connection given a canopy `project_id` (the Connectors
     form's project picker) also binds that project to it — mirrored from the tracker's project
-    in the config — the same as a switch that keeps the project's existing work separate."""
+    in the config — the same as a switch that keeps the project's existing work separate.
+
+    A `claude` connection holds the organization's Compliance API key (the artifact metadata
+    sync, USER_FLOWS §V11): only an admin may add one."""
+    if payload.provider == Provider.claude and user.role != UserRole.admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "admin_only",
+                "message": "Only an admin can connect the organization's Claude artifacts",
+            },
+        )
     target_id = _project_id(payload.config) if is_tracker(payload.provider) else None
     if target_id is not None and not tracker_enabled(payload.provider):
         raise HTTPException(

@@ -257,18 +257,22 @@ export default function DocsView({
   );
 }
 
-function DocRow({
+/** One doc: badges, health chips, details and links. Shared with the `/docs` library. */
+export function DocRow({
   doc,
   open,
   onToggle,
   onDetail,
   onRemove,
+  home,
 }: {
   doc: DesignDoc;
   open: boolean;
   onToggle: () => void;
   onDetail: () => void;
   onRemove?: () => void;
+  /** Where the doc is filed, when the list spans homes (the library). */
+  home?: string;
 }) {
   const chips = linkChips(doc);
   return (
@@ -298,6 +302,7 @@ function DocRow({
             {versionLabel(doc)}
           </span>
         )}
+        {home && <span className="rounded bg-slate-50 px-1 py-0.5 text-[10px] text-slate-500">{home}</span>}
         {doc.source === "jira_epic" && (
           <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-500">from Jira</span>
         )}

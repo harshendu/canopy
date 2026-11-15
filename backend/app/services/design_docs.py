@@ -28,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import ColumnElement, and_, delete, false, or_, true, update
@@ -52,6 +53,7 @@ from app.models.base import (
 )
 from app.models.doc import DocLink, DocReference, DocRevision
 from app.models.draft import DraftPlan
+from app.models.integration import ExternalRef
 from app.models.outcome import Outcome
 from app.models.project import Initiative, Milestone, Project, Task
 from app.models.proposal import Proposal
@@ -65,6 +67,8 @@ from app.services.doc_kinds import FORMAT_MAX, ensure_kind, normalize_slug
 from app.services.doc_urls import DocUrlError, DocUrlInfo, classify_doc_url, same_document_key
 
 TITLE_MAX = 255  # `title` is VARCHAR(255) on MySQL
+# `ExternalRef.entity_type` of the organization sync's artifact ↔ doc pairing (§V11)
+SYNC_DOC_ENTITY = "doc"
 SUMMARY_MAX = 2000
 VERSION_MAX = 64
 
@@ -819,6 +823,12 @@ async def _delete_doc_rows(session: AsyncSession, doc: DocReference) -> None:
     assert doc.id is not None
     await session.execute(delete(DocLink).where(col(DocLink.doc_id) == doc.id))
     await session.execute(delete(DocRevision).where(col(DocRevision.doc_id) == doc.id))
+    # the organization sync's pairing of this doc with a Claude artifact (no FK: polymorphic)
+    await session.execute(
+        delete(ExternalRef).where(
+            col(ExternalRef.entity_type) == SYNC_DOC_ENTITY, col(ExternalRef.entity_id) == doc.id
+        )
+    )
     # provenance that named the doc outlives it (PG/MySQL enforce these foreign keys)
     await session.execute(
         update(Proposal).where(col(Proposal.source_doc_id) == doc.id).values(source_doc_id=None)
@@ -1014,6 +1024,7 @@ class DocQuery:
     entity_type: DocLinkEntity | None = None
     entity_id: int | None = None
     stage_kinds: list[str] | None = None  # resolved from a stage filter by the route
+    team_id: int | None = None  # docs bearing on a team's projects and initiatives
 
 
 async def list_docs(
@@ -1044,6 +1055,8 @@ async def list_docs(
             clauses.append(col(DocReference.review_status).is_(None))
         else:
             clauses.append(col(DocReference.review_status) == query.review_status)
+    if query.team_id is not None:
+        clauses.append(await team_clause(session, query.team_id))
     if query.personal is True:
         clauses.append(col(DocReference.private_to_user_id) == (user.id or -1))
     elif query.personal is False:
@@ -1138,6 +1151,72 @@ async def record_revision(
     doc.updated_at = now
     await session.flush()
     return RevisionResult(doc, revision, new_version)
+
+
+@dataclass(frozen=True)
+class SourceUpdate:
+    """What one organization-sync observation changed on a doc."""
+
+    new_version: bool = False
+    visibility_changed: bool = False
+    changed: bool = False
+
+
+async def apply_source_metadata(
+    session: AsyncSession,
+    doc: DocReference,
+    *,
+    version: str | None,
+    visibility: DocVisibility | None,
+    source_updated_at: datetime | None,
+    title: str | None = None,
+    now: datetime | None = None,
+) -> SourceUpdate:
+    """Record what the organization artifact sync saw for a tracked doc (USER_FLOWS §V11) —
+    the system-path twin of `record_revision` (no acting user; metadata only).
+
+    A listed **version** is appended to the log (`source="sync"`) and stamps the check: the
+    sync knows exactly which version is live. A Claude Doc or Sheet lists no version ids, so
+    only `source_updated_at` moves — health then asks a session to look (`check_due`) or flags
+    a change after approval; the sync never pretends it read the doc."""
+    when = now or utcnow()
+    before = (doc.current_version, doc.visibility, doc.link_health, doc.source_updated_at)
+    doc.link_health = DocLinkHealth.ok
+    visibility_changed = False
+    if visibility is not None and visibility.value != doc.visibility:
+        doc.visibility = visibility.value
+        visibility_changed = True
+    new_version = False
+    if version:
+        label = version.strip()[:VERSION_MAX]
+        new_version = label != doc.current_version
+        await _append_revision(
+            session, doc, label, content_hash=None, recorded_by=None, source="sync",
+        )
+        doc.current_version = label
+        doc.last_checked_at = when
+    elif source_updated_at is not None:
+        doc.source_updated_at = source_updated_at
+    if title and not doc.title:
+        doc.title = _clip(title, TITLE_MAX)
+    after = (doc.current_version, doc.visibility, doc.link_health, doc.source_updated_at)
+    changed = after != before
+    if changed:
+        doc.updated_at = when
+    await session.flush()
+    return SourceUpdate(new_version, visibility_changed, changed)
+
+
+def mark_source_missing(doc: DocReference, *, now: datetime | None = None) -> bool:
+    """The sync no longer lists a doc it had paired — deleted, or out of the key's reach.
+    Marks it broken (the `broken` health flag); returns whether that changed anything."""
+    if doc.link_health == DocLinkHealth.broken:
+        return False
+    when = now or utcnow()
+    doc.link_health = DocLinkHealth.broken
+    doc.last_checked_at = when
+    doc.updated_at = when
+    return True
 
 
 def _require_reviewable(doc: DocReference) -> None:
@@ -1280,6 +1359,8 @@ async def health_for(
                 last_checked_at=doc.last_checked_at,
                 link_health=str(doc.link_health),
                 created_at=doc.created_at,
+                source_updated_at=doc.source_updated_at,
+                approved_at=doc.approved_at,
             ),
             hlinks,
             now=when,
@@ -1289,59 +1370,68 @@ async def health_for(
     return out
 
 
-async def docs_in_project(session: AsyncSession, project_id: int) -> list[DocReference]:
-    """Shared docs that bear on a project: filed under it or its tasks, or linked to it, its
-    tasks, decisions, specs or milestones."""
-    task_ids = [
-        t for t in (
-            await session.execute(select(col(Task.id)).where(col(Task.project_id) == project_id))
-        ).scalars().all() if t is not None
-    ]
-    adr_ids = [
-        a for a in (
-            await session.execute(
-                select(col(ArchitectureDecision.id)).where(
-                    col(ArchitectureDecision.project_id) == project_id
-                )
-            )
-        ).scalars().all() if a is not None
-    ]
-    spec_ids = [
-        s for s in (
-            await session.execute(select(col(Spec.id)).where(col(Spec.project_id) == project_id))
-        ).scalars().all() if s is not None
-    ]
-    milestone_ids = [
-        m for m in (
-            await session.execute(
-                select(col(Milestone.id)).where(col(Milestone.project_id) == project_id)
-            )
-        ).scalars().all() if m is not None
-    ]
+async def _ids(session: AsyncSession, column: Any, where: ColumnElement[bool]) -> list[int]:
+    return [i for i in (await session.execute(select(column).where(where))).scalars().all()
+            if i is not None]
+
+
+async def work_clause(
+    session: AsyncSession, project_ids: Sequence[int], initiative_ids: Sequence[int] = ()
+) -> ColumnElement[bool]:
+    """Docs that bear on some projects (and initiatives): filed under them or their tasks, or
+    linked to them, their tasks, decisions, specs or milestones."""
+    projects, initiatives = list(project_ids), list(initiative_ids)
+    if not projects and not initiatives:
+        return false()
+    task_ids = await _ids(session, col(Task.id), col(Task.project_id).in_(projects))
+    adr_ids = await _ids(
+        session, col(ArchitectureDecision.id), col(ArchitectureDecision.project_id).in_(projects)
+    )
+    spec_ids = await _ids(session, col(Spec.id), col(Spec.project_id).in_(projects))
+    milestone_ids = await _ids(
+        session, col(Milestone.id), col(Milestone.project_id).in_(projects)
+    )
     linked: set[int] = set()
     for entity_type, ids in (
-        (DocLinkEntity.project, [project_id]),
+        (DocLinkEntity.project, projects),
+        (DocLinkEntity.initiative, initiatives),
         (DocLinkEntity.task, task_ids),
         (DocLinkEntity.decision, adr_ids),
         (DocLinkEntity.spec, spec_ids),
         (DocLinkEntity.milestone, milestone_ids),
     ):
         linked.update(await doc_ids_linked_to(session, entity_type.value, ids))
-    home = and_(
-        col(DocReference.scope_level) == DocScope.project,
-        col(DocReference.scope_id) == project_id,
-    )
-    clauses: list[ColumnElement[bool]] = [home]
-    if task_ids:
-        clauses.append(and_(
-            col(DocReference.scope_level) == DocScope.task,
-            col(DocReference.scope_id).in_(task_ids),
-        ))
+    clauses: list[ColumnElement[bool]] = []
+    for level, ids in (
+        (DocScope.project, projects),
+        (DocScope.initiative, initiatives),
+        (DocScope.task, task_ids),
+    ):
+        if ids:
+            clauses.append(and_(
+                col(DocReference.scope_level) == level, col(DocReference.scope_id).in_(ids)
+            ))
     if linked:
         clauses.append(col(DocReference.id).in_(sorted(linked)))
+    return or_(*clauses) if clauses else false()
+
+
+async def team_clause(session: AsyncSession, team_id: int) -> ColumnElement[bool]:
+    """Docs that bear on a team's work: its projects (through its pods or initiatives) and its
+    initiatives — the `/docs` library's team filter."""
+    from app.services.org import team_project_ids
+
+    initiative_ids = await _ids(session, col(Initiative.id), col(Initiative.team_id) == team_id)
+    return await work_clause(session, await team_project_ids(session, team_id), initiative_ids)
+
+
+async def docs_in_project(session: AsyncSession, project_id: int) -> list[DocReference]:
+    """Shared docs that bear on a project: filed under it or its tasks, or linked to it, its
+    tasks, decisions, specs or milestones."""
     rows = await session.execute(
         select(DocReference).where(
-            or_(*clauses), col(DocReference.private_to_user_id).is_(None)
+            await work_clause(session, [project_id]),
+            col(DocReference.private_to_user_id).is_(None),
         ).order_by(col(DocReference.id))
     )
     return list(rows.scalars().all())

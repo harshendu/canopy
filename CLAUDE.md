@@ -39,6 +39,9 @@ and a Claude Code plugin (FastMCP server + skills + subagents).
   A Claude doc joins shared work only once it is **shared in Claude** (`visibility` users | org |
   public; else 409 `doc_not_shared`); a **personal** doc (`private_to_user_id`) is seen by its
   owner alone — not by admins, not under impersonation (`design_docs.visible_clause`).
+  **Scoped read:** the optional organization artifact sync (an admin's Compliance API key, a
+  `claude` connection) calls only the **list** endpoint — metadata for docs canopy already
+  tracks, never content, never a delete, never an automatic registration.
 
 ## Layout
 ```
@@ -253,10 +256,20 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   plans carry one too (finalise links it to native tasks / cites it in tickets); exports and the
   retro seeder list design docs; frozen copies are recorded as `DocRevision.snapshot_url`
   (`User.doc_snapshot_store` = repo | drive).
+  **Automation:** the `doc-sentinel` subagent works the worklist with the session's own access
+  and stages what a doc change implies; `/docs` is the workspace library (`GET /docs?team_id=`,
+  `design_docs.team_clause`). The **organization artifact sync** (`app/connectors/
+  claude_artifacts.py` + `app/services/claude_sync.py`, worker `claude_artifact_sync` /
+  nightly `claude_artifact_full_sync`) pairs listed artifacts with tracked docs through
+  `ExternalRef` (`entity_type` "doc"; owners as "user") and writes only through
+  `design_docs.apply_source_metadata` (version log `source="sync"`, visibility,
+  `source_updated_at` for Claude Docs/Sheets) and `mark_source_missing` (complete, unfiltered
+  listings only). `GET /docs/suggestions` lists the caller's own untracked artifacts, live and
+  never stored; `POST /docs/register {source_artifact_id}` pairs one explicitly.
   MCP: `register_design_doc`/`link_design_doc`/`promote_design_doc`/`get_design_doc`/
   `list_design_docs`/`list_doc_kinds`/`record_design_doc_version`/`request_design_doc_review`/
-  `get_doc_worklist`/`import_adr_from_markdown` (skill `tracking-design-docs`). USER_FLOWS
-  §V5-§V10.
+  `get_doc_worklist`/`import_adr_from_markdown`/`list_my_untracked_artifacts`/
+  `get_artifact_sync_status` (skill `tracking-design-docs`). USER_FLOWS §V5-§V12.
 - **Specs (spec-driven development):** `Spec` + `SpecCriterion` (`app/models/spec.py`) capture
   *intent as the source of truth* — a problem statement + explicit, checkable **acceptance
   criteria** — before work begins. Tasks implement a spec via `Task.spec_id`; an agent self-audits
@@ -426,13 +439,14 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   `spec-driven-development`, `daily-standup`; `syncing-jira` / `drafting-jira-tickets` are
   one-release pointers); subagents
   do isolated multi-step work (`tracker-sync`, `gantt-planner`, `risk-analyst`, `drift-sentinel`,
-  `scenario-architect`, `delivery-enricher`, `signal-harvester`). Add a tool when Claude needs a new verb; register it
+  `scenario-architect`, `delivery-enricher`, `signal-harvester`, `doc-sentinel`). Add a tool when Claude needs a new verb; register it
   in `mcp_server/server.py`.
 - **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the tracker
   reconciliation poll (`tracker_incremental_sync` over every enabled direct-read tracker;
   `jira_incremental_sync` is its old name), a **nightly changelog backfill**
   (`tracker_history_backfill`, bounded per binding via its cursor) and a **nightly risk-snapshot sweep** (`capture_risk_snapshots` → `run_risk_snapshots`)
-  so the risk timeline is a real trend. Drift carries a **scan log** (`DriftScan`): `GET .../drift`
+  so the risk timeline is a real trend; with a `claude` connection, the organization artifact
+  sync (`claude_artifact_sync` every `CLAUDE_SYNC_MINUTES`, `claude_artifact_full_sync` nightly). Drift carries a **scan log** (`DriftScan`): `GET .../drift`
   returns `last_scanned_at` + `scan_due` (true when code bindings exist but the scan is missing or
   >7 days old), surfacing staleness so the Drift Sentinel re-scans (the server can't crawl code).
 - **Startup refuses guessable secrets** (`app/core/startup_checks.py`): the API lifespan and the

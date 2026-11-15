@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DesignDoc, DocKindDef, DocReference } from "../api/types";
 import {
+  artifactTypeLabel,
   behindPin,
   changedSinceApproval,
   classifyUrl,
@@ -12,8 +13,11 @@ import {
   linkChips,
   needsSharing,
   providerLabel,
+  revisionSourceLabel,
   slugify,
   sortDocs,
+  suggestionTitle,
+  syncSummary,
   versionLabel,
 } from "./docs";
 
@@ -169,5 +173,43 @@ describe("health chips", () => {
     expect(chips.map((c) => c.flag)).toEqual(["behind_pin", "check_due"]);
     expect(healthChips(undefined)).toEqual([]);
     expect(shortHash("a".repeat(64))).toBe("aaaaaaaa");
+  });
+});
+
+describe("organization artifact sync", () => {
+  it("names untitled Claude Docs by their type", () => {
+    expect(suggestionTitle({ title: null, artifact_type: "claude_docs" })).toBe("Untitled claude doc");
+    expect(suggestionTitle({ title: "  ", artifact_type: "claude_sheets" })).toBe("Untitled sheet");
+    expect(suggestionTitle({ title: "Returns flow", artifact_type: "code" })).toBe("Returns flow");
+    expect(artifactTypeLabel("something_new")).toBe("Artifact");
+  });
+
+  it("labels only the version sources worth a mark", () => {
+    expect(revisionSourceLabel("sync")).toBe("org sync");
+    expect(revisionSourceLabel("session")).toBeNull();
+  });
+
+  it("summarises a run in counts", () => {
+    const report = {
+      full: true,
+      complete: true,
+      listed: 40,
+      paired: 12,
+      newly_paired: 1,
+      updated: 4,
+      new_versions: 3,
+      sharing_changed: 1,
+      missing: 0,
+      unmatched: 2,
+      identities: 0,
+      ran_at: "2026-11-15T04:00:00",
+    };
+    expect(syncSummary(report)).toBe(
+      "12 tracked docs seen · 3 new versions · 1 sharing change · 2 not matched to an artifact " +
+        "(full listing, 2026-11-15 04:00 UTC)",
+    );
+    expect(syncSummary({ ...report, full: false, paired: 1, new_versions: 0, sharing_changed: 0, unmatched: null })).toBe(
+      "1 tracked doc seen (changes only, 2026-11-15 04:00 UTC)",
+    );
   });
 });

@@ -109,7 +109,17 @@ pass `visibility`. Canopy flags from these facts (you will see them as `health` 
 | `broken` | the link does not open | find the new link, or supersede the doc |
 
 `canopy:get_doc_worklist` lists the docs due a check (oldest first); `get_workspace_context`
-reports the count as `design_docs.checks_due`.
+reports the count as `design_docs.checks_due`. For a sweep over many docs, delegate to the
+**`doc-sentinel`** subagent: it works the worklist, records what it sees and stages the plan
+changes a doc change implies.
+
+**When the organization artifact sync is on** (`design_docs.artifact_sync` in the context, or
+`get_artifact_sync_status`): an admin connected the organization's Compliance API, and the
+server keeps each paired artifact's published version, sharing and existence current by
+itself (revisions it records show `source: sync`). A Claude Doc lists no versions, so the sync
+only learns *that* it changed — it flags `check_due` ("changed in Claude after its last
+check") and, after approval, `changed_since_approval`. Your checks then matter for content:
+open the doc, record its revision, and judge what the change means for the work built on it.
 
 ## 7. Review and approval
 
@@ -146,7 +156,17 @@ organization owns it — **with your own access, never through canopy's server**
    `drive`: upload the file with your Drive tools.
 4. `record_design_doc_version(doc_id, version, snapshot_url=<the PR file or Drive link>)`.
 
-## 10. Report back
+## 10. Finding untracked artifacts (organization sync only)
+
+`canopy:list_my_untracked_artifacts` lists the **user's own** artifacts that canopy does not
+track yet — live from the organization's listing, metadata only (a Claude Doc has no title
+there). It returns `available: false` when the sync is off. Never register on the user's
+behalf: offer the ones that belong to tracked work, ask for each one's claude.ai link (the
+listing has none — Share → Copy link), then `register_design_doc(url, …, artifact_id=<its
+artifact_id>)`. Canopy checks the artifact is theirs, pairs the doc with it for the sync and
+takes the listed sharing, title and version.
+
+## 11. Report back
 
 Give the user the doc's title, its kind/format, what it is linked to, and its review state.
 For a Claude doc that is not yet shared, say plainly that it is personal (only they see it in
