@@ -248,6 +248,27 @@ async def _find(
     return (await session.execute(stmt.order_by(col(Workflow.id)))).scalars().first()
 
 
+async def projects_using_scope(
+    session: AsyncSession, *, team_id: int | None, project_id: int | None
+) -> list[Project]:
+    """The projects whose board uses the workflow defined at this scope."""
+    return await _projects_using(session, team_id=team_id, project_id=project_id)
+
+
+async def current_view(
+    session: AsyncSession, *, team_id: int | None, project_id: int | None
+) -> WorkflowView:
+    """What the tasks at this scope see right now (its own workflow, else the inherited one)."""
+    return await _current_view(session, team_id=team_id, project_id=project_id)
+
+
+async def own_workflow(
+    session: AsyncSession, *, team_id: int | None, project_id: int | None
+) -> Workflow | None:
+    """The workflow defined at exactly this scope (None when it inherits)."""
+    return await _find(session, team_id=team_id, project_id=project_id)
+
+
 async def _view_of(session: AsyncSession, workflow: Workflow, *, inherited: bool) -> WorkflowView:
     statuses = (
         await session.execute(
@@ -554,6 +575,15 @@ async def save_workflow(
                 wip_limit=column.wip_limit,
             )
         )
+
+    # Stage policies follow their columns: kept across a rename, dropped with a removed column.
+    from app.services import policy_store
+
+    await policy_store.carry_over(
+        session, workflow.id,
+        renames={old: column.name for old, column in renames.items()},
+        removed=[c.name for c in removed],
+    )
 
     for task in tasks:
         key = (task.status or "").casefold()

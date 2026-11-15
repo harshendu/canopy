@@ -17,14 +17,22 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.api.deps import AdminUser, ContributorWriter, CurrentUser, PlannerWriter, SessionDep
+from app.api.deps import (
+    AdminUser,
+    ContributorWriter,
+    CurrentUser,
+    PlannerWriter,
+    SessionDep,
+    TokenScopeDep,
+)
 from app.api.v1.tasks import actor_name
 from app.core.events import publish
-from app.models.base import StatusCategory, WipEnforcement
+from app.models.base import StatusCategory, TokenScope, WipEnforcement
 from app.models.org import Team
 from app.models.project import Project
 from app.models.workflow import Workflow, WorkflowStatus
 from app.schemas.entities import WorkflowColumnRead, WorkflowRead, WorkflowUpdate
+from app.services import policy_store
 from app.services import workflow as workflow_service
 from app.services.access import ensure_project_editable, ensure_team_manageable
 from app.services.workflow import ColumnInput, TrackingError, WorkflowView
@@ -65,6 +73,23 @@ def _inputs(payload: WorkflowUpdate) -> list[ColumnInput]:
     ]
 
 
+async def guard_policy_workflow(
+    session: AsyncSession, scope: TokenScope, *, team_id: int | None, project_id: int | None
+) -> None:
+    """Once a workflow carries stage policies its columns are part of the agents' guardrails:
+    an agent token may not change them (docs/AGENT_EXECUTION.md §9.1)."""
+    if scope != TokenScope.agent:
+        return
+    row = await workflow_service.own_workflow(session, team_id=team_id, project_id=project_id)
+    if row is not None and await policy_store.has_policies(session, row.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "human_only",
+                    "message": "This workflow carries stage policies — only a person can "
+                               "change its columns"},
+        )
+
+
 async def _save(
     session: AsyncSession,
     *,
@@ -72,7 +97,9 @@ async def _save(
     project_id: int | None,
     payload: WorkflowUpdate,
     actor: str,
+    scope: TokenScope = TokenScope.full,
 ) -> WorkflowRead:
+    await guard_policy_workflow(session, scope, team_id=team_id, project_id=project_id)
     try:
         view = await workflow_service.save_workflow(
             session,
@@ -130,7 +157,8 @@ async def get_project_workflow(
 
 @router.put("/projects/{project_id}/workflow", response_model=WorkflowRead)
 async def put_project_workflow(
-    session: SessionDep, user: PlannerWriter, project_id: int, payload: WorkflowUpdate
+    session: SessionDep, user: PlannerWriter, scope: TokenScopeDep, project_id: int,
+    payload: WorkflowUpdate
 ) -> WorkflowRead:
     """Give this project its own columns, overriding its team's (use only when it must
     differ). Removing a column that holds tasks needs `move_tasks_to`. A mirrored project's
@@ -139,13 +167,14 @@ async def put_project_workflow(
     await ensure_project_editable(session, user, project_id)
     await _refuse_tracker_owned(session, project)
     return await _save(
-        session, team_id=None, project_id=project_id, payload=payload, actor=actor_name(user)
+        session, team_id=None, project_id=project_id, payload=payload, actor=actor_name(user),
+        scope=scope,
     )
 
 
 @router.delete("/projects/{project_id}/workflow", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project_workflow(
-    session: SessionDep, user: PlannerWriter, project_id: int
+    session: SessionDep, user: PlannerWriter, scope: TokenScopeDep, project_id: int
 ) -> None:
     """Drop the project's override; its board goes back to the team's (or the template's)
     columns. Tasks keep their statuses — any the inherited workflow lacks show as extra
@@ -157,10 +186,15 @@ async def delete_project_workflow(
     ).scalars().first()
     if row is None:
         return
+    await guard_policy_workflow(session, scope, team_id=None, project_id=project_id)
     for column in (
         await session.execute(select(WorkflowStatus).where(WorkflowStatus.workflow_id == row.id))
     ).scalars().all():
         await session.delete(column)
+    # Its stage policies go with it (the project then follows the inherited workflow's).
+    assert row.id is not None
+    for policy in await policy_store.rows_for(session, row.id):
+        await session.delete(policy)
     await session.flush()
     await session.delete(row)
     await session.commit()
@@ -176,14 +210,16 @@ async def get_team_workflow(session: SessionDep, _: CurrentUser, team_id: int) -
 
 @router.put("/teams/{team_id}/workflow", response_model=WorkflowRead)
 async def put_team_workflow(
-    session: SessionDep, user: ContributorWriter, team_id: int, payload: WorkflowUpdate
+    session: SessionDep, user: ContributorWriter, scope: TokenScopeDep, team_id: int,
+    payload: WorkflowUpdate
 ) -> WorkflowRead:
     """Set the team's board columns and WIP limits, shared by all its projects (except those
     with their own override). The team's directors and managers, or an admin."""
     await _team(session, team_id)
     await ensure_team_manageable(session, user, team_id)
     return await _save(
-        session, team_id=team_id, project_id=None, payload=payload, actor=actor_name(user)
+        session, team_id=team_id, project_id=None, payload=payload, actor=actor_name(user),
+        scope=scope,
     )
 
 
@@ -195,8 +231,9 @@ async def get_workflow_template(session: SessionDep, _: CurrentUser) -> Workflow
 
 @router.put("/workflows/template", response_model=WorkflowRead)
 async def put_workflow_template(
-    session: SessionDep, user: AdminUser, payload: WorkflowUpdate
+    session: SessionDep, user: AdminUser, scope: TokenScopeDep, payload: WorkflowUpdate
 ) -> WorkflowRead:
     return await _save(
-        session, team_id=None, project_id=None, payload=payload, actor=actor_name(user)
+        session, team_id=None, project_id=None, payload=payload, actor=actor_name(user),
+        scope=scope,
     )

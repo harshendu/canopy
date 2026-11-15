@@ -12,7 +12,7 @@ person must look, and routing. No database, no clock reads — callers pass fact
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -64,6 +64,9 @@ APPROVER_RULES = frozenset(
      "engineers"}
 )
 SATISFIED_BY = frozenset({"canopy", "pr_approval", "pr_merge"})
+# What a stage's session hands off: the implementer's hand-off, or a review / QA verdict.
+ARTIFACTS = ("handoff", "review", "qa_report")
+_ROLE_ARTIFACT = {"reviewer": "review", "qa": "qa_report"}
 CHECKPOINTS = ("plan", "handoff")
 
 DEFAULT_LEASE_MINUTES = 30
@@ -164,6 +167,7 @@ class StageDef:
     category: str
     position: int
     worked_by: str | None = None  # None (a queue / terminal column) | "human" | an agent role
+    artifact: str | None = None  # what its session hands off; None = by role (see `hands_off`)
     instructions: str = ""
     pulls_from: list[str] | None = None  # None = the queue column just before, if any
     enter_checks: list[CheckSpec] = field(default_factory=list)
@@ -181,6 +185,15 @@ class StageDef:
         return self.status_name.casefold()
 
     @property
+    def hands_off(self) -> str:
+        """The artifact a session working this stage submits: its policy's `artifact`, else by
+        role — a `reviewer` submits a review, `qa` a QA report, any other role a hand-off. A
+        claim can only submit this kind (a reviewer token can't hand off code, §18.2)."""
+        if self.artifact:
+            return self.artifact
+        return _ROLE_ARTIFACT.get(self.worked_by or "", "handoff")
+
+    @property
     def is_agent_stage(self) -> bool:
         return self.worked_by is not None and self.worked_by != HUMAN
 
@@ -196,6 +209,7 @@ class StageDef:
         """The stored form of this column's policy."""
         return {
             "worked_by": self.worked_by,
+            "artifact": self.artifact,
             "instructions": self.instructions,
             "pulls_from": self.pulls_from,
             "enter": {"checks": [c.to_doc() for c in self.enter_checks]},
@@ -315,20 +329,32 @@ def default_pipeline(columns: Sequence[flow.ColumnDef]) -> Pipeline:
 
 
 def pipeline_from_policies(
-    columns: Sequence[flow.ColumnDef], policies: Mapping[str, Mapping[str, Any]]
+    columns: Sequence[flow.ColumnDef],
+    policies: Mapping[str, Mapping[str, Any]],
+    *,
+    strict: bool = True,
 ) -> Pipeline:
     """A pipeline from stored policy documents keyed by column name (case-insensitive). With no
     policies at all, the built-in default applies; a stored policy for a column that no longer
-    exists is ignored."""
+    exists is ignored. `strict` raises PolicyError on an invalid document (saving); otherwise
+    that column simply has no policy (loading — a stale document never breaks a board)."""
     if not policies:
         return default_pipeline(columns)
     stages = bare_stages(columns)
     by_key = {k.strip().casefold(): v for k, v in policies.items()}
     names = [s.status_name for s in stages]
-    for stage in stages:
+    for index, stage in enumerate(stages):
         doc = by_key.get(stage.key)
-        if doc is not None:
-            apply_policy_doc(stage, doc, names)
+        if doc is None:
+            continue
+        candidate = replace(stage)
+        try:
+            apply_policy_doc(candidate, doc, names)
+        except PolicyError:
+            if strict:
+                raise
+            continue
+        stages[index] = candidate
     return Pipeline(stages=stages, configured=True)
 
 
@@ -460,6 +486,17 @@ def apply_policy_doc(stage: StageDef, doc: Mapping[str, Any], names: Sequence[st
     if worked_by is not None and stage.closed:
         raise PolicyError("A done or cancelled column cannot be worked", column=column)
     stage.worked_by = worked_by
+    artifact = doc.get("artifact")
+    if artifact not in (None, ""):
+        artifact = str(artifact).strip()
+        if artifact not in ARTIFACTS:
+            raise PolicyError("artifact must be handoff | review | qa_report", column=column)
+        if not stage.is_agent_stage:
+            raise PolicyError("Only a column an agent role works hands something off",
+                              column=column)
+        stage.artifact = artifact
+    else:
+        stage.artifact = None
     stage.instructions = str(doc.get("instructions") or "")[:8000]
     pulls = doc.get("pulls_from")
     if pulls is not None:
@@ -561,6 +598,9 @@ class EvalContext:
     requester_logins: frozenset[str] = frozenset()  # the issuer's GitHub login(s)
     rules_required: Sequence[str] = ()  # attestation rule keys that apply
     attested: Mapping[str, str] = field(default_factory=dict)  # rule key -> status
+    # A rule's own enforcement (warn | block): an unattested `block` rule refuses the move even
+    # where the column's `attestations_complete` check only warns.
+    rule_enforcement: Mapping[str, str] = field(default_factory=dict)
     current: ActorFact | None = None  # the claim being handed off (or the mover)
     stage_actors: Mapping[str, ActorFact] = field(default_factory=dict)  # role -> who did it
 
@@ -731,9 +771,12 @@ def evaluate(target: StageDef, ctx: EvalContext, *, phase: str = "enter") -> Eva
         results.append(result)
         if passed:
             continue
-        blocking = spec.enforcement == "block" and (
-            ctx.actor != "human" or spec.applies_to == "everyone"
+        strict = spec.enforcement == "block" or (
+            spec.check == "attestations_complete"
+            and any(ctx.rule_enforcement.get(k) == "block" for k in ctx.rules_required
+                    if ctx.attested.get(k) not in ("done", "n/a"))
         )
+        blocking = strict and (ctx.actor != "human" or spec.applies_to == "everyone")
         (failures if blocking else warnings).append(result)
     return Evaluation(target=target.status_name, allowed=not failures, failures=failures,
                       warnings=warnings, results=results)
@@ -856,6 +899,7 @@ def agentic_delivery_template() -> tuple[list[tuple[str, str]], dict[str, dict[s
     policies: dict[str, dict[str, Any]] = {
         "In Progress": {
             "worked_by": "implementer",
+            "artifact": "handoff",
             "instructions": (
                 "Plan first: submit_plan before writing code, and wait if a person must approve. "
                 "Keep the PR under 400 changed lines; split the task if it can't be. Title the PR "
@@ -871,6 +915,7 @@ def agentic_delivery_template() -> tuple[list[tuple[str, str]], dict[str, dict[s
         },
         "In Review": {
             "worked_by": "reviewer",
+            "artifact": "review",
             "instructions": (
                 "Review the PR against the spec, the approved plan, the binding decisions and the "
                 "team's rules. Run the pr-to-adr-linker. Record findings by severity; don't fix "
@@ -890,6 +935,7 @@ def agentic_delivery_template() -> tuple[list[tuple[str, str]], dict[str, dict[s
         },
         "QA": {
             "worked_by": "qa",
+            "artifact": "qa_report",
             "instructions": (
                 "Verify each acceptance criterion against the running change and record what you "
                 "did and saw. A failed criterion is a fail verdict."

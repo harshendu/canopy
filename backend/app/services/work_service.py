@@ -1173,6 +1173,26 @@ async def submit_work(
     stage = pipeline.stage(claim.stage) or pipeline.stage(task.status)
     if stage is None:
         raise WorkError("stage_missing", "The task's column no longer exists", 409)
+    # The claim's role decides what it may hand off (§18.2): a reviewer session submits a
+    # review, never code; an implementer a hand-off, never its own verdict.
+    if kind.value != stage.hands_off:
+        verb = "submit_work" if stage.hands_off == "handoff" else "submit_review"
+        raise WorkError(
+            "wrong_artifact",
+            f"{stage.status_name} is worked as {claim.role}: it hands off a "
+            f"{stage.hands_off.replace('_', ' ')} ({verb})",
+            409, expected=stage.hands_off,
+        )
+    plan_checkpoint = stage.checkpoints.get("plan")
+    # Any plan on the task counts: a rework round revises it if it needs to, rather than
+    # re-planning (and re-asking for approval) every round.
+    if (
+        kind == ArtifactKind.handoff and plan_checkpoint is not None and plan_checkpoint.required
+        and await latest_artifact(session, task.id, ArtifactKind.plan) is None
+    ):
+        raise WorkError("plan_missing",
+                        f"{stage.status_name} requires a plan before the hand-off — "
+                        "submit_plan first", 409)
     from app.services import gates
 
     pr = await policy_service.latest_pull_request(session, task.id)

@@ -27,11 +27,13 @@ from app.api.v1 import (
     meta,
     milestones,
     outcomes,
+    policies,
     projects,
     proposals,
     retros,
     risk,
     risk_register,
+    rules,
     scenarios,
     specs,
     sprints,
@@ -120,6 +122,14 @@ api_router.include_router(
 api_router.include_router(work.router, tags=["work"], dependencies=[FeatureGate("ai.work_queue")])
 api_router.include_router(
     gates.router, tags=["gates"], dependencies=[FeatureGate("ai.work_queue")]
+)
+# Stage policy + delivery rules (docs/AGENT_EXECUTION.md §9, §10): the policies of a workflow's
+# columns (and the agentic-delivery template), and team / project working agreements.
+api_router.include_router(
+    policies.router, tags=["policies"], dependencies=[FeatureGate("ai.stage_policy")]
+)
+api_router.include_router(
+    rules.router, tags=["rules"], dependencies=[FeatureGate("ai.stage_policy")]
 )
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])

@@ -3,8 +3,8 @@
 Resolves a project's **pipeline** (its board columns, each with its stage definition) and loads
 the facts the pure `stage_policy.evaluate` reads for one task. The pipeline follows the
 workflow's own resolution (project override → team → workspace template → built-in default,
-§C9.1): stored policies at the scope the columns come from apply; with none, the built-in
-default does (the first in-progress column is the implementer's stage).
+§C9.1): stored policies at the scope the columns come from apply (`policy_store.py`); with
+none, the built-in default does (the first in-progress column is the implementer's stage).
 """
 
 from __future__ import annotations
@@ -35,29 +35,17 @@ from app.services.workflow import WorkflowView, category_of_task, resolve_workfl
 async def stored_policies(
     session: AsyncSession, view: WorkflowView, project: Project
 ) -> dict[str, dict[str, Any]]:
-    """The stored policy documents for the columns `view` describes, keyed by column name.
-    (Stage policies are stored from Phase 2; until then every pipeline is the default.)"""
-    loader = _POLICY_LOADER
-    if loader is None:
-        return {}
-    loaded: dict[str, dict[str, Any]] = await loader(session, view, project)
-    return loaded
+    """The stored policy documents for the columns `view` describes, keyed by column name — the
+    policies of the workflow the project's columns come from ({} for the built-in default)."""
+    from app.services import policy_store
 
-
-# Phase 2 registers the stored-policy loader here (kept as a hook so this module has no import
-# of the policy table before it exists).
-_POLICY_LOADER: Any = None
-
-
-def register_policy_loader(loader: Any) -> None:
-    global _POLICY_LOADER
-    _POLICY_LOADER = loader
+    return await policy_store.policies_for(session, view.id)
 
 
 async def resolve_pipeline(session: AsyncSession, project: Project) -> Pipeline:
     view = await resolve_workflow(session, project)
     policies = await stored_policies(session, view, project)
-    return stage_policy.pipeline_from_policies(view.columns, policies)
+    return stage_policy.pipeline_from_policies(view.columns, policies, strict=False)
 
 
 def _started(task: Task) -> bool:
@@ -160,7 +148,7 @@ async def evaluation_context(
     *,
     actor: str,
     current: ActorFact | None = None,
-    extra_rules: tuple[list[str], dict[str, str]] | None = None,
+    extra_rules: tuple[list[str], dict[str, str], dict[str, str]] | None = None,
 ) -> EvalContext:
     """Everything `stage_policy.evaluate` reads about `task` right now."""
     assert task.id is not None
@@ -215,7 +203,9 @@ async def evaluation_context(
         plan_needed = True
     actors = await stage_actors(session, task.id, pipeline)
     requester_ids = {a.user_id for a in actors.values() if a.user_id is not None}
-    rules_required, attested = extra_rules if extra_rules is not None else ([], {})
+    rules_required, attested, rule_enforcement = (
+        extra_rules if extra_rules is not None else ([], {}, {})
+    )
     return EvalContext(
         actor=actor,
         dependencies_done=await dependencies_done(session, task),
@@ -237,6 +227,7 @@ async def evaluation_context(
         requester_logins=await github_logins(session, requester_ids),
         rules_required=rules_required,
         attested=attested,
+        rule_enforcement=rule_enforcement,
         current=current,
         stage_actors=actors,
     )

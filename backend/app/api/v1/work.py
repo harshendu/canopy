@@ -414,7 +414,10 @@ async def submit(
         await session.rollback()
         if exc.code == "checks_failed":
             # Nothing was saved, but the refusal is part of the decision log, and asking still
-            # proves the session is alive.
+            # proves the session is alive. (The rollback expired the caller's rows.)
+            await session.refresh(caller.user)
+            if caller.token is not None:
+                await session.refresh(caller.token)
             held = await session.get(WorkClaim, claim_id)
             refused = await session.get(Task, held.task_id) if held is not None else None
             if held is not None and refused is not None:

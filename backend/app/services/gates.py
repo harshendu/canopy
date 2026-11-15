@@ -305,16 +305,17 @@ async def checkpoint_reasons(
 
 async def attestation_facts(
     session: AsyncSession, task: Task, stage: StageDef, data: dict[str, Any]
-) -> tuple[list[str], dict[str, str]]:
-    """The Definition-of-Done rule keys this hand-off must attest, and what it attests."""
+) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    """The Definition-of-Done rule keys this hand-off must attest, what it attests, and each
+    rule's enforcement (an unattested `block` rule refuses the hand-off, §10)."""
     from app.services import rules as rules_service
 
-    required = await rules_service.required_attestations(session, task, stage)
+    rules = await rules_service.attestation_rules(session, task, stage)
     attested = {
         str(a.get("rule_key")): str(a.get("status") or "")
         for a in data.get("attestations") or [] if a.get("rule_key")
     }
-    return required, attested
+    return [r.key for r in rules], attested, {r.key: r.enforcement for r in rules}
 
 
 # --------------------------------------------------------------------------- #

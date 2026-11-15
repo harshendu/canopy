@@ -195,6 +195,19 @@ class WorkEventKind(StrEnum):
     policy_changed = "policy_changed"
 
 
+class RuleScope(StrEnum):
+    """Where a delivery rule is defined (docs/AGENT_EXECUTION.md §10)."""
+
+    workspace = "workspace"
+    team = "team"
+    project = "project"
+
+
+class RuleKind(StrEnum):
+    guidance = "guidance"  # advice delivered in the brief
+    attestation = "attestation"  # a Definition-of-Done item a hand-off attests with evidence
+
+
 class DeliveryMethod(StrEnum):
     """How a team runs its work, across all of its projects (USER_FLOWS §C11)."""
 

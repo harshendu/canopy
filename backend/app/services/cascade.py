@@ -39,6 +39,7 @@ from app.models.gate import Gate
 from app.models.integration import ExternalRef, PullRequest, TrackerBinding
 from app.models.leadership import LeadershipNote
 from app.models.outcome import Outcome
+from app.models.policy import DeliveryRule, StagePolicy
 from app.models.project import (
     Baseline,
     Blocker,
@@ -263,7 +264,13 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
         delete(ScenarioMilestone).where(col(ScenarioMilestone.project_id) == pid),
         delete(ScenarioTask).where(col(ScenarioTask.project_id) == pid),
         delete(ScenarioProject).where(col(ScenarioProject.project_id) == pid),
-        # the project's own board workflow (override), columns first
+        # the project's own board workflow (override): its stage policies and columns first
+        delete(StagePolicy).where(
+            col(StagePolicy.owner_type) == "workflow", col(StagePolicy.owner_id).in_(workflow_ids)
+        ),
+        delete(DeliveryRule).where(
+            col(DeliveryRule.scope_level) == "project", col(DeliveryRule.scope_id) == pid
+        ),
         delete(WorkflowStatus).where(col(WorkflowStatus.workflow_id).in_(workflow_ids)),
         delete(Workflow).where(col(Workflow.project_id) == pid),
         # agent work: gates (→ claims, artifacts) → artifacts (→ claims) → claims, the event
