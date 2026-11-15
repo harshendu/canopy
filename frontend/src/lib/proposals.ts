@@ -146,10 +146,20 @@ const ENTITY_FIELDS: Partial<Record<ProposalEntityType, Record<string, FieldMeta
     },
     title: { label: "Title", kind: "text" },
   },
+  rule: {
+    kind: { label: "Kind", kind: "enum", options: ["guidance", "attestation"] },
+    enforcement: { label: "A hand-off without it", kind: "enum", options: ["off", "warn", "block"] },
+    title: { label: "Title", kind: "text" },
+    body: { label: "Body", kind: "text" },
+    key: { label: "Key", kind: "text" },
+  },
 };
 
 /** Enum values that read badly when merely title-cased. */
 const OPTION_LABELS: Record<string, string> = {
+  attestation: "Definition of Done item",
+  warn: "Is flagged (warn)",
+  block: "Is refused (block)",
   FS: "Finish → start",
   SS: "Start → start",
   FF: "Finish → finish",
@@ -239,6 +249,7 @@ const LABEL_KEYS: Partial<Record<ProposalEntityType, string>> = {
   outcome: "statement",
   decision: "title",
   doc_reference: "url",
+  rule: "title",
 };
 
 /** What the reader needs to turn ids and handles into names. */
@@ -345,6 +356,8 @@ export function itemKindLabel(item: ProposalItem): string {
       return "Propose decision";
     case "doc_reference":
       return "Link doc";
+    case "rule":
+      return "Propose rule";
   }
 }
 
@@ -573,6 +586,7 @@ export const CHANGE_GROUPS: readonly ChangeGroup[] = [
   { key: "outcomes", label: "Outcomes", entities: ["outcome"] },
   { key: "decisions", label: "Decisions", entities: ["decision"] },
   { key: "docs", label: "Docs", entities: ["doc_reference"] },
+  { key: "rules", label: "Rules", entities: ["rule"] },
 ];
 
 export function groupItems(
@@ -819,6 +833,11 @@ export function impactChips(counts: PreviewCounts): ImpactChip[] {
     counts.docs_added > 0 && {
       key: "docs_added",
       label: count(counts.docs_added, "doc link"),
+      tone: "add",
+    },
+    (counts.rules_added ?? 0) > 0 && {
+      key: "rules_added",
+      label: count(counts.rules_added ?? 0, "proposed rule"),
       tone: "add",
     },
   ];

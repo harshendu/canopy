@@ -16,6 +16,7 @@ import {
 } from "../lib/execution";
 import { featureOn, useFeatures } from "../lib/useFeatures";
 import AgentFlowCards from "./AgentFlowCards";
+import AutonomyCard from "./AutonomyCard";
 import StagePolicyPanel from "./StagePolicyPanel";
 
 /**
@@ -138,6 +139,7 @@ export default function AgentsView({
       {policyOn && <StagePolicyPanel projectId={projectId} canApplyTemplate={data.can_manage} />}
 
       {policyOn && <AgentFlowCards projectId={projectId} />}
+      {policyOn && <AutonomyCard projectId={projectId} />}
 
       <section className={`grid gap-4 ${policyOn ? "" : "md:grid-cols-2"}`}>
         <div className={`rounded-lg border border-slate-200 bg-white p-4 ${policyOn ? "hidden" : ""}`}>

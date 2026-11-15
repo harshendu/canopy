@@ -166,6 +166,48 @@ async def test_seed_rules_resolve_per_project(db_session):
 
 
 @pytest.mark.asyncio
+async def test_seed_traceability_ledger_tells_each_story(db_session):
+    """The demo's decisions span the ledger's verdicts: violated and unimplemented (seeded
+    with the drift scan's own keys), at risk (open drift on what they govern), in progress
+    and honored."""
+    from app.models.architecture import ArchitectureDecision
+    from app.models.project import Project
+    from app.services import traceability, traceability_service
+
+    await seed.load_seed_data(db_session, set())
+    projects = {
+        p.key: p for p in (await db_session.execute(select(Project))).scalars().all()
+    }
+
+    async def verdicts(key: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for adr in (await db_session.execute(select(ArchitectureDecision).where(
+                ArchitectureDecision.project_id == projects[key].id))).scalars().all():
+            facts = await traceability_service.decision_facts(db_session, adr)
+            out[adr.title] = traceability.verdict(facts)[0]
+        return out
+
+    onepage = await verdicts("ONEPAGE")
+    assert onepage["Server-side checkout session as the source of truth"] == "violated"
+    assert onepage["Guest checkout without account creation"] == "pending"
+    assert (await verdicts("PAYMENTS"))["Tokenize cards through the provider vault"] == (
+        "at_risk")
+    assert (await verdicts("SEARCH"))["Search index fed by catalog change events"] == "honored"
+    assert (await verdicts("INVENTORY"))["Inventory as an event stream"] == "honored"
+    assert (await verdicts("RECS"))["Respect consent for personalization"] == "unimplemented"
+    peak = await verdicts("PEAKSCALE")
+    assert peak["Queue shoppers instead of failing under overload"] == "in_progress"
+
+    session_adr = (await db_session.execute(select(ArchitectureDecision).where(
+        ArchitectureDecision.title == "Server-side checkout session as the source of truth"
+    ))).scalar_one()
+    facts = await traceability_service.decision_facts(db_session, session_adr)
+    assert [(t.key is not None, t.implements, t.done) for t in facts.tasks if t.implements] == [
+        (True, True, True)]
+    assert any(p.merged and p.number == 398 for p in facts.prs)
+
+
+@pytest.mark.asyncio
 async def test_seed_proposals_are_reviewable(db_session):
     """Every seeded proposal lands whole (the loader drops one on any unresolved name) and
     is ready to review: the plan preview computes and an apply would succeed."""
@@ -405,8 +447,10 @@ def _check_references(ds: Dataset) -> None:
         names = set(tasks[p.key])
         assert len(names) == len(tasks[p.key]), f"{p.key}: duplicate task names"
         comps = {c.name for c in p.components}
+        adr_titles = {a.title for a in p.adrs}
         for t in (t for ph in p.phases for t in ph.tasks):
             eng(t.assignee)
+            assert t.implements is None or t.implements in adr_titles, (p.key, t.name)
         for c in p.components:
             eng(c.owner)
         for link in p.component_links:
@@ -421,6 +465,7 @@ def _check_references(ds: Dataset) -> None:
                 assert {a.fitness.source, a.fitness.target} <= comps, (p.key, a.title)
         for d in p.drift:
             assert set(d.components) <= comps
+            assert d.adr is None or d.adr in adr_titles, (p.key, d.summary)
         for sp in p.specs:
             eng(sp.owner)
             assert set(sp.task_names) <= names, (p.key, sp.title)

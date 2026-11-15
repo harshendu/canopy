@@ -258,9 +258,28 @@ async def checkpoint_reasons(
 ) -> list[str]:
     """Evaluate a checkpoint's / decision's conditions from stored facts, once. The reasons that
     matched are stored on the gate, so a later change in the data can't flip the outcome."""
+    reasons, _, _ = await checkpoint_decision(
+        session, task, conditions, artifact=artifact, component_ids=component_ids,
+        binding=binding, unsettled=unsettled)
+    return reasons
+
+
+async def checkpoint_decision(
+    session: AsyncSession,
+    task: Task,
+    conditions: Sequence[str],
+    *,
+    pre_approved: Sequence[str] = (),
+    artifact: TaskArtifact | None = None,
+    component_ids: Sequence[int] | None = None,
+    binding: Sequence[GoverningDecision] | None = None,
+    unsettled: Sequence[GoverningDecision] | None = None,
+) -> tuple[list[str], list[str], str | None]:
+    """(reasons a person must decide, reasons a pre-approved change class waived, that class)
+    — graduated autonomy (Phase 4): a pre-approved class skips all but the safety floor."""
     assert task.id is not None
     if not conditions or list(conditions) == ["never"]:
-        return []
+        return [], [], None
     if component_ids is None:
         component_ids = await work_service.task_component_ids(session, task.id)
     if binding is None or unsettled is None:
@@ -303,7 +322,7 @@ async def checkpoint_reasons(
         agent_done_count=await agent_done_count(session, task.project_id)
         if any(c.startswith("probation") for c in conditions) else 0,
     )
-    return stage_policy.matched_conditions(conditions, facts)
+    return stage_policy.checkpoint_outcome(conditions, facts, pre_approved)
 
 
 async def attestation_facts(

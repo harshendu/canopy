@@ -249,6 +249,7 @@ class PreviewCounts(BaseModel):
     outcomes_edited: int = 0
     decisions_added: int = 0
     docs_added: int = 0
+    rules_added: int = 0
 
 
 class ProposalPreview(BaseModel):

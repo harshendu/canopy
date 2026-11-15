@@ -133,3 +133,14 @@ describe("mirrored projects", () => {
     expect(reasonText("awaiting_tracker_move")).toMatch(/waiting for its tracker/);
   });
 });
+
+describe("graduated autonomy", () => {
+  it("words a pre-approval on the timeline", () => {
+    expect(
+      eventText({ kind: "pre_approved", data: { checkpoint: "plan", class: "tag:docs", still_asked: false } }),
+    ).toBe("Pre-approved docs work: the plan checkpoint didn't need a person");
+    expect(
+      eventText({ kind: "pre_approved", data: { checkpoint: "handoff", class: "tag:docs", still_asked: true } }),
+    ).toMatch(/skipped part of the hand-off checkpoint; a person still decides the rest/);
+  });
+});

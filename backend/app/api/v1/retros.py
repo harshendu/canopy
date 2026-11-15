@@ -99,6 +99,7 @@ async def _seed_project_retro(session: SessionDep, project: Project) -> str:
         project_name=project.name,
         generated_on=date.today(),
         outcomes=[_fmt_outcome(o) for o in outcomes],
+        agent_work=await _agent_work(session, project),
         completed_milestones=[
             f"{m.name} ({m.target_date})" if m.target_date else m.name
             for m in milestones
@@ -115,6 +116,31 @@ async def _seed_project_retro(session: SessionDep, project: Project) -> str:
         adr_superseded=sum(1 for a in adrs if a.status == ADRStatus.superseded),
     )
     return generate_project_retro(inputs)
+
+
+async def _agent_work(session: SessionDep, project: Project) -> list[str]:
+    """The agent-work section (Phase 4): the last 8 weeks of this project's agent flow — empty
+    when the work queue is off or no session worked here."""
+    from datetime import timedelta
+
+    from app.models.base import WorkEventKind, utcnow
+    from app.models.work import WorkEvent
+    from app.services import agent_flow_service
+    from app.services.features import feature_enabled
+    from app.services.retro import agent_work_lines
+
+    assert project.id is not None
+    if not await feature_enabled(session, "ai.work_queue"):
+        return []
+    flow = await agent_flow_service.agent_flow_for(session, "project", project.id, 8)
+    since = utcnow() - timedelta(weeks=8)
+    uncleared = len((await session.execute(
+        select(WorkEvent.id).where(
+            WorkEvent.project_id == project.id,
+            WorkEvent.kind == WorkEventKind.moved_without_clearance.value,
+            col(WorkEvent.at) >= since)
+    )).scalars().all())
+    return agent_work_lines(flow, uncleared)
 
 
 @router.get("/projects/{project_id}/retrospectives", response_model=list[RetrospectiveRead])

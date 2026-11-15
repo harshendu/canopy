@@ -1142,10 +1142,14 @@ async def submit_plan(
     if checkpoint is not None and stage is not None:
         from app.services import gates
 
-        reasons = await gates.checkpoint_reasons(
-            session, task, checkpoint.approval_when, artifact=artifact, component_ids=component_ids,
-            binding=binding, unsettled=unsettled,
+        reasons, waived, cls = await gates.checkpoint_decision(
+            session, task, checkpoint.approval_when, pre_approved=checkpoint.pre_approved,
+            artifact=artifact, component_ids=component_ids, binding=binding,
+            unsettled=unsettled,
         )
+        if waived:
+            record_pre_approval(session, task, caller=caller, claim=claim, checkpoint="plan",
+                                change_class=cls, waived=waived, asked=bool(reasons))
         if reasons:
             artifact.data = {**artifact.data, "approval_required": True}
             result.approval_required = True
@@ -1159,6 +1163,18 @@ async def submit_plan(
             await end_claim(session, claim, state=ClaimState.completed,
                             outcome=ClaimOutcome.gated, reason="plan_approval", caller=caller)
     return result
+
+
+def record_pre_approval(
+    session: AsyncSession, task: Task, *, caller: Caller, claim: WorkClaim, checkpoint: str,
+    change_class: str | None, waived: list[str], asked: bool,
+) -> None:
+    """A pre-approved change class skipped (part of) a checkpoint — on the trail, so a person can
+    see what wasn't asked and why."""
+    record_event(session, kind=WorkEventKind.pre_approved, project_id=task.project_id,
+                 task_id=task.id, caller=caller, claim_id=claim.id,
+                 data={"checkpoint": checkpoint, "class": change_class, "waived": waived,
+                       "still_asked": asked})
 
 
 @dataclass
@@ -1260,9 +1276,14 @@ async def submit_work(
                             409, evaluation=evaluation)
         checkpoint = stage.checkpoints.get("handoff")
         if checkpoint is not None:
-            reasons = await gates.checkpoint_reasons(
-                session, task, checkpoint.approval_when, artifact=artifact,
+            reasons, waived, cls = await gates.checkpoint_decision(
+                session, task, checkpoint.approval_when, pre_approved=checkpoint.pre_approved,
+                artifact=artifact,
             )
+            if waived:
+                record_pre_approval(session, task, caller=caller, claim=claim,
+                                    checkpoint="handoff", change_class=cls, waived=waived,
+                                    asked=bool(reasons))
             if reasons:
                 gate = await gates.open_gate(
                     session, task, kind=GateKind.handoff_approval, origin="checkpoint",

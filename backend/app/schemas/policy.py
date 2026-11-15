@@ -153,3 +153,62 @@ class EffectiveRuleRead(BaseModel):
     stale: bool = False
     stale_reason: str | None = None
     can_edit: bool = False
+
+
+# --- Graduated autonomy (Phase 4) ------------------------------------------------------------
+
+
+class ChangeClassRead(BaseModel):
+    """The evidence for one change class (`tag:<tag>`) over the window."""
+
+    change_class: str
+    tasks: int
+    decided: dict[str, int] = {}  # gate kind → decided
+    approval_rate: dict[str, float | None] = {}  # approved as written
+    median_decision_hours: dict[str, float | None] = {}
+    reviews: int = 0
+    first_pass_rate: float | None = None
+    rework_tasks: int = 0
+    parked: int = 0
+
+
+class AutonomySuggestionRead(BaseModel):
+    action: Literal["pre_approve", "revoke"]
+    checkpoint: str
+    change_class: str
+    reason: str
+
+
+class AutonomyRead(BaseModel):
+    stage: str | None = None  # the column whose checkpoints this tunes
+    checkpoints: list[str] = []
+    pre_approved: dict[str, list[str]] = {}  # checkpoint → classes
+    floor: list[str] = []  # conditions a pre-approval never skips
+    weeks: int
+    classes: list[ChangeClassRead] = []
+    suggestions: list[AutonomySuggestionRead] = []
+    can_edit: bool = False
+
+
+class AutonomyChange(BaseModel):
+    checkpoint: Literal["plan", "handoff"] = "plan"
+    change_class: str = Field(min_length=5, max_length=80, pattern=r"^tag:[a-z0-9][a-z0-9_.-]*$")
+    action: Literal["add", "remove"]
+
+
+class RuleSuggestionExample(BaseModel):
+    source: str  # gate (a person's request-changes note) | review (a reviewer's finding)
+    source_id: int
+    task_key: str | None = None
+    text: str  # content: someone's words, shown as evidence
+
+
+class RuleSuggestionRead(BaseModel):
+    """A theme that keeps coming back in review — a candidate rule (Phase 4). Stage it as a
+    `rule` proposal item for a person to accept."""
+
+    key: str
+    words: list[str]
+    count: int
+    tasks: list[str]
+    examples: list[RuleSuggestionExample]

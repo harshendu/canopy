@@ -65,6 +65,7 @@ class TaskSpec:
     estimate: tuple[int, int, int] | None = None  # PERT optimistic/likely/pessimistic
     milestone: bool = False
     deadline_weeks: int | None = None  # a hard deadline (weeks from today; < end = a miss)
+    implements: str | None = None  # an ADR title in the same project (decision → work trace)
 
 
 @dataclass(frozen=True)
@@ -143,11 +144,16 @@ class ADRSpec:
 @dataclass(frozen=True)
 class DriftSpec:
     kind: str  # unexpected_dependency | dead_dependency | unimplemented_adr | implicit_decision
+    #            | fitness_violation
     summary: str
     components: tuple[str, ...] = ()
     detail: str | None = None
     suspected_cause: str | None = None
     status: str = "open"  # open | accepted | rejected | false_positive
+    # The decision an `unimplemented_adr` or `fitness_violation` event is about (an ADR title in
+    # the same project; for a violation, its fitness rule): the event then carries the scan's own
+    # rule key, so the traceability ledger ties it to the decision.
+    adr: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -505,6 +511,7 @@ class PullRequestSpec:
     state: str  # open | closed
     author: str  # github login
     task_name: str
+    merged: bool = False
 
 
 @dataclass(frozen=True)

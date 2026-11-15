@@ -1,4 +1,5 @@
 import type {
+  ChangeClassStats,
   CheckDoc,
   DecisionDoc,
   DeliveryRule,
@@ -394,3 +395,30 @@ export function evidenceChecks(
     attested: checks.filter((c) => c.fact === "attested"),
   };
 }
+
+/** "10 plans · 100% as written · median 0.3 h · first reviews 9/10" — one change class's
+ *  evidence at a checkpoint. */
+export function classEvidenceText(row: ChangeClassStats, kind: string): string {
+  const parts: string[] = [];
+  const decided = row.decided[kind] ?? 0;
+  if (decided) {
+    const noun = kind === "handoff_approval" ? "hand-off" : "plan";
+    parts.push(`${decided} ${noun}${decided === 1 ? "" : "s"}`);
+    parts.push(`${percent(row.approval_rate[kind])} as written`);
+    const hours = row.median_decision_hours[kind];
+    if (hours != null) parts.push(`median ${hoursText(hours)}`);
+  } else {
+    parts.push(`${row.tasks} task${row.tasks === 1 ? "" : "s"}, no ${kind === "handoff_approval" ? "hand-off" : "plan"} decisions`);
+  }
+  if (row.reviews) parts.push(`first reviews ${Math.round((row.first_pass_rate ?? 0) * row.reviews)}/${row.reviews}`);
+  if (row.rework_tasks) parts.push(`${row.rework_tasks} reworked`);
+  if (row.parked) parts.push(`${row.parked} parked`);
+  return parts.join(" · ");
+}
+
+export const FLOOR_LABEL: Record<string, string> = {
+  one_way_door: "one-way doors",
+  high_criticality: "high-criticality components",
+  unsettled_decision: "unsettled decisions",
+  low_confidence: "low-confidence plans",
+};

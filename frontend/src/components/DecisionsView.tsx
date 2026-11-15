@@ -14,6 +14,7 @@ import type {
   Reversibility,
 } from "../api/types";
 import { STATUS_LABELS, groupQueue, legalNextStatuses } from "../lib/decisions";
+import { TraceabilityLedger, TraceabilityPanel } from "./Traceability";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, isPlanner } from "../lib/permissions";
 
@@ -76,6 +77,8 @@ export default function DecisionsView({ projectId }: { projectId: number }) {
         groups={groups}
         onPick={(id) => setSelectedId(id)}
       />
+
+      <TraceabilityLedger projectId={projectId} onPick={(id) => setSelectedId(id)} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="space-y-2">
@@ -319,10 +322,16 @@ function AdrDetailPanel({
     queryFn: () => api.get<ADRDetail>(`/architecture/adrs/${adrId}`),
   });
 
+  // The ledger reads the decision's status and fitness rules: refresh it when they change.
+  const invalidateTrace = () => {
+    qc.invalidateQueries({ queryKey: ["traceability-adr", adrId] });
+    qc.invalidateQueries({ queryKey: ["traceability", projectId] });
+  };
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["adr", adrId] });
     qc.invalidateQueries({ queryKey: ["adrs", projectId] });
     qc.invalidateQueries({ queryKey: ["decision-queue", projectId] });
+    invalidateTrace();
   };
 
   const transition = useMutation({
@@ -371,11 +380,15 @@ function AdrDetailPanel({
       setFfSource("");
       setFfTarget("");
       qc.invalidateQueries({ queryKey: ["adr", adrId] });
+      invalidateTrace();
     },
   });
   const deleteFitness = useMutation({
     mutationFn: (id: number) => api.del(`/architecture/fitness/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["adr", adrId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["adr", adrId] });
+      invalidateTrace();
+    },
   });
 
   if (!detail.data) {
@@ -574,6 +587,9 @@ function AdrDetailPanel({
           </form>
         )}
       </div>
+
+      {/* Traceability — what implemented the decision, and is it still honored */}
+      <TraceabilityPanel adrId={adrId} projectId={projectId} mayLink={mayPlan} />
 
       {/* Comment thread */}
       <div className="space-y-2 border-t border-slate-100 pt-2">

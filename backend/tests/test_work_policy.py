@@ -405,3 +405,106 @@ def test_agent_flow_alerts() -> None:
                    ("merged_ahead_of_stage", 5), ("rule_stale", None)]
     merged = alerts.agent_flow_alerts(alerts.AgentWorkFacts(merged_ahead=[(5, "PAY-5", ["QA"])]))
     assert merged[0].message == "'PAY-5' was merged before its QA stage ran"
+
+
+# --------------------------------------------------------------------------- #
+# Graduated autonomy (Phase 4)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_pre_approved_class_skips_all_but_the_safety_floor() -> None:
+    from app.services import stage_policy as sp
+
+    facts = sp.ConditionFacts(
+        tags=["docs"], agent_done_count=1, plan_confidence="high",
+        governing=[sp.DecisionFact(1, 1, "Vault", "accepted", "one_way")])
+    conditions = ["one_way_door", "probation:5", "tag:docs"]
+    asked, waived, cls = sp.checkpoint_outcome(conditions, facts, ["tag:docs"])
+    assert cls == "tag:docs"
+    assert len(asked) == 1 and "one-way door" in asked[0]  # the floor holds
+    assert any("Fewer than 5" in w for w in waived) and any("tagged docs" in w for w in waived)
+    two_way = sp.ConditionFacts(tags=["docs"], agent_done_count=1)
+    assert sp.checkpoint_outcome(conditions, two_way, ["tag:docs"])[0] == []
+    # Not pre-approved: everything is asked, nothing waived.
+    asked, waived, cls = sp.checkpoint_outcome(conditions, two_way, ["tag:deps"])
+    assert asked and waived == [] and cls is None
+    # A condition naming another tag is the team's explicit call: a docs pre-approval doesn't
+    # carry security work past "always ask for security".
+    both = sp.ConditionFacts(tags=["docs", "security"], agent_done_count=9)
+    asked, waived, cls = sp.checkpoint_outcome(
+        ["tag:security", "tag:docs", "probation:5"], both, ["tag:docs"])
+    assert cls == "tag:docs" and asked == ["The task is tagged security"]
+    assert waived == ["The task is tagged docs"]
+    # Validation: classes are tag:<tag>.
+    assert sp.validate_change_classes(["TAG:Docs", "tag:docs"], "X") == ["tag:docs"]
+    try:
+        sp.validate_change_classes(["component:api"], "X")
+    except sp.PolicyError:
+        pass
+    else:
+        raise AssertionError("only tag:<tag> classes are accepted")
+    # A stored policy keeps its pre-approved classes through a parse / serialize round trip.
+    stage = sp.StageDef(status_name="X", category="in_progress", position=1)
+    sp.apply_policy_doc(stage, {"worked_by": "implementer", "checkpoints": {"plan": {
+        "required": True, "approval_when": ["always"], "pre_approved": ["tag:docs"]}}}, ["X"])
+    assert stage.checkpoints["plan"].pre_approved == ["tag:docs"]
+    assert stage.policy_doc()["checkpoints"]["plan"]["pre_approved"] == ["tag:docs"]
+
+
+def test_autonomy_suggests_from_evidence_and_revokes_on_trouble() -> None:
+    from datetime import datetime, timedelta
+
+    from app.services import autonomy as au
+
+    t0 = datetime(2026, 10, 1)
+    docs = [au.TaskRow(i, ["docs"]) for i in range(1, 11)]
+    risky = [au.TaskRow(i, ["security"]) for i in range(11, 21)]
+    gates = [au.GateRow(t.task_id, "plan_approval", "approve", t0, t0 + timedelta(minutes=20))
+             for t in docs + risky]
+    reviews = [au.ReviewRow(t.task_id, "pass", t0 + timedelta(days=1)) for t in docs + risky]
+    facts = au.AutonomyFacts(tasks=docs + risky, gates=gates, reviews=reviews,
+                             keep_for_people=frozenset({"security"}))
+    [suggestion] = au.suggestions(facts)
+    assert (suggestion.action, suggestion.checkpoint, suggestion.change_class) == (
+        "pre_approve", "plan", "tag:docs")
+    assert "100% approved as written" in suggestion.reason
+    assert suggestion.stats.median_hours("plan_approval") == 0.3
+
+    # One plan sent back: no suggestion. Too little evidence: none either.
+    sent_back = [*gates[:9], au.GateRow(10, "plan_approval", "request_changes", t0, t0)]
+    assert au.suggestions(au.AutonomyFacts(tasks=docs, gates=sent_back, reviews=reviews)) == []
+    assert au.suggestions(au.AutonomyFacts(tasks=docs[:3], gates=gates[:3],
+                                           reviews=reviews[:3])) == []
+
+    # Already pre-approved, and the work comes back: suggest revoking.
+    troubled = [au.TaskRow(1, ["docs"], rework_rounds=1), au.TaskRow(2, ["docs"], rework_rounds=2),
+                au.TaskRow(3, ["docs"], parked=True)]
+    [revoke] = au.suggestions(au.AutonomyFacts(tasks=troubled, pre_approved={"plan": ["tag:docs"]}))
+    assert revoke.action == "revoke" and "1 parked" in revoke.reason
+
+
+def test_recurring_review_notes_become_rule_suggestions() -> None:
+    from datetime import datetime, timedelta
+
+    from app.services import rule_suggestions as rs
+
+    t0 = datetime(2026, 10, 1)
+
+    def note(i: int, task: int, text: str) -> rs.NoteRow:
+        return rs.NoteRow("gate", i, task, f"PAY-{task}", text, t0 + timedelta(hours=i))
+
+    notes = [
+        note(1, 1, "Add a migration test for the new column"),
+        note(2, 2, "Missing migration test for the column change"),
+        note(3, 3, "Please add a migration test covering the new column"),
+        note(4, 1, "Rename the variable"),  # one-off: no theme
+        note(5, 4, "Feature flag the checkout banner"),
+        note(6, 4, "Feature flag the checkout button"),  # same task twice: not enough tasks
+    ]
+    [theme] = rs.suggest(notes)
+    assert len(theme.notes) == 3 and theme.tasks == ["PAY-1", "PAY-2", "PAY-3"]
+    assert {"migration", "test", "column"} <= set(theme.words) | {"column"}
+    assert "migration" in theme.key
+    # Already a rule that says it: nothing to suggest.
+    assert rs.suggest(notes, [("migration-tests", "Migrations come with a test",
+                               "Every schema change has a migration test")]) == []

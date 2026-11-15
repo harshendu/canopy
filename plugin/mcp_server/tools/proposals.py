@@ -129,7 +129,10 @@ def register(mcp, client) -> None:
         `source_label`, `source_url`.
 
         - `entity_type`: task | dependency | milestone | blocker | risk | outcome |
-          decision | doc_reference. `action`: create | update | resolve (blockers only).
+          decision | doc_reference | rule. `action`: create | update | resolve (blockers
+          only). A `rule` (create only, project scope) is a working agreement suggested by
+          recurring review notes (`suggest_rules`): key, title, body, kind (guidance |
+          attestation), enforcement, roles, tags, paths — a person accepts it.
         - Payload fields mirror the create/update APIs (task: name, duration, type,
           parent_id, constraint_start, deadline, assignee_engineer_id, tags, estimate_*;
           dependency: predecessor_id, successor_id, type, lag; blocker: task_id, reason,

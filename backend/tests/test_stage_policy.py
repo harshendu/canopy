@@ -443,3 +443,127 @@ async def test_a_first_policy_edit_keeps_the_default_stages(client: Any, db_sess
     review = next(c for c in saved["columns"] if c["status"] == "In Review")
     assert {c["check"] for c in review["policy"]["enter"]["checks"]} == {
         "artifact", "pr_linked", "pr_checks"}
+
+
+@pytest.mark.asyncio
+async def test_pre_approved_change_classes_skip_the_plan_gate_but_not_the_floor(
+    client: Any, db_session: Any
+) -> None:
+    w = await _world(client, db_session)
+    await client.post(f"{API}/projects/{w.project_id}/workflow/apply-template",
+                      json={"dry_run": False}, headers=w.arch)
+    await client.post(f"{API}/projects/{w.project_id}/agent-intake", json={"state": "on"},
+                      headers=w.arch)
+    url = f"{API}/projects/{w.project_id}/autonomy"
+    before = (await client.get(url, headers=w.arch)).json()
+    assert before["stage"] == "In Progress" and before["pre_approved"] == {"plan": []}
+    assert "one_way_door" in before["floor"] and before["can_edit"]
+
+    # People pre-approve; agents can't.
+    agent = await _mint(client, w.arch, label="bot")
+    assert (await client.post(url, headers=agent, json={
+        "checkpoint": "plan", "change_class": "tag:docs", "action": "add"})).status_code == 403
+    added = await client.post(url, headers=w.arch, json={
+        "checkpoint": "plan", "change_class": "tag:docs", "action": "add"})
+    assert added.status_code == 200, added.text
+    assert added.json()["pre_approved"]["plan"] == ["tag:docs"]
+
+    async def planned(name: str, components: list[int]) -> dict[str, Any]:
+        tid = (await client.post(f"{API}/tasks", json={
+            "project_id": w.project_id, "name": name, "status": "Ready", "tags": ["docs"]},
+            headers=w.arch)).json()["id"]
+        await client.post(f"{API}/tasks/{tid}/delegation", json={"delegation": "agent"},
+                          headers=w.arch)
+        if components:
+            await client.put(f"{API}/tasks/{tid}/components",
+                             json={"component_ids": components}, headers=w.arch)
+        token = await _mint(client, w.arch, label=f"impl-{name}", roles=["implementer"])
+        claim = (await _claim(client, token, "implementer", tid))["claim"]
+        plan = await client.post(f"{API}/work/claims/{claim['id']}/artifacts", headers=token,
+                                 json={"kind": "plan", "body": "p",
+                                       "data": {"approach": "p", "confidence": "high"}})
+        assert plan.status_code in (200, 201), plan.text
+        return dict(plan.json())
+
+    # Probation (fewer than 5 done) would ask a person; the docs class is pre-approved.
+    easy = await planned("Docs tweak", [])
+    assert easy["approval"]["required"] is False
+    # Touching a high-criticality component governed by a one-way door still asks.
+    risky = await planned("Docs in the payments service", [w.component_id])
+    assert risky["approval"]["required"] is True
+    # The trail says what wasn't asked, and why.
+    trail = (await client.get(f"{API}/tasks/{easy['artifact']['task_id']}/execution",
+                              headers=w.arch)).json()["events"]
+    pre = [e for e in trail if e["kind"] == "pre_approved"]
+    assert pre and pre[0]["data"]["class"] == "tag:docs"
+
+    removed = await client.post(url, headers=w.arch, json={
+        "checkpoint": "plan", "change_class": "tag:docs", "action": "remove"})
+    assert removed.json()["pre_approved"]["plan"] == []
+
+
+@pytest.mark.asyncio
+async def test_recurring_review_notes_become_a_rule_a_person_accepts(
+    client: Any, db_session: Any
+) -> None:
+    from datetime import timedelta
+
+    from app.models.base import utcnow
+    from app.models.gate import Gate
+    from app.models.policy import DeliveryRule
+
+    w = await _world(client, db_session)
+    tasks = []
+    for i in range(3):
+        tid = (await client.post(f"{API}/tasks", json={
+            "project_id": w.project_id, "name": f"Change {i}", "status": "To Do"},
+            headers=w.arch)).json()["id"]
+        tasks.append(tid)
+    notes = ["Add a migration test for the new column",
+             "Missing migration test for the column change",
+             "Please add a migration test covering the new column"]
+    now = utcnow()
+    for tid, note in zip(tasks, notes, strict=True):
+        db_session.add(Gate(task_id=tid, project_id=w.project_id, kind="handoff_approval",
+                            origin="checkpoint", title="Approve", status="changes_requested",
+                            decision="request_changes", response_note=note, approvers="x",
+                            created_at=now - timedelta(days=1), decided_at=now))
+    await db_session.commit()
+
+    [suggestion] = (await client.get(f"{API}/projects/{w.project_id}/rule-suggestions",
+                                     headers=w.arch)).json()
+    assert suggestion["count"] == 3 and len(suggestion["tasks"]) == 3
+    assert "migration" in suggestion["key"]
+
+    # A session stages the rule; a person accepts it.
+    agent = await _mint(client, w.arch, label="reviewer-bot")
+    rule_item = {"entity_type": "rule", "action": "create", "payload": {
+        "key": "migration-tests", "title": "Schema changes come with a migration test",
+        "body": "Every new or changed column ships with a migration test.",
+        "kind": "attestation", "enforcement": "warn", "roles": ["implementer"]},
+        "reason": "Asked for in three reviews this month", "source_kind": "other",
+        "source_label": "recurring review notes"}
+    staged = await client.post(f"{API}/proposals", headers=agent, json={
+        "scope_level": "project", "scope_id": w.project_id,
+        "title": "Make migration tests a rule", "items": [rule_item]})
+    assert staged.status_code == 201, staged.text
+    proposal_id = staged.json()["id"]
+    preview = (await client.get(f"{API}/proposals/{proposal_id}/preview",
+                                headers=w.arch)).json()
+    assert preview["counts"]["rules_added"] == 1 and preview["can_apply"]
+    assert (await client.post(f"{API}/proposals/{proposal_id}/apply",
+                              headers=agent)).status_code == 403  # people apply
+    applied = await client.post(f"{API}/proposals/{proposal_id}/apply", headers=w.arch)
+    assert applied.status_code == 200, applied.text
+    rule = (await db_session.execute(
+        select(DeliveryRule).where(DeliveryRule.key == "migration-tests"))).scalar_one()
+    assert rule.scope_level == "project" and rule.kind == "attestation"
+    assert rule.roles == ["implementer"]
+    assert rule.created_by_user_id is not None  # the person who accepted it, not the session
+    # Covered now: the theme is no longer suggested, and the key can't be proposed twice.
+    assert (await client.get(f"{API}/projects/{w.project_id}/rule-suggestions",
+                             headers=w.arch)).json() == []
+    again = await client.post(f"{API}/proposals", headers=agent, json={
+        "scope_level": "project", "scope_id": w.project_id, "title": "Again",
+        "items": [rule_item]})
+    assert again.status_code == 400 and "already has a rule" in again.text

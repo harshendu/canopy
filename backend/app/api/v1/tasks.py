@@ -11,6 +11,7 @@ from app.api.deps import (
     is_planner,
 )
 from app.core.events import publish
+from app.models.architecture import ArchitectureDecision
 from app.models.base import ActorKind, Delegation, TaskType, TokenScope
 from app.models.project import Project, Task, TaskStatusHistory
 from app.models.user import User
@@ -146,6 +147,15 @@ async def update_task(
     data = payload.model_dump(exclude_unset=True)
     if "tags" in data and data["tags"] is not None:
         data["tags"] = normalize_tags(data["tags"])
+    if data.get("implements_adr_id") is not None:
+        # A task implements a decision of its own project (the traceability ledger joins them).
+        adr = await session.get(ArchitectureDecision, data["implements_adr_id"])
+        if adr is None or adr.project_id != task.project_id:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "adr_not_in_project",
+                        "message": "A task implements a decision of its own project"},
+            )
     for field, value in data.items():
         setattr(task, field, value)
     await session.commit()

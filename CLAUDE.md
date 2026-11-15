@@ -124,8 +124,8 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   (`app/models/proposal.py`) stage **inbound canopy writes** an agent inferred (from
   Slack/email/meetings/docs) for a human to review and apply in the UI — the inbound twin of
   draft plans. Items are whitelisted per entity×action (task/dependency/milestone/blocker/
-  risk/outcome/decision/doc_reference; task `status` stageable only on canopy-owned tasks,
-  never on a mirrored one), scope-contained
+  risk/outcome/decision/doc_reference/rule — a `rule` is a project delivery rule; task `status`
+  stageable only on canopy-owned tasks, never on a mirrored one), scope-contained
   to one project/initiative, may reference each other via `ref`/`*_ref` handles, and carry
   provenance (`source_kind/label/url`) + a stage-time `before` snapshot. Apply is
   **all-or-nothing** + auto-replan (`app/services/proposals.py`); staging/withdraw/**revise**
@@ -170,6 +170,14 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   unless locked, stricter attestation wins) are guidance in the brief or Definition-of-Done
   attestations a hand-off must carry. `agent_flow.py` (pure) + `agent_flow_service.py` compute the
   team-level measures (`/projects|initiatives|teams/{id}/agent-flow`), never per person.
+  **Learning loop** (Phase 4): a checkpoint's `pre_approved` change classes (`tag:<tag>`) skip a
+  person except at the safety floor (`stage_policy.PRE_APPROVAL_FLOOR`: one-way doors, high
+  criticality, unsettled decisions, low confidence — and a condition naming another tag),
+  suggested from evidence by pure
+  `autonomy.py` (`/projects/{id}/autonomy`; changing one is human-only); retros gain an
+  agent-work section (`retro.agent_work_lines`); recurring request-changes notes and review
+  findings cluster into rule suggestions (pure `rule_suggestions.py`,
+  `/projects/{id}/rule-suggestions`) a session stages as a `rule` proposal item.
   **Mirrored projects** (§17): policies live on the tracker binding (`StagePolicy.owner_type =
   "binding"`); a claim's pull, a hand-off or a gate approval *clears* the move
   (`Task.clearance_status`, written only by `work_service`; responses carry `tracker_transition`)
@@ -384,7 +392,12 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   (`ADRFitnessFunction`: forbid|require between two components). The drift scan evaluates accepted
   ADRs' rules against the observed edges (`FitnessRule` in `app/services/drift.py`); a violation is a
   `fitness_violation` drift event (heaviest weight) that auto-resolves when fixed. MCP:
-  `add_adr_fitness`. (`Task.implements_adr_id` + a full traceability ledger are a planned follow-up.)
+  `add_adr_fitness`. **Traceability ledger** (USER_FLOWS §G8): `GET /architecture/traceability?
+  project_id=` + `/architecture/adrs/{id}/traceability` join a decision to the tasks that implement
+  it (`Task.implements_adr_id`, same project only) or touch its components, their PRs and reviews,
+  its fitness rules and open drift, with a verdict computed per read (pure
+  `app/services/traceability.py`, never stored). MCP: `get_decision_traceability`,
+  `link_task_to_decision`.
 - **Architecture depth:** `POST /architecture/adrs/import` reads a markdown doc from a GitHub/Drive
   connection and parses it into an ADR (`app/services/markdown_adr.py`, pure). `GET /architecture/adrs/{id}/impact`
   returns directly-affected components plus everything that transitively depends on them
@@ -429,7 +442,7 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
     `session.delete()` 500s on PG/MySQL and silently orphans on SQLite. `tests/test_cascade_delete.py`
     verifies it under `PRAGMA foreign_keys=ON` over the full demo graph, so a missed table fails CI.
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
-  REST routes (~165 across projects/planning/proposals/work queue/connectors/tracking/team/architecture/
+  REST routes (~167 across projects/planning/proposals/work queue/connectors/tracking/team/architecture/
   scenarios/specs/docs/delivery/outcomes/sprints; tracker tools are neutral — `sync_tracker`,
   `link_tracker_item`, `ingest_work_items`, `finalize_draft_plan`, `*_project_tracking`). Skills
   are runbooks (`updating-canopy` — the

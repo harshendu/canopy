@@ -417,6 +417,94 @@ export interface ImpactResponse {
   downstream_component_ids: number[];
 }
 
+/** Decision-to-code traceability (PROPOSED_FLOWS §T): the verdict is computed, never stored. */
+export type TraceVerdict =
+  | "retired"
+  | "pending"
+  | "violated"
+  | "unimplemented"
+  | "at_risk"
+  | "no_linked_work"
+  | "in_progress"
+  | "honored";
+
+export interface TracedTask {
+  task_id: number;
+  key: string | null;
+  name: string;
+  status: string | null;
+  done: boolean;
+  implements: boolean;
+  governed: boolean;
+}
+
+export interface TracedPullRequest {
+  task_id: number | null;
+  repo: string;
+  number: number;
+  url: string | null;
+  state: string;
+  merged: boolean;
+  checks_state: string | null;
+  review_decision: string | null;
+}
+
+export interface TracedReview {
+  task_id: number;
+  artifact_id: number;
+  verdict: string | null;
+  checked: boolean;
+}
+
+export interface TracedFitness {
+  fitness_id: number;
+  kind: string;
+  source: string;
+  target: string;
+  description: string | null;
+  violated: boolean;
+}
+
+export interface TracedDrift {
+  drift_id: number;
+  kind: string;
+  summary: string;
+}
+
+export interface DecisionTrace {
+  adr_id: number;
+  number: number;
+  title: string;
+  status: string;
+  reversibility: string | null;
+  verdict: TraceVerdict;
+  reason: string;
+  components: string[];
+  tasks: TracedTask[];
+  pull_requests: TracedPullRequest[];
+  reviews: TracedReview[];
+  fitness: TracedFitness[];
+  drift: TracedDrift[];
+}
+
+export interface TraceLedgerRow {
+  adr_id: number;
+  number: number;
+  title: string;
+  status: string;
+  verdict: TraceVerdict;
+  reason: string;
+  tasks: number;
+  implementing: number;
+  done: number;
+  prs: number;
+  merged: number;
+  fitness: number;
+  violated: number;
+  reviews_checked: number;
+  open_drift: number;
+}
+
 export interface ComponentLink {
   id: number;
   source_id: number;
@@ -1688,7 +1776,8 @@ export type ProposalEntityType =
   | "risk"
   | "outcome"
   | "decision"
-  | "doc_reference";
+  | "doc_reference"
+  | "rule";
 export type ProposalActionType = "create" | "update" | "resolve";
 
 export interface ProposalItem {
@@ -1841,6 +1930,7 @@ export interface PreviewCounts {
   outcomes_edited: number;
   decisions_added: number;
   docs_added: number;
+  rules_added?: number;
 }
 
 export interface ProposalPreview {
@@ -2456,4 +2546,36 @@ export interface WebhookTestResult {
   status: string;
   response_status: number | null;
   error: string | null;
+}
+
+// --- Graduated autonomy (USER_FLOWS §AE6) ---
+
+export interface ChangeClassStats {
+  change_class: string;
+  tasks: number;
+  decided: Record<string, number>;
+  approval_rate: Record<string, number | null>;
+  median_decision_hours: Record<string, number | null>;
+  reviews: number;
+  first_pass_rate: number | null;
+  rework_tasks: number;
+  parked: number;
+}
+
+export interface AutonomySuggestion {
+  action: "pre_approve" | "revoke";
+  checkpoint: "plan" | "handoff";
+  change_class: string;
+  reason: string;
+}
+
+export interface AutonomyRead {
+  stage: string | null;
+  checkpoints: ("plan" | "handoff")[];
+  pre_approved: Record<string, string[]>;
+  floor: string[];
+  weeks: number;
+  classes: ChangeClassStats[];
+  suggestions: AutonomySuggestion[];
+  can_edit: boolean;
 }

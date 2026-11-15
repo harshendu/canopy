@@ -45,6 +45,16 @@ from app.schemas.entities import (
     ImpactResponse,
     ReviewSummaryRead,
 )
+from app.schemas.traceability import (
+    DecisionTraceRead,
+    LedgerRow,
+    TracedDrift,
+    TracedFitness,
+    TracedPullRequest,
+    TracedReview,
+    TracedTask,
+)
+from app.services import traceability
 from app.services.access import ensure_project_editable
 from app.services.decisions import review_summary, valid_transition
 from app.services.impact import downstream_components
@@ -556,3 +566,57 @@ async def update_adr(
         await _component_ids(session, adr_id),
         await _stakeholder_ids(session, adr_id),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Decision-to-code traceability (PROPOSED_FLOWS §T)
+# --------------------------------------------------------------------------- #
+
+
+def _trace_read(facts: traceability.DecisionFacts) -> DecisionTraceRead:
+    code, why = traceability.verdict(facts)
+    return DecisionTraceRead(
+        adr_id=facts.adr_id, number=facts.number, title=facts.title, status=facts.status,
+        reversibility=facts.reversibility, verdict=code, reason=why,
+        components=list(facts.components),
+        tasks=[TracedTask(**vars(t)) for t in facts.tasks],
+        pull_requests=[TracedPullRequest(**vars(p)) for p in facts.prs],
+        reviews=[TracedReview(**vars(r)) for r in facts.reviews],
+        fitness=[TracedFitness(**vars(f)) for f in facts.fitness],
+        drift=[TracedDrift(**vars(d)) for d in facts.drift],
+    )
+
+
+@router.get("/adrs/{adr_id}/traceability", response_model=DecisionTraceRead)
+async def adr_traceability(
+    session: SessionDep, _: CurrentUser, adr_id: int
+) -> DecisionTraceRead:
+    """For this decision: the tasks that implement it or touch what it governs, their pull
+    requests and the reviews that checked them against it, its fitness rules and open drift —
+    and whether it is honored, at risk, violated or not yet implemented."""
+    from app.services import traceability_service
+
+    adr = await session.get(ArchitectureDecision, adr_id)
+    if adr is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ADR not found")
+    return _trace_read(await traceability_service.decision_facts(session, adr))
+
+
+@router.get("/traceability", response_model=list[LedgerRow])
+async def project_traceability(
+    session: SessionDep, _: CurrentUser, project_id: int
+) -> list[LedgerRow]:
+    """The ledger: one row per decision of the project, worst verdicts first."""
+    from app.services import traceability_service
+
+    order = {"violated": 0, "unimplemented": 1, "at_risk": 2, "in_progress": 3,
+             "no_linked_work": 4, "pending": 5, "honored": 6, "retired": 7}
+    rows: list[LedgerRow] = []
+    ctx = await traceability_service.project_context(session, project_id)
+    for adr in (await session.execute(
+        select(ArchitectureDecision).where(ArchitectureDecision.project_id == project_id)
+        .order_by(col(ArchitectureDecision.number))
+    )).scalars().all():
+        facts = await traceability_service.decision_facts(session, adr, ctx)
+        rows.append(LedgerRow.model_validate(traceability.summary(facts)))
+    return sorted(rows, key=lambda r: (order.get(r.verdict, 9), r.number))

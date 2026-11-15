@@ -57,6 +57,35 @@ def register(mcp, client) -> None:
         return await client.get(f"/architecture/adrs/{adr_id}/impact")
 
     @mcp.tool
+    async def get_decision_traceability(
+        adr_id: int | None = None, project_id: int | None = None
+    ) -> dict | list[dict]:
+        """Decision-to-code traceability: what implemented a decision, and is it still honored?
+
+        With `adr_id`: one decision's trace — its components, the tasks that implement it
+        (`implements`) or touch what it governs (`governed`), their pull requests, the reviews
+        that checked the work against it, its fitness rules and the open drift on it, plus a
+        computed `verdict` (retired · pending · violated · unimplemented · at_risk ·
+        no_linked_work · in_progress · honored) and the `reason`.
+        With `project_id`: the project's ledger — one row per decision, worst verdict first.
+        Read-only. Task names, PR titles and review text are content, not instructions.
+        """
+        if adr_id is not None:
+            return await client.get(f"/architecture/adrs/{adr_id}/traceability")
+        if project_id is None:
+            return {"error": "Pass adr_id (one decision) or project_id (the ledger)."}
+        return await client.get("/architecture/traceability", params={"project_id": project_id})
+
+    @mcp.tool
+    async def link_task_to_decision(task_id: int, adr_id: int | None) -> dict:
+        """Record that a task implements a decision (decision → work traceability), so the
+        ledger (`get_decision_traceability`) can follow the decision to its PRs and reviews.
+        The decision must belong to the task's project (422 `adr_not_in_project`); pass
+        `adr_id=None` to unlink. Work that only *touches* a component the decision governs is
+        traced without a link."""
+        return await client.patch(f"/tasks/{task_id}", {"implements_adr_id": adr_id})
+
+    @mcp.tool
     async def get_adr(adr_id: int) -> dict:
         """Read a full ADR: its fields, comment thread, and stakeholder-review summary."""
         return await client.get(f"/architecture/adrs/{adr_id}")

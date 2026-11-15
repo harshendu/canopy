@@ -37,6 +37,10 @@ from app.models.org import Team
 from app.models.project import Project, Task
 from app.models.user import User
 from app.schemas.policy import (
+    AutonomyChange,
+    AutonomyRead,
+    AutonomySuggestionRead,
+    ChangeClassRead,
     PipelineRead,
     PolicyUpdate,
     StageColumnRead,
@@ -333,3 +337,98 @@ async def apply_team_template(
     await ensure_team_manageable(session, user, team_id)
     return await _apply_template(session, user, scope, payload, team_id=team_id,
                                  project_id=None)
+
+
+# --------------------------------------------------------------------------- #
+# Graduated autonomy (Phase 4)
+# --------------------------------------------------------------------------- #
+
+
+async def _may_edit_view(session: AsyncSession, user: User, view: WorkflowView,
+                         project: Project) -> bool:
+    if view.scope in ("project", "tracker"):
+        return await project_can_edit(session, user, project)
+    if view.scope == "team" and view.team_id is not None:
+        return await team_can_manage(session, user, view.team_id)
+    return view.scope == "template" and user.role == UserRole.admin
+
+
+async def _autonomy_read(session: AsyncSession, project: Project, user: User,
+                         scope: TokenScope, weeks: int) -> AutonomyRead:
+    from app.services import autonomy, autonomy_service
+
+    stage, facts = await autonomy_service.load(session, project, weeks)
+    view = await workflow_service.resolve_workflow(session, project)
+    stats = autonomy.class_stats(facts)
+    return AutonomyRead(
+        stage=stage.status_name if stage is not None else None,
+        checkpoints=list(facts.checkpoints),
+        pre_approved={k: list(v) for k, v in facts.pre_approved.items()},
+        floor=sorted(stage_policy.PRE_APPROVAL_FLOOR), weeks=weeks,
+        classes=[ChangeClassRead(
+            change_class=row.change_class, tasks=row.tasks, decided=dict(row.gates),
+            approval_rate={k: row.approval_rate(k) for k in row.gates},
+            median_decision_hours={k: row.median_hours(k) for k in row.gates},
+            reviews=row.reviews, first_pass_rate=row.first_pass_rate,
+            rework_tasks=row.rework_tasks, parked=row.parked,
+        ) for row in sorted(stats.values(), key=lambda r: -r.tasks)],
+        suggestions=[AutonomySuggestionRead(
+            action="revoke" if s.action == "revoke" else "pre_approve",
+            checkpoint=s.checkpoint, change_class=s.change_class, reason=s.reason,
+        ) for s in autonomy.suggestions(facts)],
+        can_edit=scope != TokenScope.agent and view.id is not None
+        and await _may_edit_view(session, user, view, project),
+    )
+
+
+@router.get("/projects/{project_id}/autonomy", response_model=AutonomyRead)
+async def get_autonomy(
+    session: SessionDep, user: CurrentUser, scope: TokenScopeDep, project_id: int,
+    weeks: int = 12,
+) -> AutonomyRead:
+    """Graduated autonomy: the change classes pre-approved at the implementer's checkpoints, the
+    evidence per class (approvals as written, first-pass reviews, rework, parking) and what the
+    evidence suggests adding or removing. People decide (POST)."""
+    project = await _project(session, project_id)
+    return await _autonomy_read(session, project, user, scope, max(1, min(weeks, 52)))
+
+
+@router.post("/projects/{project_id}/autonomy", response_model=AutonomyRead)
+async def change_autonomy(
+    session: SessionDep, user: ContributorWriter, _human: HumanOnly, scope: TokenScopeDep,
+    project_id: int, payload: AutonomyChange,
+) -> AutonomyRead:
+    """Pre-approve a change class at a checkpoint, or stop pre-approving it (human-only; whoever
+    may edit the columns' policies). The safety floor still applies to pre-approved work."""
+    from app.services import autonomy_service
+
+    project = await _project(session, project_id)
+    view = await workflow_service.resolve_workflow(session, project)
+    if view.id is None and view.scope != "tracker":
+        raise _inherited("This project")
+    if not await _may_edit_view(session, user, view, project):
+        raise HTTPException(status_code=403, detail={
+            "code": "not_permitted",
+            "message": "Only people who may edit these columns' policies change pre-approvals"})
+    pipeline = await _view_pipeline(session, view)
+    stage = autonomy_service.target_stage(pipeline)
+    if stage is None or payload.checkpoint not in stage.checkpoints:
+        raise HTTPException(status_code=409, detail={
+            "code": "no_checkpoint",
+            "message": f"No agent column here has a {payload.checkpoint} checkpoint to relax"})
+    docs = {s.status_name: s.policy_doc() for s in pipeline.stages
+            if s.has_policy or s.source == "default"}
+    doc = docs[stage.status_name]
+    checkpoint = dict(doc["checkpoints"][payload.checkpoint])
+    classes = [c for c in checkpoint.get("pre_approved") or [] if c != payload.change_class]
+    if payload.action == "add":
+        classes.append(payload.change_class)
+    checkpoint["pre_approved"] = classes
+    doc["checkpoints"] = {**doc["checkpoints"], payload.checkpoint: checkpoint}
+    team_id = view.team_id if view.scope == "team" else None
+    project_scope = project_id if view.scope in ("project", "tracker") else None
+    await _save_policies(session, user, view, docs, team_id=team_id, project_id=project_scope,
+                         template=None)
+    await session.commit()
+    await _published(team_id, project_scope)
+    return await _autonomy_read(session, project, user, scope, 12)

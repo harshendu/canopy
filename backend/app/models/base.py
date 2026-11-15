@@ -197,6 +197,8 @@ class WorkEventKind(StrEnum):
     # then showed a move (data.cleared says whether it was the one canopy cleared).
     cleared = "cleared"
     tracker_moved = "tracker_moved"
+    # Graduated autonomy (Phase 4): a pre-approved change class skipped a checkpoint.
+    pre_approved = "pre_approved"
 
 
 class RuleScope(StrEnum):
@@ -493,6 +495,7 @@ class ProposalEntity(StrEnum):
     outcome = "outcome"
     decision = "decision"
     doc_reference = "doc_reference"
+    rule = "rule"  # a delivery rule a session suggests from recurring review notes (Phase 4)
 
 
 class ProposalAction(StrEnum):

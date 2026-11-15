@@ -731,7 +731,7 @@ ECOMMERCE = Dataset(
         PullRequestSpec(415, "Handle 3-D Secure challenges in checkout", "open",
                         "gabrielsilva", "Integrate tokenized payments"),
         PullRequestSpec(398, "Checkout session service", "closed", "rahulverma",
-                        "Checkout session service"),
+                        "Checkout session service", merged=True),
     ),
     connections=demo_connections,
     leadership_notes=LEADERSHIP_NOTES,

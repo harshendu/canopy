@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { DeliveryRule } from "../api/types";
 import {
   addableScopes,
+  classEvidenceText,
   checkDef,
   checksSummary,
   decisionText,
@@ -190,5 +191,27 @@ describe("gate evidence", () => {
     ]);
     expect(evidenceChecks({ pull_request: {} })).toBeNull();
     expect(evidenceChecks(undefined)).toBeNull();
+  });
+});
+
+describe("graduated autonomy", () => {
+  it("summarises a change class's evidence", () => {
+    const row = {
+      change_class: "tag:docs",
+      tasks: 10,
+      decided: { plan_approval: 10 },
+      approval_rate: { plan_approval: 1 },
+      median_decision_hours: { plan_approval: 0.3 },
+      reviews: 10,
+      first_pass_rate: 0.9,
+      rework_tasks: 1,
+      parked: 0,
+    };
+    expect(classEvidenceText(row, "plan_approval")).toBe(
+      "10 plans · 100% as written · median 0.3 h · first reviews 9/10 · 1 reworked",
+    );
+    expect(classEvidenceText({ ...row, decided: {}, reviews: 0, rework_tasks: 0 }, "plan_approval")).toBe(
+      "10 tasks, no plan decisions",
+    );
   });
 });

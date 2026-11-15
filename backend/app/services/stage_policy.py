@@ -11,6 +11,7 @@ person must look, and routing. No database, no clock reads — callers pass fact
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -151,11 +152,16 @@ class CheckpointSpec:
     required: bool = True
     approval_when: list[str] = field(default_factory=lambda: list(DEFAULT_PLAN_APPROVAL_WHEN))
     decision: DecisionSpec | None = None
+    # Graduated autonomy (Phase 4): change classes people pre-approved — `tag:<tag>` — whose
+    # plans / hand-offs skip the person except for the safety floor (PRE_APPROVAL_FLOOR).
+    pre_approved: list[str] = field(default_factory=list)
 
     def to_doc(self) -> dict[str, Any]:
         doc: dict[str, Any] = {"required": self.required, "approval_when": self.approval_when}
         if self.decision is not None:
             doc["decision"] = self.decision.to_doc()
+        if self.pre_approved:
+            doc["pre_approved"] = list(self.pre_approved)
         return doc
 
 
@@ -534,6 +540,7 @@ def apply_policy_doc(stage: StageDef, doc: Mapping[str, Any], names: Sequence[st
                 column,
             ),
             decision=parse_decision(decision_doc, names, column) if decision_doc else None,
+            pre_approved=validate_change_classes(cp_doc.get("pre_approved"), column),
         )
     stage.checkpoints = checkpoints
     stage.lease_minutes = _int(doc.get("lease_minutes"), "lease_minutes", column, lo=5, hi=720,
@@ -811,59 +818,125 @@ class ConditionFacts:
     agent_done_count: int = 0
 
 
-def matched_conditions(conditions: Sequence[str], facts: ConditionFacts) -> list[str]:
-    """The reasons a person must decide, in plain words — empty means no approval is needed.
-    Fail closed: a decision with no reversibility recorded counts as a one-way door (§A6)."""
-    reasons: list[str] = []
-    for cond in conditions:
+# What a pre-approved change class can never skip: a one-way door, a high-criticality
+# component, a decision still under discussion, a plan unsure of itself.
+PRE_APPROVAL_FLOOR = frozenset({"one_way_door", "high_criticality", "unsettled_decision",
+                                "low_confidence"})
+_CLASS_RE = re.compile(r"^tag:[a-z0-9][a-z0-9_.-]{0,63}$")
+
+
+def validate_change_classes(raw: Any, column: str) -> list[str]:
+    """`pre_approved`: a list of `tag:<tag>` change classes."""
+    if raw in (None, []):
+        return []
+    if not isinstance(raw, list):
+        raise PolicyError("pre_approved must be a list of change classes", column=column)
+    out: list[str] = []
+    for item in raw:
+        value = str(item).strip().lower()
+        if not _CLASS_RE.match(value):
+            raise PolicyError(f"{item!r} isn't a change class (tag:<tag>)", column=column)
+        if value not in out:
+            out.append(value)
+    return out
+
+
+def pre_approval_class(pre_approved: Sequence[str], tags: Sequence[str]) -> str | None:
+    """The first pre-approved change class this task belongs to (None: none)."""
+    have = {t.strip().lower() for t in tags}
+    for cls in pre_approved:
+        head, _, arg = cls.partition(":")
+        if head == "tag" and arg in have:
+            return cls
+    return None
+
+
+def checkpoint_outcome(
+    conditions: Sequence[str], facts: ConditionFacts, pre_approved: Sequence[str] = ()
+) -> tuple[list[str], list[str], str | None]:
+    """(reasons a person must decide, reasons a pre-approval waived, the class that waived
+    them). A pre-approved class skips everything but the safety floor — and a condition that
+    names another tag ("always ask for security work") stays a team's explicit call."""
+    pairs = _matched(conditions, facts)
+    cls = pre_approval_class(pre_approved, facts.tags) if pre_approved else None
+    if cls is None:
+        return _dedupe(r for _, r in pairs), [], None
+    own_tag = cls.partition(":")[2]
+
+    def holds(cond: str) -> bool:
         head, _, arg = cond.partition(":")
-        if cond == "always":
-            reasons.append("This stage always asks a person")
-        elif cond == "never":
-            continue
-        elif head == "one_way_door":
-            doors = [d for d in facts.governing if d.reversibility != "two_way"]
-            for d in doors:
-                reasons.append(
-                    f"Touches what ADR-{d.number:04d} “{d.title}” governs as a one-way door"
-                    if d.reversibility == "one_way"
-                    else f"Touches what ADR-{d.number:04d} “{d.title}” governs, and that "
-                         "decision isn't classified as reversible"
-                )
-            declared = sorted(set(facts.change_classes) & ONE_WAY_CHANGE_CLASSES)
-            if declared:
-                reasons.append("The plan declares " + ", ".join(c.replace("_", " ")
-                                                               for c in declared))
-        elif head == "high_criticality" and facts.high_criticality:
-            reasons.append("Touches high-criticality " + ", ".join(facts.high_criticality))
-        elif head == "unsettled_decision" and facts.unsettled:
-            reasons.extend(
-                f"ADR-{d.number:04d} “{d.title}” is still {d.status.replace('_', ' ')}"
-                for d in facts.unsettled
-            )
-        elif head == "no_spec" and (not facts.spec_approved or facts.criteria_count == 0):
-            reasons.append("No approved spec with acceptance criteria")
-        elif head == "low_confidence" and facts.plan_confidence == "low":
-            reasons.append("The plan's own confidence is low")
-        elif head == "large_change":
-            max_paths, max_days = _large_change_limits(arg)
-            if facts.affected_paths > max_paths:
-                reasons.append(f"The plan touches {facts.affected_paths} paths (limit {max_paths})")
-            if facts.task_duration_days is not None and facts.task_duration_days > max_days:
-                reasons.append(
-                    f"The task is sized at {facts.task_duration_days} days (limit {max_days})"
-                )
-        elif head == "probation" and arg.isdigit() and facts.agent_done_count < int(arg):
-            reasons.append(
-                f"Fewer than {arg} agent-worked tasks have reached done in this project"
-            )
-        elif head == "tag" and arg and arg in facts.tags:
-            reasons.append(f"The task is tagged {arg}")
+        return head in PRE_APPROVAL_FLOOR or (head == "tag" and arg != own_tag)
+
+    kept = _dedupe(r for cond, r in pairs if holds(cond))
+    waived = _dedupe(r for cond, r in pairs if not holds(cond))
+    return kept, waived, cls
+
+
+def _dedupe(reasons: Any) -> list[str]:
     out: list[str] = []
     for reason in reasons:
         if reason not in out:
             out.append(reason)
     return out
+
+
+def matched_conditions(conditions: Sequence[str], facts: ConditionFacts) -> list[str]:
+    """The reasons a person must decide, in plain words — empty means no approval is needed.
+    Fail closed: a decision with no reversibility recorded counts as a one-way door (§A6)."""
+    return _dedupe(r for _, r in _matched(conditions, facts))
+
+
+def _matched(conditions: Sequence[str], facts: ConditionFacts) -> list[tuple[str, str]]:
+    """(condition, reason) for every condition that holds — the whole condition, e.g.
+    `tag:security`, so a pre-approval can tell which tag a condition names."""
+    reasons: list[tuple[str, str]] = []
+    for cond in conditions:
+        head, _, arg = cond.partition(":")
+        if cond == "always":
+            reasons.append((cond, "This stage always asks a person"))
+        elif cond == "never":
+            continue
+        elif head == "one_way_door":
+            doors = [d for d in facts.governing if d.reversibility != "two_way"]
+            for d in doors:
+                reasons.append((cond,
+                    f"Touches what ADR-{d.number:04d} “{d.title}” governs as a one-way door"
+                    if d.reversibility == "one_way"
+                    else f"Touches what ADR-{d.number:04d} “{d.title}” governs, and that "
+                         "decision isn't classified as reversible"
+                ))
+            declared = sorted(set(facts.change_classes) & ONE_WAY_CHANGE_CLASSES)
+            if declared:
+                reasons.append((cond, "The plan declares " + ", ".join(
+                    c.replace("_", " ") for c in declared)))
+        elif head == "high_criticality" and facts.high_criticality:
+            reasons.append((cond, "Touches high-criticality "
+                            + ", ".join(facts.high_criticality)))
+        elif head == "unsettled_decision" and facts.unsettled:
+            reasons.extend(
+                (cond, f"ADR-{d.number:04d} “{d.title}” is still {d.status.replace('_', ' ')}")
+                for d in facts.unsettled
+            )
+        elif head == "no_spec" and (not facts.spec_approved or facts.criteria_count == 0):
+            reasons.append((cond, "No approved spec with acceptance criteria"))
+        elif head == "low_confidence" and facts.plan_confidence == "low":
+            reasons.append((cond, "The plan's own confidence is low"))
+        elif head == "large_change":
+            max_paths, max_days = _large_change_limits(arg)
+            if facts.affected_paths > max_paths:
+                reasons.append((cond, f"The plan touches {facts.affected_paths} paths "
+                                f"(limit {max_paths})"))
+            if facts.task_duration_days is not None and facts.task_duration_days > max_days:
+                reasons.append((cond,
+                    f"The task is sized at {facts.task_duration_days} days (limit {max_days})"
+                ))
+        elif head == "probation" and arg.isdigit() and facts.agent_done_count < int(arg):
+            reasons.append((cond,
+                f"Fewer than {arg} agent-worked tasks have reached done in this project"
+            ))
+        elif head == "tag" and arg and arg in facts.tags:
+            reasons.append((cond, f"The task is tagged {arg}"))
+    return reasons
 
 
 def _large_change_limits(arg: str) -> tuple[int, int]:

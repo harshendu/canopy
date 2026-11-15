@@ -272,6 +272,9 @@ A read view answering "for decision X, what implemented it and is it still honor
 implementing tasks (G-R1) → PRs (J-R1, via the PR-to-ADR linker) → fitness-function status (G-R1) →
 drift events (N). This *is* "no drift between architecture and implementation," made concrete and
 queryable instead of asserted. UI: a panel on the Decisions tab; MCP `get_decision_traceability`.
+**Shipped** (USER_FLOWS §G8): the ledger panel + per-decision panel, `Task.implements_adr_id`
+(`link_task_to_decision`), and a computed verdict (violated · unimplemented · at risk · in progress
+· no linked work · not binding yet · honored · retired).
 
 ## U. Definition-of-Done as policy
 A per-project/per-initiative editable **DoD checklist** (tests, ADR if architecturally significant,
@@ -348,9 +351,9 @@ or fixes a referenced-but-missing tool.)
    a GitHub push-webhook that enqueues the Drift Sentinel (agent-driven scan).
 
 **Later (depth):**
-9. ◐ **Decision fitness functions + traceability ledger** (G-R1, T, C6). **Fitness functions
-   shipped** (machine-checkable forbid/require rules enforced by the drift scan; `add_adr_fitness`).
-   **Remaining:** `Task.implements_adr_id` + the traceability ledger (T).
+9. ✔ **Decision fitness functions + traceability ledger** (G-R1, T, C6). **Fitness functions
+   shipped** (machine-checkable forbid/require rules enforced by the drift scan; `add_adr_fitness`),
+   and `Task.implements_adr_id` + the traceability ledger (T, USER_FLOWS §G8).
 10. **Delivery (DORA+flow) metrics + DoD-as-policy** (S, U) — the quality/velocity backbone.
 11. **Hours-based + reality-checked capacity, skill-fit, PR metrics** (F-R2/3/4, J-R1).
 12. **Contract drift + non-Python analyzers + suppression UI** (N-R2/3).

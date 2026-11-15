@@ -256,6 +256,13 @@ export function eventText(event: Pick<WorkEvent, "kind" | "data">): string {
       return `The tracker moved it ${str(d.from) || "(no status)"} → ${str(d.to)}`;
     case "policy_changed":
       return "Stage policy changed";
+    case "pre_approved": {
+      const checkpoint = str(d.checkpoint) === "handoff" ? "hand-off" : "plan";
+      const cls = str(d.class).replace(/^tag:/, "");
+      return d.still_asked
+        ? `Pre-approved ${cls} work skipped part of the ${checkpoint} checkpoint; a person still decides the rest`
+        : `Pre-approved ${cls} work: the ${checkpoint} checkpoint didn't need a person`;
+    }
     default:
       return event.kind.replaceAll("_", " ");
   }

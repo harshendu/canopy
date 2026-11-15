@@ -24,6 +24,11 @@ Connects code changes back to the decisions that govern them.
    author/architect to confirm: "This PR appears to implement / contradict / be unrelated to ADR-NNNN
    — confirm?". If it contradicts a decision with no superseding ADR, suggest opening one
    (`canopy:propose_adr`).
+6. Once someone confirms the PR **implements** a decision and the PR is tied to a task, record it
+   with `canopy:link_task_to_decision(task_id, adr_id)` (a decision of the task's own project). The
+   traceability ledger (`canopy:get_decision_traceability`) then follows the decision to that task,
+   its PRs and reviews, and judges whether it is still honored. Work that only touches a component
+   the decision governs is traced without a link — don't link it.
 
 ## Notes
 - Be conservative about "contradicts" — only when the code clearly breaks a stated decision. A weak

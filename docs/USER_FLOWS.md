@@ -1309,8 +1309,40 @@ review it, alternatives, reversibility, and a discussion thread.
 - **API:** `GET/POST /api/v1/architecture/adrs/{id}/fitness`, `DELETE /api/v1/architecture/fitness/{id}`
   (components must be in the ADR's project) · **MCP:** `add_adr_fitness`. The ADR detail
   (`GET .../adrs/{id}`) includes `fitness_functions`.
-- **Not built:** `Task.implements_adr_id` (decision→task traceability) and a full **traceability
-  ledger** joining decision → tasks → PRs → fitness status (v2 §T) — the next slice.
+- **Traceability:** whether a decision is honored, from its rules and the work behind it, is the
+  ledger (§G8).
+
+### G8. Traceability ledger — what implemented a decision, and is it still honored **[new — v2 §T]**
+- **What:** each decision joined to the work that **implements** it (`Task.implements_adr_id`)
+  or **touches what it governs** (tasks tied to its components — a session's plan resolves the
+  components its paths touch, §AE3), the **pull requests** behind that work, the **reviews** that
+  checked the work against it (a review whose `checked` list names it, e.g. `ADR-0001`), its
+  **fitness rules** (§G7) and the **open drift** on what it governs (§N). A **verdict** is computed
+  from those facts, never stored — the first that holds, worst first: **violated** (a fitness rule
+  is broken in the code), **unimplemented** (the scan finds no code implementing it), **at risk**
+  (open drift on its components, or the reviews that checked it failed), **in progress** (its
+  implementing work is still open), **no linked work**, **not binding yet** (not accepted),
+  **honored**, **retired** (superseded, deprecated or rejected).
+- **UI:** project → **Architecture → Decisions** → the **Traceability ledger** panel: one row per
+  decision, worst first, with the reason and the counts (tasks done, PRs merged, rules broken,
+  reviews that checked it, open drift); a row opens the decision. Expand a decision →
+  **Traceability**: the verdict and why, what it governs, the tasks that implement it and those
+  that touch what it governs, their PRs (merged / open / closed, checks), the reviews that checked
+  it, each fitness rule (**Broken** / **No open violation**) and the open drift. Planners **link**
+  the task that implements it, or **unlink** one.
+- **API:** `GET /api/v1/architecture/adrs/{id}/traceability` (one decision, with its facts) ·
+  `GET /api/v1/architecture/traceability?project_id=` (the ledger) · the link is
+  `PATCH /api/v1/tasks/{id}` `{implements_adr_id}` — a decision of the task's own project
+  (`422 adr_not_in_project`; `null` unlinks). Reads are open. **MCP:**
+  `get_decision_traceability(adr_id | project_id)` (read), `link_task_to_decision`.
+- **Honest limits:** canopy doesn't read code — *violated* and *unimplemented* come from the drift
+  scan's findings (§N, run by the Drift Sentinel), so a stale scan means a stale verdict; a
+  decision's components decide what work it governs, so a decision without components traces only
+  the tasks linked to it. Decision latency (how long decisions take) is not on the ledger.
+- **Where:** pure `app/services/traceability.py` (facts → verdict, ledger row) +
+  `traceability_service.py` (loads the facts; the ledger reads the project's plans and open drift
+  once); `tests/test_traceability.py`. The demo links implementing tasks and seeds drift with the
+  scan's own keys, so the decisions show each verdict (`tests/test_demo_seed.py`).
 
 ---
 
@@ -1480,6 +1512,13 @@ component map + ADRs and maintains the queue.
   **auto-seeded** from project state: completed milestones, schedule variance (tasks ended off
   baseline), open drift (§N), and ADR churn (superseded/total). It's editable markdown; engineers
   **comment**; planners can **close** it.
+- **Agent work** (with `ai.work_queue` on, once sessions have worked the project): the seed adds
+  an **Agent work** section from the last 8 weeks of the project's agent flow (§AE8) — sessions
+  finished and agent-worked tasks done (with the share that needed no person but the sign-off),
+  the median time people took to decide per gate kind, first-pass acceptance, rework, parked
+  tasks, tracker moves made without canopy's clearance (§AE9), cost per task when sessions report
+  it, and the gates approved nearly every time — candidates to relax through graduated autonomy
+  (§AE6). Team-level numbers only, never per person.
 - **Follow-ups:** from a retro, mint a **task** or **propose an ADR** (linked to the retro's
   affected components) — turning lessons into tracked work.
 - **API:** `GET/POST /api/v1/projects/{id}/retrospectives`, `GET/PATCH
@@ -2044,8 +2083,8 @@ document graph (§V) or `source_url`; the governing decision links via `adr_id`.
   its problem + acceptance criteria (with a readiness bar and contributor-writable verdicts) +
   implementing tasks. Built.
 - **No status transition gating** (unlike ADRs §G2) and **no DraftPlan→Spec FK** (link a draft
-  plan's `source` to the spec, then link the synced tasks). **No `Task.implements_adr_id`** yet
-  (decision→task traceability is roadmap gap #5).
+  plan's `source` to the spec, then link the synced tasks). Decision→task traceability is the
+  ledger (§G8, `Task.implements_adr_id`).
 
 ---
 
@@ -2150,7 +2189,9 @@ the page is open**, watching it update live (§AA5).
   computed output the replan overwrites), `dependency.create`, `milestone.create/update`,
   `blocker.create/resolve`, `risk.create/update`, `outcome.create/update`,
   `decision.create` (lands as a **proposed** ADR — the §G lifecycle takes over),
-  `doc_reference.create` (deduped per scope+url). Payloads are **whitelisted per
+  `doc_reference.create` (deduped per scope+url), `rule.create` (a **project** delivery rule,
+  §AE7 — with `ai.stage_policy` on and a key new to the project; how a session turns a recurring
+  review note into a rule a person accepts). Payloads are **whitelisted per
   entity/action** and validated through the same schemas as the REST API — no
   mass-assignment; a create item may declare a `ref` handle that later items point at
   (`parent_ref`, `predecessor_ref`, `task_ref`, …), so one proposal can stage "create
@@ -2482,7 +2523,8 @@ clears moves instead of making them (§AE9); **notifications** tell runners and 
   now** (heartbeat age, last progress note; a planner can **release** one back to the queue),
   what **waits on people**, what is **parked**, and how to run sessions (the plugin + an agent
   token, §A11). With `ai.stage_policy` on, the **pipeline** panel (§AE6) replaces the "who works
-  which column" card and the **agent-flow** cards (§AE8) follow it.
+  which column" card, and the **agent-flow** cards (§AE8) and the **Graduated autonomy** card
+  (§AE6) follow it.
 - **API:** `GET /api/v1/projects/{id}/agents`.
 
 ### AE6. Stage policy — who works each column, what it requires, when a person looks
@@ -2518,6 +2560,25 @@ clears moves instead of making them (§AE9); **notifications** tell runners and 
   checkpoint** on the same conditions, and **decision columns**: entering one opens a sign-off
   gate for its approvers. Sign-off always comes before done; a PR approval or merge by someone
   other than the requester counts (decision D3). Nothing is approved by a timeout.
+- **Graduated autonomy — pre-approved change classes:** a plan or hand-off checkpoint can list
+  change classes (`tag:<tag>`, by task tag) whose work no longer waits for a person there. The
+  **safety floor** is never pre-approved: work touching a one-way-door decision, a
+  high-criticality component or an unsettled decision, or a low-confidence plan, still asks, and
+  so does a condition naming another tag (*always ask for `security` work* holds for a task
+  tagged both `docs` and `security`); the other conditions (`always`, larger than the small-batch
+  limits, no approved spec, probation, the class's own tag) are waived for a pre-approved class,
+  and each waiver is recorded (a `pre_approved` work event). The
+  Agents view's **Graduated autonomy** card shows what is pre-approved at the implementer's
+  column, the evidence per class over 12 weeks (plans approved as written, median decision time,
+  first-pass reviews, rework, parking) and what it suggests: **pre-approve** a class after ≥ 8
+  decided checkpoints approved as written ≥ 95% of the time, none sent back, ≥ 5 first reviews
+  passing ≥ 85% and nothing parked (never for `WORK_KEEP_FOR_PEOPLE_TAGS` — security, incident,
+  compliance by default); **stop pre-approving** one whose work parked, came back for rework
+  twice, or whose first reviews passed under 70%. A person applies a suggestion or removes a class
+  — nothing changes on its own. **API:** `GET /api/v1/projects/{id}/autonomy?weeks=` ·
+  `POST /api/v1/projects/{id}/autonomy` `{checkpoint: plan|handoff, change_class, action:
+  add|remove}` (**human-only**, people who may edit the columns' policies; `409 no_checkpoint`
+  when no agent column has that checkpoint). **MCP:** `get_autonomy_suggestions` (read).
 
 ### AE7. Rules — working agreements and the Definition of Done
 - **UI:** project → **Governance → Rules**: the project's effective rules in two lists —
@@ -2544,6 +2605,15 @@ clears moves instead of making them (§AE9); **notifications** tell runners and 
   repository's `CLAUDE.md`/`AGENTS.md` (decision D9); hard constraints are entry checks.
 - **Hand-offs attest:** `submit_work(…, attestations=[{rule_key, status: done | n/a | not_done,
   evidence}])`; a reviewer can dispute one (a `fail`).
+- **Suggested rules — when the same note keeps coming back:** canopy groups people's
+  request-changes / reject notes on gates and reviewers' findings on failed or concerned reviews
+  by the words they share; a theme seen ≥ 3 times across ≥ 2 tasks that no rule already says is a
+  **suggestion** (how often, on which tasks, examples — shown as evidence, never as
+  instructions). A session drafts a short rule from one and stages it as a `rule` proposal item
+  (§AA1); a person accepts it in **Reviews** — rules stay human-written
+  (AGENT_EXECUTION.md §10).
+  **API:** `GET /api/v1/projects/{id}/rule-suggestions?weeks=` (default 12) · **MCP:**
+  `suggest_rules`, then `propose_changes` (skill `reviewing-changes`).
 
 ### AE8. Agent flow — how the system is doing (team-level)
 - **UI:** the Agents view's cards (with `ai.stage_policy` on): **Waiting on people** (open gates,
@@ -2648,10 +2718,20 @@ with a note when a session stops without handing off.
   Notifications: `models/notify.py` (`OutboundWebhook`, `OutboxMessage`) + `services/notify.py`
   (queueing, SSRF guard, delivery) + `api/v1/outbound.py`; `tests/test_outbound.py`. The runner's
   tests fake canopy, git and the session (`runners/sdk/test_canopy_runner.py`).
+- The learning loop: pre-approval is decided in pure `stage_policy.py`
+  (`PRE_APPROVAL_FLOOR`, `checkpoint_outcome`) through `gates.checkpoint_decision`; the evidence and
+  suggestions are pure `autonomy.py` + `autonomy_service.py`; the retro's agent-work lines are pure
+  `retro.agent_work_lines`; rule themes are pure `rule_suggestions.py`, and `rule` proposal items
+  apply through `proposals.py`. `tests/test_work_policy.py` (floor, suggestions, themes),
+  `tests/test_stage_policy.py` (pre-approved classes through the API; recurring notes → a rule
+  proposal → applied), `tests/test_retro.py`.
 
-### AE13. Not built yet (later phases of AGENT_EXECUTION.md §21)
-- The learning loop (Phase 4): graduated-autonomy suggestions, retros seeded with gate/rework
-  data, rule suggestions from recurring review notes, a decision-to-code traceability ledger.
+### AE13. Not built yet
+- Graduated autonomy tunes one column per project (the implementer's, else the first agent column
+  with a checkpoint), by task tag only; there is no class by path or component yet, and no
+  pre-approval at team or workspace scope.
+- Rule suggestions group notes by shared words (no semantic matching), and a staged rule is a
+  project rule — a team or workspace rule is still written by hand (§AE7).
 - Per-person notification preferences (email is an install-wide switch today).
 
 ---
@@ -2742,7 +2822,8 @@ with a note when a session stops without handing off.
 ### L10. PR-to-ADR linker (skill) **[new — v2 §L9]**
 - The **`pr-to-adr-linker`** skill maps a PR's changed paths to components (via code bindings),
   finds the ADRs governing them (`adr_impact`), and judges whether the PR implements / contradicts /
-  is unrelated to each — building implementation traceability.
+  is unrelated to each — building implementation traceability. A confirmed *implements* is
+  recorded on the PR's task (`link_task_to_decision`), which the traceability ledger reads (§G8).
 
 ### L11. Draft a plan → tickets or tasks (skill) **[updated]**
 - The **`drafting-tickets`** skill turns inputs (a codebase via `read_repo_file`, a design
@@ -2862,7 +2943,9 @@ with a note when a session stops without handing off.
   what you find; **`verifying-changes`** — run each acceptance criterion against the change and
   record what was done and seen as a `qa_report`. The **`change-reviewer`** and **`qa-verifier`**
   subagents run them with no edit tools. Read-only tools for the policy around the work:
-  `get_stage_policy`, `list_rules`, `get_agent_flow`.
+  `get_stage_policy`, `list_rules`, `get_agent_flow`, `get_autonomy_suggestions`. When the same
+  finding keeps coming back, a reviewer checks `suggest_rules` and stages the rule it would have
+  wanted as a `rule` proposal item (§AE7) — a person accepts it.
 - **Mirrored tickets** (§AE9): the contract adds one step — when a response carries
   `tracker_transition`, make exactly that move in the tracker; never move the ticket anywhere
   canopy didn't clear.

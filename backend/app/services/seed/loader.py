@@ -544,7 +544,11 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
 
     comps = await _build_project_arch(session, refs, spec, pid)
     adrs = await _build_project_adrs(session, refs, spec, pid, comps)
-    await _build_project_drift(session, spec, pid, comps)
+    for phase in spec.phases:  # decision → work traceability (the ledger follows these)
+        for ts in phase.tasks:
+            if ts.implements and ts.implements in adrs:
+                refs.tasks[spec.key][ts.name].implements_adr_id = adrs[ts.implements].id
+    await _build_project_drift(session, spec, pid, comps, adrs)
     await _build_project_specs(session, refs, spec, pid, adrs)
     await _build_project_risk(session, refs, spec, pid)
     await _build_project_outcomes(session, refs, spec, pid)
@@ -643,14 +647,24 @@ async def _build_project_adrs(
 
 
 async def _build_project_drift(
-    session: AsyncSession, spec: ProjectSpec, pid: int, comps: dict[str, ArchitectureComponent]
+    session: AsyncSession, spec: ProjectSpec, pid: int, comps: dict[str, ArchitectureComponent],
+    adrs: dict[str, ArchitectureDecision],
 ) -> None:
     if not spec.drift:
         return
     for n, d in enumerate(spec.drift):
         ids = [_req(comps[c].id) for c in d.components if c in comps]
+        rule_key = f"{spec.key.lower()}:{d.kind}:{n}"
+        if d.adr in adrs:  # the drift scan's own keys, which the traceability ledger reads
+            if d.kind == "unimplemented_adr":
+                rule_key = f"adr_unimplemented:{adrs[d.adr].number}"
+            elif d.kind == "fitness_violation":
+                rule = (await session.execute(select(ADRFitnessFunction).where(
+                    ADRFitnessFunction.adr_id == adrs[d.adr].id))).scalars().first()
+                if rule is not None:
+                    rule_key = f"fitness:{rule.id}"
         await _add(session, DriftEvent(
-            project_id=pid, kind=d.kind, rule_key=f"{spec.key.lower()}:{d.kind}:{n}",
+            project_id=pid, kind=d.kind, rule_key=rule_key,
             summary=d.summary, detail=d.detail, suspected_cause=d.suspected_cause,
             affected_component_ids=ids, status=d.status))
     await _add(session, DriftScan(project_id=pid, finding_count=len(spec.drift)))
@@ -867,7 +881,7 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
     for pr in refs.ds.pull_requests:
         pr_task = refs.tasks[refs.ds.flagship_key].get(pr.task_name)
         await _add(session, PullRequest(
-            repo=repo, number=pr.number, title=pr.title, state=pr.state,
+            repo=repo, number=pr.number, title=pr.title, state=pr.state, merged=pr.merged,
             url=f"https://github.com/{repo}/pull/{pr.number}", author=pr.author,
             task_id=pr_task.id if pr_task is not None else None))
 

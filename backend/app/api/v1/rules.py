@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
 from app.api.deps import ContributorWriter, CurrentUser, HumanOnly, SessionDep, TokenScopeDep
 from app.core.events import publish
@@ -24,6 +25,8 @@ from app.schemas.policy import (
     RuleCreate,
     RuleRead,
     RuleScopeRead,
+    RuleSuggestionExample,
+    RuleSuggestionRead,
     RuleUpdate,
 )
 from app.services import rules as rules_service
@@ -240,3 +243,57 @@ async def delete_rule(
     await session.delete(rule)
     await session.commit()
     await publish({"type": "rules", "scope_level": level, "scope_id": scope_id})
+
+
+@router.get("/projects/{project_id}/rule-suggestions", response_model=list[RuleSuggestionRead])
+async def rule_suggestions(
+    session: SessionDep, _: CurrentUser, project_id: int, weeks: int = 12
+) -> list[RuleSuggestionRead]:
+    """Recurring themes in people's request-changes notes and reviewers' findings that no rule
+    covers yet — candidates a session can stage as a `rule` proposal for a person to accept."""
+    from datetime import timedelta
+
+    from app.models.base import ArtifactKind, utcnow
+    from app.models.gate import Gate
+    from app.models.project import Task
+    from app.models.work import TaskArtifact
+    from app.services import rule_suggestions as rs
+
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    since = utcnow() - timedelta(weeks=max(1, min(weeks, 52)))
+    keys = {t.id: t.key for t in (await session.execute(
+        select(Task).where(Task.project_id == project_id))).scalars().all()}
+    notes: list[rs.NoteRow] = []
+    for gate in (await session.execute(
+        select(Gate).where(
+            Gate.project_id == project_id, col(Gate.decided_at) >= since,
+            col(Gate.decision).in_(["request_changes", "reject"]))
+    )).scalars().all():
+        if gate.id is not None and gate.response_note and gate.decided_at is not None:
+            notes.append(rs.NoteRow("gate", gate.id, gate.task_id, keys.get(gate.task_id),
+                                    gate.response_note, gate.decided_at))
+    for review in (await session.execute(
+        select(TaskArtifact).where(
+            col(TaskArtifact.task_id).in_(list(keys) or [-1]),
+            col(TaskArtifact.kind).in_([ArtifactKind.review.value, ArtifactKind.qa_report.value]),
+            col(TaskArtifact.verdict).in_(["fail", "concerns"]),
+            col(TaskArtifact.created_at) >= since)
+    )).scalars().all():
+        for finding in (review.data or {}).get("findings") or []:
+            text = str(finding.get("note") or "") if isinstance(finding, dict) else ""
+            if text and review.id is not None:
+                notes.append(rs.NoteRow("review", review.id, review.task_id,
+                                        keys.get(review.task_id), text, review.created_at))
+    existing = [(e.key, e.rule.title, e.rule.body)
+                for e in await rules_service.effective_rules(session, project)]
+    return [
+        RuleSuggestionRead(
+            key=theme.key, words=theme.words, count=len(theme.notes), tasks=theme.tasks,
+            examples=[RuleSuggestionExample(source=n.source, source_id=n.source_id,
+                                            task_key=n.task_key, text=n.text[:300])
+                      for n in theme.notes[:5]],
+        )
+        for theme in rs.suggest(notes, existing)
+    ]
