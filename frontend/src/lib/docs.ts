@@ -381,7 +381,7 @@ export function artifactTypeLabel(type: string): string {
 
 /** A suggestion's name: the listing has no title for a Claude Doc or Sheet. */
 export function suggestionTitle(s: Pick<ArtifactSuggestion, "title" | "artifact_type">): string {
-  return s.title?.trim() || `Untitled ${artifactTypeLabel(s.artifact_type).toLowerCase()}`;
+  return s.title?.trim() || `Untitled ${artifactTypeLabel(s.artifact_type)}`;
 }
 
 /** Who recorded a version, for the timeline (`DocRevision.source`). */

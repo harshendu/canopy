@@ -178,8 +178,8 @@ describe("health chips", () => {
 
 describe("organization artifact sync", () => {
   it("names untitled Claude Docs by their type", () => {
-    expect(suggestionTitle({ title: null, artifact_type: "claude_docs" })).toBe("Untitled claude doc");
-    expect(suggestionTitle({ title: "  ", artifact_type: "claude_sheets" })).toBe("Untitled sheet");
+    expect(suggestionTitle({ title: null, artifact_type: "claude_docs" })).toBe("Untitled Claude Doc");
+    expect(suggestionTitle({ title: "  ", artifact_type: "claude_sheets" })).toBe("Untitled Sheet");
     expect(suggestionTitle({ title: "Returns flow", artifact_type: "code" })).toBe("Returns flow");
     expect(artifactTypeLabel("something_new")).toBe("Artifact");
   });
