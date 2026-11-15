@@ -11,7 +11,7 @@ Every column is additive; NOT NULL ones carry a server default so existing rows 
 native ALTER). `work_claim_id` is a plain integer (no FK) on purpose — see the model.
 
 Revision ID: c1d2e3f4a5b6
-Revises: b0c1d2e3f4a5
+Revises: 2d3e4f5a6b7c
 Create Date: 2026-11-15 06:40:00
 """
 
@@ -20,7 +20,7 @@ import sqlmodel
 from alembic import op
 
 revision = "c1d2e3f4a5b6"
-down_revision = "b0c1d2e3f4a5"
+down_revision = "2d3e4f5a6b7c"
 branch_labels = None
 depends_on = None
 

@@ -527,3 +527,48 @@ async def test_override_rejects_bad_fields_and_can_be_cleared(client, db_session
     ).status_code == 200
     item = (await client.get(f"/api/v1/proposals/{pid}", headers=full)).json()["items"][0]
     assert item["excluded"] is True
+
+
+@pytest.mark.asyncio
+async def test_staged_doc_links_follow_the_sharing_rule_and_dedupe(client, db_session) -> None:
+    """A staged doc link goes through the design-doc register path: a private Claude doc is
+    refused at staging, and a document already tracked is linked, never copied."""
+    await _seed_admin(db_session)
+    full = await _login(client)
+    project_id = await _project(client, full)
+    art = "https://claude.ai/artifact/St4gedDesignArtifact1"
+
+    def stage(visibility: str | None):
+        payload = {"url": art, "kind": "design", "title": "Checkout prototype"}
+        if visibility:
+            payload["visibility"] = visibility
+        return client.post(
+            "/api/v1/proposals",
+            json={
+                "scope_level": "project",
+                "scope_id": project_id,
+                "title": "Link the prototype",
+                "items": [{"entity_type": "doc_reference", "action": "create",
+                           "payload": payload, "source_kind": "chat"}],
+            },
+            headers=full,
+        )
+
+    refused = await stage(None)
+    assert refused.status_code in (400, 422), refused.text
+    assert "private in Claude" in refused.text
+
+    staged = await stage("org")
+    assert staged.status_code == 201, staged.text
+    applied = await client.post(
+        f"/api/v1/proposals/{staged.json()['id']}/apply", headers=full
+    )
+    assert applied.status_code == 200, applied.text
+    docs = (await client.get("/api/v1/docs", headers=full)).json()
+    assert [(d["provider"], d["external_id"], d["source"]) for d in docs] == [
+        ("claude", "St4gedDesignArtifact1", "agent")
+    ]
+    # the same artifact staged again resolves to the same record
+    again = await stage("org")
+    await client.post(f"/api/v1/proposals/{again.json()['id']}/apply", headers=full)
+    assert len((await client.get("/api/v1/docs", headers=full)).json()) == 1

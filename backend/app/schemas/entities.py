@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.models.base import (
     ActivityKind,
@@ -16,7 +16,7 @@ from app.models.base import (
     DocKind,
     DocLinkHealth,
     DocScope,
-    DocSource,
+    DocVisibility,
     EstimateUnit,
     OutcomeScope,
     OutcomeStatus,
@@ -40,6 +40,7 @@ from app.schemas.auth import UserRead
 from app.schemas.leadership import InitiativeLeadRead
 from app.services import metadata
 from app.services import outcomes as outcomes_service
+from app.services.doc_kinds import normalize_slug
 
 _read = ConfigDict(from_attributes=True)
 
@@ -554,6 +555,10 @@ class ReviewSummaryRead(BaseModel):
     rejected: int
     pending: int
     can_accept: bool
+    # advisory, like can_accept: every design doc the decision rests on (basis) or waits for
+    # (gate) is approved — USER_FLOWS §V9
+    docs_ready: bool = True
+    docs_pending: list[str] = []
 
 
 class FitnessFunctionCreate(BaseModel):
@@ -601,6 +606,17 @@ class ADRImportRequest(BaseModel):
     provider: Provider  # github | gdrive
     connection_id: int
     ref: str  # GitHub file path or Google Drive file id
+
+
+class ADRImportTextRequest(BaseModel):
+    """An ADR from markdown a session read from a design doc (a Claude Doc, an artifact). The
+    ADR's fields become canopy's own record; the doc itself is only linked (§V9)."""
+
+    project_id: int
+    markdown: str = Field(min_length=1, max_length=200_000)
+    fallback_title: str | None = Field(default=None, max_length=255)
+    doc_id: int | None = None  # the tracked doc it came from → a basis link
+    doc_version: str | None = Field(default=None, max_length=64)  # the version read
 
 
 class ImpactResponse(BaseModel):
@@ -1628,6 +1644,9 @@ class DraftPlanCreate(BaseModel):
     title: str
     description: str | None = None
     source: str | None = None  # where the plan came from (a design doc / PRD / url)
+    # the tracked design doc it was drafted from + the version read (§V9)
+    source_doc_id: int | None = None
+    source_doc_version: str | None = Field(default=None, max_length=64)
 
 
 class DraftPlanUpdate(BaseModel):
@@ -1635,6 +1654,8 @@ class DraftPlanUpdate(BaseModel):
     description: str | None = None
     status: str | None = None  # draft | synced | archived
     source: str | None = None
+    source_doc_id: int | None = None
+    source_doc_version: str | None = Field(default=None, max_length=64)
 
 
 class DraftPlanRead(BaseModel):
@@ -1647,6 +1668,8 @@ class DraftPlanRead(BaseModel):
     source: str | None
     synced_at: datetime | None
     created_at: datetime
+    source_doc_id: int | None = None
+    source_doc_version: str | None = None
 
 
 class DraftTaskCreate(BaseModel):
@@ -1864,50 +1887,110 @@ class MyWorkspaceResponse(BaseModel):
     blockers: list[BlockerRead] = []  # open blockers on my tasks or raised by me
     my_sprints: list[MySprintRead] = []  # "My sprint": my tasks in active sprints
     gates: list[MyGateRead] = []  # agent work waiting on my decision (ai.work_queue)
+    # design docs in review this user may approve (USER_FLOWS §V8)
+    docs_to_review: list["DocReferenceRead"] = []
 
 
 # --- Document graph (link, don't store) ---
+def _kind_slug(value: str | None) -> str | None:
+    """Doc kinds are open slugs (USER_FLOWS §V5): normalize, never reject."""
+    return None if value is None else normalize_slug(value)
+
+
 class DocReferenceCreate(BaseModel):
     scope_level: DocScope
     scope_id: int
     url: str
-    kind: DocKind = DocKind.other
+    kind: str = DocKind.other.value  # any kind — an open slug backed by the kind catalog
     title: str | None = None
     owner_engineer_id: int | None = None
+    # Who can open it at the source; a Claude doc must be shared before it joins shared work.
+    visibility: DocVisibility = DocVisibility.unknown
+
+    @field_validator("kind")
+    @classmethod
+    def _slug(cls, value: str) -> str:
+        return _kind_slug(value) or DocKind.other.value
 
 
 class DocReferenceUpdate(BaseModel):
-    kind: DocKind | None = None
+    kind: str | None = None
     title: str | None = None
     url: str | None = None
     owner_engineer_id: int | None = None
     link_health: DocLinkHealth | None = None
+    format: str | None = None
+    summary: str | None = Field(default=None, max_length=2000)
+    visibility: DocVisibility | None = None
+
+    @field_validator("kind")
+    @classmethod
+    def _slug(cls, value: str | None) -> str | None:
+        return _kind_slug(value)
 
 
 class DocReferenceRead(BaseModel):
     model_config = _read
     id: int
-    scope_level: DocScope
-    scope_id: int
-    kind: DocKind
+    scope_level: DocScope | None
+    scope_id: int | None
+    kind: str
     title: str | None
     url: str
-    source: DocSource
+    source: str
     owner_engineer_id: int | None
     connection_id: int | None
     external_field: str | None
     link_health: DocLinkHealth
     last_checked_at: datetime | None
     created_at: datetime
+    # the design-doc layer (USER_FLOWS §V5)
+    provider: str = "web"
+    external_id: str | None = None
+    format: str = "other"
+    private_to_user_id: int | None = None
+    visibility: str = "unknown"
+    review_status: str | None = None
+    review_version: str | None = None
+    current_version: str | None = None
+    approved_version: str | None = None
+    approved_by_user_id: int | None = None
+    approved_at: datetime | None = None
+    summary: str | None = None
+    supersedes_id: int | None = None
+    created_by_user_id: int | None = None
+    updated_at: datetime | None = None
+    # when the source last changed, per the organization artifact sync (§V11)
+    source_updated_at: datetime | None = None
+
+
+class DocCoverageKind(BaseModel):
+    """One expected kind's best state across the scope (approved > in review > draft >
+    untracked > missing)."""
+
+    kind: str
+    label: str
+    stage: str
+    state: str  # approved | in_review | draft | linked | missing
+
+
+class DocCoverageStage(BaseModel):
+    stage: str
+    total: int
+    approved: int
 
 
 class DocCoverageRead(BaseModel):
     scope_level: DocScope
     scope_id: int
     total_references: int
-    present: list[DocKind]
-    missing: list[DocKind]  # expected kinds with no reference — a coverage gap
+    present: list[str]
+    missing: list[str]  # expected kinds with no reference — a coverage gap
     by_kind: dict[str, int]
+    # approval-aware view (superseded, archived and personal docs never count as present)
+    expected: list[DocCoverageKind] = []
+    by_stage: list[DocCoverageStage] = []
+    needs_attention: int = 0
 
 
 # --- A task's external resource links (Jira issue + GitHub PRs + design docs) ---
@@ -2052,6 +2135,9 @@ class SpecDetail(SpecRead):
     criteria_total: int = 0  # excludes waived
     criteria_met: int = 0
     acceptance_ratio: float = 0.0  # met / effective total
+    # advisory: the source docs (basis / gate links) are approved — USER_FLOWS §V9
+    docs_ready: bool = True
+    docs_pending: list[str] = []
 
 
 # --- Delivery metrics (DORA + flow; team-level only) ---

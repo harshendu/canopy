@@ -216,12 +216,31 @@ class OutcomeSpec:
 
 
 @dataclass(frozen=True)
+class DocLinkSpec:
+    """A link from a design doc to an entity of the same project, resolved by name."""
+
+    entity_type: str  # task | decision | spec | milestone
+    name: str  # the task / milestone name, ADR title or spec title
+    relation: str = "reference"  # basis | gate | reference
+
+
+@dataclass(frozen=True)
 class DocSpec:
-    kind: str  # prd | design | tech_design | architecture | release | qa | runbook | other
+    kind: str  # any kind: prd | design | tech_design | … | a custom one (an open catalog)
     title: str
     url: str
-    source: str = "manual"  # jira_epic | manual | repo | drive
+    source: str = "manual"  # jira_epic | manual | repo | drive | agent
     task_name: str | None = None  # if set, attach at task scope (else project/initiative)
+    # the design-doc layer (USER_FLOWS §V5): all optional, so plain links stay one-liners
+    format: str | None = None  # document | page | prototype | … (else inferred from the URL)
+    review_status: str | None = None  # draft | in_review | approved | superseded | archived
+    version: str | None = None  # the current version label at the source
+    approved_version: str | None = None  # set with review_status="approved"
+    visibility: str | None = None  # owner | users | org | public (Claude docs)
+    summary: str | None = None
+    personal_for: str | None = None  # a demo user's email: a personal doc only they see
+    links: tuple[DocLinkSpec, ...] = ()
+    kind_stage: str | None = None  # stage for a custom kind the catalog has not seen
 
 
 @dataclass(frozen=True)

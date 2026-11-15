@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from app.models.base import UserFunction, UserRole
+from app.models.base import DocSnapshotStore, UserFunction, UserRole
 
 MIN_PASSWORD_LENGTH = 8
 
@@ -84,6 +84,13 @@ class PasswordReset(BaseModel):
     new_password: str = Field(min_length=MIN_PASSWORD_LENGTH)
 
 
+class MyPreferences(BaseModel):
+    """A signed-in user's own preferences. `doc_snapshot_store`: where they keep frozen copies of
+    approved design docs — `repo` (a pull request) or `drive` (USER_FLOWS §V9)."""
+
+    doc_snapshot_store: DocSnapshotStore | None = None
+
+
 class PasswordChange(BaseModel):
     """A user rotates their own password (current one required)."""
 
@@ -99,6 +106,8 @@ class UserRead(BaseModel):
     role: UserRole
     function: UserFunction = UserFunction.engineering
     is_active: bool
+    # where this person keeps frozen copies of approved design docs (repo | drive), §V9
+    doc_snapshot_store: str | None = None
 
 
 class SessionInfo(BaseModel):

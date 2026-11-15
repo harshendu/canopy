@@ -17,7 +17,9 @@ signal, is flagged, not assumed green). See `docs/AI_NATIVE_EXECUTION.md` §5.
 
 2. **Get the digest.** `canopy:get_initiative_digest(initiative_id)` returns the spine:
    - `headline` + `attention` — the exception list (behind target, P85 past target, elevated
-     risk/drift, open blockers, decisions awaiting, at-risk sub-projects).
+     risk/drift, open blockers, decisions awaiting, at-risk sub-projects, and design docs that
+     changed after approval, sit behind a decision's pin, gate a near milestone or were made
+     private).
    - status (progress, forecast P85 vs target, risk/drift, open blockers/decisions), `outcomes`,
      and a ready-to-send `markdown` rendering.
 

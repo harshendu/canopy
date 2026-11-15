@@ -20,6 +20,7 @@ from app.schemas.auth import UserRead
 from app.schemas.entities import (
     ADRRead,
     BlockerRead,
+    DocReferenceRead,
     EngineerRead,
     MyGateRead,
     MySprintRead,
@@ -27,6 +28,7 @@ from app.schemas.entities import (
     MyWorkspaceResponse,
     TaskRead,
 )
+from app.services import design_docs
 from app.services.features import feature_enabled
 
 router = APIRouter()
@@ -163,6 +165,14 @@ async def my_workspace(session: SessionDep, user: CurrentUser) -> MyWorkspaceRes
                 )
             )
 
+    # Design docs in review that this user signs off (a planner on their home, §V8).
+    docs_to_review: list[DocReferenceRead] = []
+    if await feature_enabled(session, "governance.docs"):
+        docs_to_review = [
+            DocReferenceRead.model_validate(d)
+            for d in await design_docs.docs_awaiting_approval(session, user)
+        ]
+
     return MyWorkspaceResponse(
         user=UserRead.model_validate(user),
         engineer=EngineerRead.model_validate(engineer) if engineer is not None else None,
@@ -172,6 +182,7 @@ async def my_workspace(session: SessionDep, user: CurrentUser) -> MyWorkspaceRes
         blockers=blockers,
         my_sprints=my_sprints,
         gates=await my_gates(session, user),
+        docs_to_review=docs_to_review,
     )
 
 

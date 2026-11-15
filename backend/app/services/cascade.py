@@ -13,6 +13,8 @@ Postgres/MySQL behaviour and fails loudly if a referencing table is missed.
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import delete, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -32,8 +34,13 @@ from app.models.architecture import (
     DriftSuppression,
     TaskComponentLink,
 )
-from app.models.base import DocScope, LeadershipScope, ProposalScope, RiskScope
-from app.models.doc import DocReference
+from app.models.base import (
+    DocLinkEntity,
+    DocScope,
+    LeadershipScope,
+    ProposalScope,
+    RiskScope,
+)
 from app.models.draft import DraftPlan, DraftTask
 from app.models.gate import Gate
 from app.models.integration import ExternalRef, PullRequest, TrackerBinding
@@ -68,6 +75,7 @@ from app.models.sprint import TaskSprintHistory
 from app.models.team import Allocation
 from app.models.work import TaskArtifact, WorkClaim, WorkEvent
 from app.models.workflow import Workflow, WorkflowStatus
+from app.services import design_docs
 
 
 async def delete_task_cascade(session: AsyncSession, task_id: int) -> None:
@@ -124,11 +132,9 @@ async def delete_task_cascade(session: AsyncSession, task_id: int) -> None:
             col(RiskItem.scope_level) == RiskScope.task, col(RiskItem.scope_id) == task_id
         )
     )
-    await session.execute(
-        delete(DocReference).where(
-            col(DocReference.scope_level) == DocScope.task, col(DocReference.scope_id) == task_id
-        )
-    )
+    # Design docs: drop links to the task; a doc homed here moves to another place it serves.
+    await design_docs.drop_links_to(session, DocLinkEntity.task, [task_id])
+    await design_docs.release_docs_homed_at(session, DocScope.task, [task_id])
     await session.execute(
         delete(ExternalRef).where(
             col(ExternalRef.entity_type) == "task", col(ExternalRef.entity_id) == task_id
@@ -233,6 +239,41 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
         .values(live_allocation_id=None)
     )
 
+    # Design docs (polymorphic links, no FK): drop links to everything this project deletes,
+    # then move docs homed here to another place they serve (or delete them).
+    doomed: list[tuple[DocLinkEntity, Any]] = [
+        (DocLinkEntity.task, task_ids),
+        (DocLinkEntity.decision, adr_ids),
+        (DocLinkEntity.spec, spec_ids),
+        (DocLinkEntity.milestone, mile_ids),
+        (DocLinkEntity.retro, retro_ids),
+        (DocLinkEntity.component, comp_ids),
+        (
+            DocLinkEntity.risk,
+            select(col(RiskItem.id)).where(
+                or_(
+                    (col(RiskItem.scope_level) == RiskScope.project)
+                    & (col(RiskItem.scope_id) == pid),
+                    (col(RiskItem.scope_level) == RiskScope.task)
+                    & col(RiskItem.scope_id).in_(task_ids),
+                )
+            ),
+        ),
+        (
+            DocLinkEntity.outcome,
+            select(col(Outcome.id)).where(
+                col(Outcome.scope_level) == "project", col(Outcome.scope_id) == pid
+            ),
+        ),
+    ]
+    for entity_type, ids_query in doomed:
+        ids = [i for i in (await session.execute(ids_query)).scalars().all() if i is not None]
+        await design_docs.drop_links_to(session, entity_type, ids)
+    await design_docs.drop_links_to(session, DocLinkEntity.project, [pid])
+    await design_docs.release_docs_homed_at(session, DocScope.project, [pid])
+    task_list = [t for t in (await session.execute(task_ids)).scalars().all() if t is not None]
+    await design_docs.release_docs_homed_at(session, DocScope.task, task_list)
+
     # 2) Delete grandchildren → children → the project row, each before what it references.
     stmts = [
         # architecture sub-tables
@@ -323,14 +364,6 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
                 & (col(RiskItem.scope_id) == pid),
                 (col(RiskItem.scope_level) == RiskScope.task)
                 & col(RiskItem.scope_id).in_(task_ids),
-            )
-        ),
-        delete(DocReference).where(
-            or_(
-                (col(DocReference.scope_level) == DocScope.project)
-                & (col(DocReference.scope_id) == pid),
-                (col(DocReference.scope_level) == DocScope.task)
-                & col(DocReference.scope_id).in_(task_ids),
             )
         ),
         delete(Outcome).where(

@@ -113,6 +113,45 @@ async def _ready_world(client: Any, db: Any, name: str = "Add retries") -> tuple
     return w, int(task["id"])
 
 
+@pytest.mark.asyncio
+async def test_the_brief_lists_shared_docs_never_personal_ones(
+    client: Any, db_session: Any
+) -> None:
+    """The brief's docs: homed at the task's scopes or linked to them (USER_FLOWS §V9), shared
+    only — a personal doc is its owner's alone, and a Claude doc counts while it is shared in
+    Claude. What is missing follows the doc-kind catalog."""
+    from app.models.base import DocProvider, DocRelation, DocScope, DocVisibility
+    from app.models.doc import DocLink, DocReference
+
+    w, tid = await _ready_world(client, db_session)
+    owner = (await db_session.execute(select(User).where(User.email == "arch@e.com"))).scalar_one()
+    homed = DocReference(scope_level=DocScope.project, scope_id=w.project_id, kind="prd",
+                         title="Retries PRD", url="https://docs.example.com/prd",
+                         review_status="approved")
+    linked = DocReference(scope_level=DocScope.project, scope_id=w.project_id + 1,
+                          kind="tech_design", title="Retry design",
+                          url="https://docs.example.com/design")
+    personal = DocReference(scope_level=DocScope.task, scope_id=tid, kind="design",
+                            title="My notes", url="https://docs.example.com/mine",
+                            private_to_user_id=owner.id)
+    unshared = DocReference(scope_level=DocScope.task, scope_id=tid, kind="design",
+                            title="Draft in Claude", url="https://claude.ai/public/artifacts/x",
+                            provider=DocProvider.claude.value,
+                            visibility=DocVisibility.owner.value)
+    db_session.add_all([homed, linked, personal, unshared])
+    await db_session.flush()
+    db_session.add(DocLink(doc_id=linked.id, entity_type=DocScope.task.value, entity_id=tid,
+                           relation=DocRelation.basis.value))
+    await db_session.commit()
+
+    docs = (await _claim(client, w.agent, tid)).json()["brief"]["docs"]
+    assert sorted((d["title"], d["scope"]) for d in docs["links"]) == [
+        ("Retries PRD", "project"), ("Retry design", "task")]
+    assert {d["title"]: d["review"] for d in docs["links"]}["Retries PRD"] == "approved"
+    assert "prd" not in docs["missing"] and "tech_design" not in docs["missing"]
+    assert "design" in docs["missing"]  # only the personal and unshared docs had that kind
+
+
 # --------------------------------------------------------------------------- #
 # Delegation, intake, the queue
 # --------------------------------------------------------------------------- #

@@ -22,7 +22,10 @@ from the Reviews queue. Don't route one through the other.
    what already exists (`canopy:list_tasks`, and for a mirrored project a fresh
    `canopy:sync_project_tracking`). Note the numeric `project_id` (`canopy:list_projects`).
 2. **Open a draft plan.** `canopy:create_draft_plan(project_id, title, source=…)` — put the
-   doc reference in `source` so provenance is recorded.
+   doc reference in `source` so provenance is recorded. When the plan comes from a **tracked
+   design doc**, also pass `source_doc_id` + `source_doc_version` (the version you read):
+   finalising then links the doc to every task it creates (native) or cites it in each
+   ticket's description (mirrored).
 3. **Propose the work.** `canopy:add_draft_task` per chunk: `task_type="summary"` for an epic /
    phase, leaf tasks under it via `parent_id`, each with `estimate_days` and, where known,
    `story_points`. Keep names outcome-oriented ("Ship token refresh", not "auth work").

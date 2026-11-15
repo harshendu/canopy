@@ -9,10 +9,11 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
 from app.api.deps import CurrentUser, PlannerWriter, SessionDep
-from app.models.base import OutcomeScope, OutcomeStatus
+from app.models.base import DocLinkEntity, OutcomeScope, OutcomeStatus
 from app.models.outcome import Outcome
 from app.models.project import Initiative, Project
 from app.schemas.entities import OutcomeCreate, OutcomeRead, OutcomeUpdate
+from app.services import design_docs
 
 router = APIRouter()
 
@@ -85,5 +86,6 @@ async def update_outcome(
 async def delete_outcome(session: SessionDep, _: PlannerWriter, outcome_id: int) -> None:
     outcome = await session.get(Outcome, outcome_id)
     if outcome is not None:
+        await design_docs.drop_links_to(session, DocLinkEntity.outcome, [outcome_id])
         await session.delete(outcome)
         await session.commit()

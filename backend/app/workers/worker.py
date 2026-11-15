@@ -84,6 +84,39 @@ async def tracker_history_backfill(ctx: dict[str, Any]) -> dict[int, int]:
     return summary
 
 
+async def _claude_sync(full: bool) -> dict[int, dict[str, Any]]:
+    """The organization artifact sync (USER_FLOWS §V11) over its connection, if one is
+    configured and the integration policy reads it directly. Metadata only."""
+    from app.services import claude_sync
+
+    summary: dict[int, dict[str, Any]] = {}
+    async with async_session_factory() as session:
+        connection = await claude_sync.active_connection(session)
+        if connection is None or connection.id is None:
+            return summary
+        try:
+            report = await claude_sync.sync_connection(
+                claude_sync.connector_for(connection, session), full=full
+            )
+        except Exception:  # a failed listing never takes the worker down
+            logger.exception("Claude artifact sync failed for connection %s", connection.id)
+            await session.rollback()
+            return summary
+        summary[connection.id] = report.as_config()
+    return summary
+
+
+async def claude_artifact_sync(ctx: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    """What changed since the last listing (the watermark less an overlap window)."""
+    return await _claude_sync(full=False)
+
+
+async def claude_artifact_full_sync(ctx: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    """Nightly unfiltered listing: the only way to see sharing changes made through folders
+    and artifacts that no longer exist."""
+    return await _claude_sync(full=True)
+
+
 async def process_webhook(ctx: dict[str, Any], connection_id: int, payload: dict[str, Any]) -> None:
     async with async_session_factory() as session:
         connection = await session.get(Connection, connection_id)
@@ -153,6 +186,12 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 _poll_minutes = set(range(0, 60, max(1, min(settings.TRACKER_POLL_MINUTES, 30))))
 _drop_minutes = set(range(0, 60, max(1, min(settings.FILE_DROP_POLL_MINUTES, 30))))
 _reaper_minutes = set(range(0, 60, max(1, min(settings.WORK_REAPER_MINUTES, 30))))
+# Every N minutes below an hour; hourly at :15 at or above it (arq crons are minute/hour sets).
+_claude_minutes = (
+    set(range(0, 60, settings.CLAUDE_SYNC_MINUTES))
+    if 0 < settings.CLAUDE_SYNC_MINUTES < 60
+    else {15}
+)
 
 
 class WorkerSettings:
@@ -164,6 +203,8 @@ class WorkerSettings:
         poll_file_drops,
         reap_work_claims,
         deliver_outbox,
+        claude_artifact_sync,
+        claude_artifact_full_sync,
     ]
     cron_jobs: ClassVar = [
         cron(tracker_incremental_sync, minute=_poll_minutes, run_at_startup=False),
@@ -176,6 +217,9 @@ class WorkerSettings:
         cron(reap_work_claims, minute=_reaper_minutes, run_at_startup=False),
         # Outbound notifications: whatever is due (the change that queued it also kicks this).
         cron(deliver_outbox, run_at_startup=False),
+        # The organization artifact sync (no-op unless a `claude` connection exists).
+        cron(claude_artifact_sync, minute=_claude_minutes, run_at_startup=False),
+        cron(claude_artifact_full_sync, hour={4}, minute={0}, run_at_startup=False),
     ]
     on_startup = startup
     on_shutdown = shutdown

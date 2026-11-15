@@ -75,10 +75,14 @@ what differs per persona is *what you read and stage*, not the review rules.
   queue too: "pick up my next canopy task" → `working-the-queue` + `implementing-tasks`.
 
 ## Design (UX)
-- **Read first:** the doc graph (`list_doc_references` — design/PRD coverage), the tasks
-  their designs gate, `decision_queue` for decisions naming them as stakeholders.
-- **Core verbs:** `add_doc_reference` (Figma/design links), `comment_adr` (design
-  review), `raise_blocker` ("design not ready" is a real dependency signal).
+- **Read first:** the doc graph (`list_design_docs` — design/PRD coverage, review states,
+  what needs a check), the tasks their designs gate, `decision_queue` for decisions naming
+  them as stakeholders.
+- **Core verbs:** `register_design_doc` (prototypes, design pages and Figma links — skill
+  `tracking-design-docs`), `link_design_doc` (a `gate` on the milestone their design must
+  clear), `record_design_doc_version` after each republish, `request_design_doc_review`,
+  `comment_adr` (design review), `raise_blocker` ("design not ready" is a real dependency
+  signal).
 - **Stage vs direct:** linking one doc they pasted → direct; a design-review sweep
   producing scope/risk changes → proposal.
 

@@ -120,6 +120,18 @@ class AgentWorkFacts:
 
 
 @dataclass
+class AlertDocFlag:
+    """A design-doc attention flag (computed in `app/services/doc_health.py`) — changed after
+    approval, a basis link behind the doc, a gate close to its date, a shared doc made private,
+    a doc that could not be opened."""
+
+    doc_id: int
+    flag: str
+    severity: str
+    message: str
+
+
+@dataclass
 class Alert:
     kind: str
     severity: str  # info | warning | error
@@ -144,11 +156,23 @@ def compute_alerts(
     claims: list[AlertClaim] | None = None,
     claim_overrun_hours: float = 8,
     agent_work: AgentWorkFacts | None = None,
+    doc_flags: list[AlertDocFlag] | None = None,
 ) -> list[Alert]:
     alerts: list[Alert] = []
     alerts.extend(agent_work_alerts(gates or [], claims or [], claim_overrun_hours))
     if agent_work is not None:
         alerts.extend(agent_flow_alerts(agent_work))
+
+    for doc_flag in doc_flags or []:
+        alerts.append(
+            Alert(
+                kind=f"doc_{doc_flag.flag}",
+                severity=doc_flag.severity,
+                message=doc_flag.message,
+                entity_type="doc",
+                entity_id=doc_flag.doc_id,
+            )
+        )
 
     # Sprints never pin the schedule (CPM dates stay computed): surface the conflict instead.
     for st in sprint_tasks or []:

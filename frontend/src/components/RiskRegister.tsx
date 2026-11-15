@@ -12,6 +12,7 @@ import type {
   RiskStatus,
 } from "../api/types";
 import { riskTone } from "../lib/risk";
+import DocsToggle from "./DocsToggle";
 
 const CATEGORIES: RiskCategory[] = [
   "schedule",
@@ -126,6 +127,15 @@ export default function RiskRegister({
                   </span>
                 </div>
                 {r.description && <p className="text-xs text-slate-500">{r.description}</p>}
+                {scope !== "task" && (
+                  <DocsToggle
+                    entityType="risk"
+                    entityId={r.id}
+                    projectId={scope === "project" ? scopeId : undefined}
+                    initiativeId={scope === "initiative" ? scopeId : undefined}
+                    mayLink={mayWrite}
+                  />
+                )}
                 {(r.mitigation || r.contingency) && (
                   <p className="text-xs text-slate-500">
                     {r.mitigation && <>↳ mitigation: {r.mitigation} </>}

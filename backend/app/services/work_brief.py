@@ -35,8 +35,7 @@ from app.models.project import Blocker, Dependency, Initiative, Project, Task
 from app.models.spec import Spec, SpecCriterion
 from app.models.team import Engineer
 from app.models.work import TaskArtifact, WorkClaim
-from app.services import policy_service, rules, work_queue, work_service
-from app.services.doc_graph import EXPECTED_DOC_KINDS
+from app.services import design_docs, doc_kinds, policy_service, rules, work_queue, work_service
 from app.services.stage_policy import Pipeline, StageDef
 from app.services.workflow import category_of_task
 
@@ -321,24 +320,34 @@ async def build_brief(
     scopes.append((DocScope.project, project.id or 0, "project"))
     if project.initiative_id is not None:
         scopes.append((DocScope.initiative, project.initiative_id, "initiative"))
+    # Shared docs only — homed at each scope or linked to it. A personal doc is its owner's
+    # alone, and a Claude doc backs shared work only while it is shared in Claude
+    # (design_docs.shared_at_source).
     docs: list[dict[str, Any]] = []
     kinds: set[str] = set()
+    seen: set[int] = set()
     for level, scope_id, label in scopes:
+        linked = await design_docs.doc_ids_linked_to(session, level.value, [scope_id])
         for ref in (
             await session.execute(
-                select(DocReference).where(
-                    DocReference.scope_level == level, DocReference.scope_id == scope_id
-                )
+                select(DocReference)
+                .where(design_docs.scope_or_link_clause(level, scope_id, linked),
+                       col(DocReference.private_to_user_id).is_(None))
+                .order_by(col(DocReference.id))
             )
         ).scalars().all():
+            if ref.id is None or ref.id in seen or not design_docs.shared_at_source(ref):
+                continue
+            seen.add(ref.id)
             kind = str(ref.kind.value if hasattr(ref.kind, "value") else ref.kind)
             kinds.add(kind)
             docs.append({"kind": kind, "title": sanitize(ref.title) or None, "url": ref.url,
-                         "scope": label})
+                         "scope": label, "review": ref.review_status})
     if len(docs) > CAPS["docs"]:
         truncated.append("docs")
+    expected = doc_kinds.expected_keys(await doc_kinds.load_catalog(session))
     brief["docs"] = {"trust": CONTENT, "links": docs[: CAPS["docs"]],
-                     "missing": [k.value for k in EXPECTED_DOC_KINDS if k.value not in kinds]}
+                     "missing": [k for k in expected if k not in kinds]}
 
     # --- rules ------------------------------------------------------------------------------
     guidance, attestations = await rules.rules_for_brief(session, task, stage, role)

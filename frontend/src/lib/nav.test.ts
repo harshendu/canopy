@@ -42,6 +42,12 @@ describe("visibleNavItems", () => {
     );
   });
 
+  it("shows the design-doc library while governance.docs is on", () => {
+    expect(visibleNavItems(ctx()).map((n) => n.to)).toContain("/docs");
+    const off = visibleNavItems(ctx({ isFeatureOn: (f) => f !== "governance.docs" }));
+    expect(off.map((n) => n.to)).not.toContain("/docs");
+  });
+
   it("gates Connectors on contributor permission as well as the integrations feature", () => {
     const paths = visibleNavItems(ctx({ canContribute: false })).map((n) => n.to);
     expect(paths).not.toContain("/connectors");

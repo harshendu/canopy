@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import col, select
 
 from app.api.deps import ContributorWriter, CurrentUser, PlannerWriter, SessionDep
-from app.models.base import SpecStatus
+from app.models.base import DocLinkEntity, SpecStatus
 from app.models.project import Project, Task
 from app.models.spec import Spec, SpecCriterion
 from app.schemas.entities import (
@@ -23,6 +23,7 @@ from app.schemas.entities import (
     SpecRead,
     SpecUpdate,
 )
+from app.services import design_docs
 from app.services import specs as spec_service
 
 router = APIRouter()
@@ -94,6 +95,9 @@ async def get_spec(session: SessionDep, _: CurrentUser, spec_id: int) -> SpecDet
     detail.criteria_met = met
     detail.criteria_total = total
     detail.acceptance_ratio = ratio
+    detail.docs_ready, detail.docs_pending = await design_docs.docs_readiness(
+        session, DocLinkEntity.spec, spec_id
+    )
     return detail
 
 
@@ -102,8 +106,13 @@ async def update_spec(
     session: SessionDep, _: PlannerWriter, spec_id: int, payload: SpecUpdate
 ) -> Spec:
     spec = await _get_spec(session, spec_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    approving = changes.get("status") == SpecStatus.approved and spec.status != SpecStatus.approved
+    for field, value in changes.items():
         setattr(spec, field, value)
+    if approving:
+        # Pin the source docs to the version the spec was approved on (§V9).
+        await design_docs.pin_basis_links(session, DocLinkEntity.spec, [spec_id])
     await session.commit()
     await session.refresh(spec)
     return spec
@@ -120,6 +129,7 @@ async def delete_spec(session: SessionDep, _: PlannerWriter, spec_id: int) -> No
         task.spec_id = None
     for criterion in await _criteria(session, spec_id):
         await session.delete(criterion)
+    await design_docs.drop_links_to(session, DocLinkEntity.spec, [spec_id])
     await session.delete(spec)
     await session.commit()
 

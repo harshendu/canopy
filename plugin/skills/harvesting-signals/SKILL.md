@@ -31,7 +31,8 @@ Look for the seven signal types canopy can hold; skip everything else:
 | **Status/progress** | "shipped", "done", "half way", demo notes | `task.update` (percent_complete — NEVER Jira status) |
 | **Date/scope commitment** | "we'll deliver by…", "adding a hardening phase", new asks | `task.create` / `task.update` (duration/deadline) / `milestone.create` / `dependency.create` |
 | **Outcome signal** | metric moved ("p95 now 310ms"), bet validated/at risk | `outcome.create` / `outcome.update` |
-| **Document** | PRD/design/runbook link shared in thread or invite | `doc_reference.create` (kind + url) |
+| **Document** | PRD/design/runbook link shared in thread or invite | `doc_reference.create` (kind + url + `visibility` — a Claude doc must be shared) |
+| **Doc ↔ work** | "the checkout design covers the retry step", "per the RFC" | `doc_link.create` (doc_id or doc_ref → entity, relation basis/gate/reference) |
 
 Source-specific hints:
 - **Slack**: standup threads, #incident channels, decisions buried in replies. Capture

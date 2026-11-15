@@ -16,15 +16,29 @@ def register(mcp, client) -> None:
 
     @mcp.tool
     async def create_draft_plan(
-        project_id: int, title: str, description: str | None = None, source: str | None = None
+        project_id: int,
+        title: str,
+        description: str | None = None,
+        source: str | None = None,
+        source_doc_id: int | None = None,
+        source_doc_version: str | None = None,
     ) -> dict:
         """Create a draft plan the architect reviews before any Jira tickets are made.
 
         `source` is a free-text note on where the plan came from (e.g. a design-doc or PRD url).
+        When the plan comes from a tracked design doc, pass `source_doc_id` (+ the version you
+        read): finalising links the doc to every task it creates (native) or cites it in each
+        ticket's description (mirrored) — content only.
         """
         return await client.post(
             f"/projects/{project_id}/draft-plans",
-            {"title": title, "description": description, "source": source},
+            {
+                "title": title,
+                "description": description,
+                "source": source,
+                "source_doc_id": source_doc_id,
+                "source_doc_version": source_doc_version,
+            },
         )
 
     @mcp.tool

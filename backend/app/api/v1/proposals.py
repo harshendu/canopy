@@ -24,6 +24,7 @@ from app.api.deps import (
 )
 from app.core.events import publish
 from app.models.base import ProposalAction, ProposalScope, ProposalStatus, utcnow
+from app.models.doc import DocReference
 from app.models.project import Initiative, Project
 from app.models.proposal import Proposal, ProposalItem
 from app.models.user import User
@@ -39,6 +40,7 @@ from app.schemas.proposal import (
     ProposalRead,
     ProposalRejectRequest,
     ProposalReviseRequest,
+    ProposalSourceDoc,
 )
 from app.services import proposals as svc
 from app.services.proposal_preview import build_proposal_preview
@@ -103,6 +105,21 @@ async def _read(session: SessionDep, proposal: Proposal) -> ProposalRead:
             attention += 1
     view.attention_count = attention
     view.scope_label = await _scope_label(session, proposal)
+    if proposal.source_doc_id is not None:
+        doc = await session.get(DocReference, proposal.source_doc_id)
+        if doc is not None and doc.private_to_user_id is None and doc.id is not None:
+            view.source_doc = ProposalSourceDoc(
+                id=doc.id,
+                title=doc.title,
+                url=doc.url,
+                provider=doc.provider,
+                current_version=doc.current_version,
+                moved_on=bool(
+                    proposal.source_doc_version
+                    and doc.current_version
+                    and doc.current_version != proposal.source_doc_version
+                ),
+            )
     if proposal.created_by_user_id is not None:
         author = await session.get(User, proposal.created_by_user_id)
         view.created_by = (author.full_name or author.email) if author else None
@@ -156,6 +173,15 @@ async def create_proposal(
         )
         for index, item in enumerate(payload.items)
     ]
+    if payload.source_doc_id is not None:
+        source = await session.get(DocReference, payload.source_doc_id)
+        if source is None or source.private_to_user_id is not None:
+            # a proposal is shared work: its source must be a shared doc (§V6)
+            raise HTTPException(
+                status_code=422,  # (the starlette constant was renamed; keep the number)
+                detail={"code": "invalid_source_doc",
+                        "message": "The source doc must be a shared, tracked design doc."},
+            )
     issues = await svc.check_items(session, payload.scope_level, payload.scope_id, items)
     if issues:
         raise HTTPException(
@@ -172,6 +198,8 @@ async def create_proposal(
         summary=payload.summary,
         origin=payload.origin,
         created_by_user_id=user.id,
+        source_doc_id=payload.source_doc_id,
+        source_doc_version=payload.source_doc_version,
     )
     session.add(proposal)
     await session.flush()

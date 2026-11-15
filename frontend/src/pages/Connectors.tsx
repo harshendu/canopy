@@ -8,6 +8,7 @@ import type { Connection, Project, Provider } from "../api/types";
 import { useCurrentUser } from "../lib/useCurrentUser";
 import { canContribute, canWriteProjects, isPlanner } from "../lib/permissions";
 import {
+  CLAUDE_SYNC_HELP,
   buildConnectorConfig,
   splitMirrorProject,
   connectorFields,
@@ -61,7 +62,7 @@ export default function Connectors() {
   });
   const projectsById = new Map((projects.data ?? []).map((p) => [p.id, p] as const));
 
-  const options = providerOptions(catalog.data);
+  const options = providerOptions(catalog.data, { admin: me?.role === "admin" });
   const provider =
     providerChoice && options.some((o) => o.value === providerChoice) ? providerChoice : options[0].value;
   const tracker = trackerInfo(catalog.data, provider);
@@ -270,9 +271,14 @@ export default function Connectors() {
           <input
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder="API token / access token (stored encrypted)"
+            placeholder={
+              provider === "claude"
+                ? "Compliance API key (stored encrypted)"
+                : "API token / access token (stored encrypted)"
+            }
             className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
           />
+          {provider === "claude" && <p className="text-xs text-slate-500">{CLAUDE_SYNC_HELP}</p>}
 
           {/* Typed config fields (§lib/connectorFields) — Jira/GitHub/Drive by hand, every other
               tracker from its catalog schema; no hand-written JSON for the common case. */}

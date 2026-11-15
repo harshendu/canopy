@@ -42,6 +42,11 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
   these on demand and caches lightly. **Scoped write (§S):** canopy can *upload an export snapshot*
   (a generated PDF/CSV) into a connected Drive — it stores its own artifacts there but still does
   not own the design docs it reads.
+- **Claude** (claude.ai) owns the **Claude Docs and artifacts** a session publishes — design docs,
+  pages, prototypes, diagrams. Canopy keeps one record per document (link, identity, kind,
+  version, a short summary, review state, links to the work) and **never receives the content**;
+  a Claude session registers and re-checks them (§V5). A Claude doc joins shared work only once
+  it is **shared in Claude** (§V6).
 
 ---
 
@@ -646,10 +651,11 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
   **risk register** (RAID; hidden when `governance.risk` is off). An **External links** section shows the task's links out to
   the systems that own the work: its **tracker item** (Jira, Linear… — named by the tracker's
   label and clickable when the tracker exposes a browsable site), the **GitHub PRs** implementing it (with open/closed state), and its
-  task-scoped **design docs** (GitHub / Drive / Jira / manual, badged by source). Read-only —
-  canopy links, it never stores; doc CRUD lives on the project **Docs** tab (§V). With
-  `ai.work_queue` on, an **Agent work** section delegates the task to agents or takes it back,
-  and shows why it is or isn't moving (§AE2).
+  pull requests. A **Design docs** section lists the docs filed under the task or linked to it
+  (provider · format · review status · relation), with **Link a doc** for contributors on
+  their own tasks (§V7); personal docs show only to their owner. Doc CRUD lives on the project
+  **Docs** tab (§V). With `ai.work_queue` on, an **Agent work** section delegates the task to
+  agents or takes it back, and shows why it is or isn't moving (§AE2).
 - **API:** `PATCH /api/v1/tasks/{id}` (`tags`, `estimate_optimistic`/`estimate_likely`/
   `estimate_pessimistic`; `TaskRead` returns computed `pert_mean` + `estimate_spread`) ·
   `GET/POST /api/v1/tasks/{id}/blockers` · `GET/POST /api/v1/risks?scope_level=task&scope_id=…` ·
@@ -699,7 +705,8 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
   **"drift" is reserved for architecture drift** (§N); the schedule's plan-vs-actual is *variance*.
 - **API:** `POST /api/v1/projects/{id}/baseline` (optional `{note}`, returns the logged
   `Baseline`), `GET /api/v1/projects/{id}/baselines` (the history, newest first) · **MCP:**
-  `set_baseline` (accepts a `note`).
+  `set_baseline` (accepts a `note`). Capturing a baseline also **pins** the design docs the plan
+  was based on (basis links on the project and its tasks) to their current versions (§V9).
 
 ### C5. What-if scheduling **[updated — now has a UI panel]**
 - **UI:** Gantt tab → a **What-if** card under the chart (shown when `planning.whatif` is on and the
@@ -1075,6 +1082,12 @@ boundaries).
   `PATCH/DELETE /api/v1/draft-tasks/{task_id}` (writes are planner-gated) · **MCP:**
   `list_draft_plans`, `create_draft_plan`, `get_draft_plan`, `add_draft_task`,
   `update_draft_task`, `delete_draft_task`.
+- **From a design doc (§V9):** `source_doc_id` + `source_doc_version` name the tracked (shared)
+  doc the plan was drafted from (422 `invalid_source_doc` for a personal or unknown doc). On
+  finalise, a **native** plan links the doc as a **reference** to every task it creates; a
+  **mirrored** plan cites it at the end of each ticket's description ("Design doc: <title> —
+  <url>", idempotent — a content write, never status). Only a doc shared at its source is cited.
+  The plan card shows "drafted from a tracked design doc".
 
 ### C10.2 Finalise the draft (canopy tasks, or create / update tickets)
 - **Finalise (any tracking mode):** `POST /api/v1/draft-plans/{plan_id}/finalize`
@@ -1265,7 +1278,9 @@ review it, alternatives, reversibility, and a discussion thread.
 - **UI:** Decisions tab → click an ADR to expand: full context/decision/consequences/alternatives,
   a **status control** (only legal transitions; a `decide_by` date appears when deferring), a
   **review summary** (approved / changes-requested / rejected / pending + whether the project's
-  decision rule is met to accept), a **blast-radius** button (G5), and the **discussion thread**.
+  decision rule is met to accept — plus an advisory **"N design doc(s) not approved yet"** chip
+  when a doc it rests on or waits for is not approved, §V9), a **Design docs behind this
+  decision** panel (§V7), a **blast-radius** button (G5), and the **discussion thread**.
   Post a comment with a **kind**: `comment` | `approve` | `request_changes` | `reject` (a
   non-comment kind is a formal review action, attributable to an engineer).
 - **API:** `GET /api/v1/architecture/adrs/{id}` (detail: fields + comments + review summary),
@@ -1276,6 +1291,8 @@ review it, alternatives, reversibility, and a discussion thread.
   `owner_decides` | `consensus` | `lazy_consensus`, `decision_sla_hours`): drives the advisory
   `can_accept` in the review summary. It is surfaced, **not hard-enforced** — the owner can still
   decide. Per-stakeholder approval *gates* and SLA *notifications* are **not built** yet.
+  The summary also carries `docs_ready` / `docs_pending` (advisory, §V9); **accepting** an ADR
+  pins every basis design doc to its current version.
 
 ### G4. Decision queue
 - **UI:** the **`/decisions`** page (team-wide, also in the sidebar) and the top of each project's
@@ -1297,6 +1314,11 @@ review it, alternatives, reversibility, and a discussion thread.
 - **UI:** Decisions tab → "Import an ADR from a doc" (planner): pick a GitHub/Drive connection + a
   path/file id → the markdown is parsed (title + context/decision/consequences) into an ADR.
 - **API:** `POST /api/v1/architecture/adrs/import` · **MCP:** `import_adr`.
+- **From a design doc's text (§V9):** `POST /api/v1/architecture/adrs/import-text`
+  `{project_id, markdown, doc_id?, doc_version?, fallback_title?}` (planner, project owner) — a
+  session exports a Claude doc or artifact as markdown; the ADR's fields become canopy's own
+  record and, with `doc_id`, the doc is linked as the ADR's **basis** pinned to the version read
+  · **MCP:** `import_adr_from_markdown`.
 
 ### G7. Fitness functions (machine-checkable decisions) **[new — v2 §G-R1]**
 - **What:** a decision can carry **fitness functions** — dependency rules over the component graph
@@ -1376,6 +1398,10 @@ review it, alternatives, reversibility, and a discussion thread.
   deprecated, §AE7). On mirrored projects (§AE9): **`moved_without_clearance`** (a ticket moved in
   its tracker without canopy clearing it) and **`clearance_waiting`** (a cleared move the tracker
   still doesn't show after `WORK_CLEARANCE_HOURS`).
+  **Design-doc alerts** (§V8) for the docs that bear on the project: `doc_changed_since_approval`
+  and `doc_behind_pin` / `doc_gate_open` (warning), `doc_restricted` (a shared Claude doc made
+  private) and `doc_broken` (error) — `entity_type: "doc"`; on the project **Overview** they drill
+  to the **Docs** tab.
 - **API:** `GET /api/v1/projects/{id}/alerts` (unchanged) · **MCP:** `list_alerts`.
 - **Notes:** delivery to Slack/email is **not built** — alerts are computed and shown/queried; a
   delivery integration is a future hook over this output.
@@ -1510,7 +1536,8 @@ component map + ADRs and maintains the queue.
 ### P1. Project retrospective
 - **UI:** project → **Retros** tab → **New retrospective** (planner) opens a retro whose body is
   **auto-seeded** from project state: completed milestones, schedule variance (tasks ended off
-  baseline), open drift (§N), and ADR churn (superseded/total). It's editable markdown; engineers
+  baseline), open drift (§N), ADR churn (superseded/total), and the **design docs that changed
+  after approval** (approved vs current version, §V9). It's editable markdown; engineers
   **comment**; planners can **close** it.
 - **Agent work** (with `ai.work_queue` on, once sessions have worked the project): the seed adds
   an **Agent work** section from the last 8 weeks of the project's agent flow (§AE8) — sessions
@@ -1892,7 +1919,10 @@ initiative / portfolio rollups), so the numbers match what's on screen.
   `GET /api/v1/initiatives/{id}/export?fmt=`, `GET /api/v1/portfolio/export?fmt=` — returns the file
   with a `Content-Disposition` attachment. Rendering is `app/services/export_pdf.py` (reportlab —
   pure Python, no headless browser, CI-safe) + `app/services/export_csv.py`; the snapshot data is
-  assembled in `app/api/v1/exports.py`.
+  assembled in `app/api/v1/exports.py`. Project and initiative snapshots add a **Design docs**
+  table — title, kind, review status, version ("r12 approved, now r14"), where it lives and the
+  link; personal and archived docs are left out; in CSV it is a trailing section after a blank
+  row (§V9).
 
 ### S2. Save a snapshot to Google Drive
 - **UI:** the same Export menu → **Save to Google Drive** (pick a connection when more than one is
@@ -2000,8 +2030,10 @@ release | qa | runbook | other), a `source` (jira_epic | manual | repo | drive),
 `link_health` (unchecked | ok | stale | broken — checking is a follow-up).
 
 ### V1. List / add / manage references + coverage
-- **API:** `GET /api/v1/docs?scope_level=&scope_id=&kind=` (open read), `POST /api/v1/docs`
-  (planner; validates the scope exists, no FK), `PATCH/DELETE /api/v1/docs/{id}` (planner),
+- **API:** `GET /api/v1/docs?scope_level=&scope_id=&kind=` (open read; docs filed there or
+  linked there, §V5), `POST /api/v1/docs` (planner on the scope, or a contributor on a project —
+  §V7; validates the scope exists, no FK; dedupes into a link, §V5), `PATCH/DELETE
+  /api/v1/docs/{id}` (the doc's writers, §V7),
   `GET /api/v1/docs/coverage?scope_level=&scope_id=` (which **expected** kinds — prd / design /
   tech_design / architecture — are present vs **missing**, rolled up so a project includes its
   tasks and an initiative includes its projects + their tasks; absence of a doc is a signal,
@@ -2033,14 +2065,234 @@ release | qa | runbook | other), a `source` (jira_epic | manual | repo | drive),
 
 ### V4. Not built (deliberate limits)
 - **UI:** a **Docs** tab on the project cockpit and a **Documents** panel on the initiative cockpit
-  list references grouped by kind with coverage badges + an add-link form (the AI-driven *setup* /
-  harvest stays conversational). Built.
-- **No link-health checking** (a HEAD/404 sweep to flag broken/stale links — `link_health`
-  exists but stays `unchecked`), **no Jira attachments** harvest (only fields + remote/
-  description links), and **no write-back** of canopy-added links onto the Jira epic
-  (canopy-local for now).
+  list docs grouped by kind with coverage badges, filters and an add form (§V5); the AI-driven
+  epic *setup* / harvest stays conversational. Built.
+- **No Jira attachments** harvest (only fields + remote/description links), and **no write-back**
+  of canopy-added links onto the Jira epic (canopy-local for now).
 - **AI doc *generation*** (drafting a tech-design from the PRD + ADRs, syncing the architecture
   doc to reality via drift) is a separate future slice, not part of this flow.
+
+### V5. Design docs: register, identity, the open kind catalog **[new]**
+A **design doc** is any document the work runs on — most often made in **Claude**: a Claude Doc,
+or a published artifact (a markdown page, an image page, static HTML with interactive
+illustrations, a prototype) — or a Drive / Figma / Confluence / repo doc. `DocReference` is one
+row per *document*, however many places use it:
+- **Identity.** `app/services/doc_urls.py` (pure) classifies a link by its **exact host**:
+  `provider` (claude | gdrive | github | figma | confluence | jira | web), the provider's
+  `external_id` (a claude.ai artifact id from `/artifact/[<title>-]<id>`, `/code/artifact/<uuid>`,
+  `/public/artifacts/<uuid>`, `preview.claude.ai`; a Drive file id; a repo path…), a `format`
+  hint, and a canonical link (a Claude title slug dropped, an `#anchor` kept). Registration
+  dedupes on provider + id, else the link — a second registration returns the existing record
+  and the new scope gets a **link**, never a copy. Registration accepts https only.
+- **What canopy stores:** link, title, kind, `format` (document | page | prototype | diagram |
+  image | deck | canvas | sheet — an open slug), `current_version` (the source's version label),
+  a ≤2,000-character plain-text `summary`, `visibility`, `review_status` (NULL = an untracked
+  plain link; `draft` once tracked), `supersedes_id`, who registered it. **Never the content** —
+  a session may send a SHA-256 of the exported text (the MCP server hashes it locally) into the
+  version log (`DocRevision`).
+- **Kinds are data, not schema.** `kind` is an open slug (`Threat Model` → `threat_model`); the
+  workspace **kind catalog** (`DocKindDef`, seeded with prd, design, tech_design, architecture,
+  rfc, research, qa, release, runbook, other) gives each kind a label, a **lifecycle stage**
+  (frame | define | design | decide | plan | build | release | learn | other) and an
+  **expected** flag. An unknown kind joins under stage `other`; planners relabel/re-stage it;
+  admins **merge** one kind into another. Coverage and filters read the stage, never the name.
+- **Coverage** (`GET /docs/coverage`) now counts docs *linked* to the scope as well as filed
+  there, ignores superseded / archived / personal docs, takes expected kinds from the catalog,
+  and adds each expected kind's best state (approved | in_review | draft | linked | missing) and
+  counts by stage.
+- **Migration** (`0b1c2d3e4f5a`): `kind`/`source` became VARCHAR (open kinds; sources `agent`,
+  `claude_sync`); existing links were classified; rows pointing at the same document were
+  **merged** into one doc with links (survivor = the broadest home; proposal items re-pointed);
+  each ADR `rfc_url` and spec `source_url` became a doc + a **basis** link (the fields stay,
+  read-only aliases for one release).
+- **API:** `POST /api/v1/docs/register` (201 created / 200 existing; `{doc, created}`) ·
+  `GET /api/v1/docs` (filters: `scope_level`+`scope_id` = filed there **or** linked there,
+  `entity_type`+`entity_id`, `kind`, `stage`, `provider`, `review_status` incl. `untracked`,
+  `personal`) · `GET/PATCH/DELETE /api/v1/docs/{id}` · `POST /api/v1/docs` (the legacy add-link
+  form: a plain link, deduped into a link) · `GET /api/v1/docs/kinds` · `PUT
+  /api/v1/docs/kinds/{key}` (planner) · `POST /api/v1/docs/kinds/{key}/merge` (admin). All gated
+  by `governance.docs`; SSE `docs` events refresh the views.
+- **MCP:** `register_design_doc` (hashes optional `content` locally), `get_design_doc`,
+  `list_design_docs`, `list_doc_kinds`; `add_doc_reference` / `list_doc_references` stay one
+  release as aliases. **Skill:** `tracking-design-docs`.
+- **UI:** the **Docs** tab — filters (status, where it lives, stage), per-doc badges (provider ·
+  format · status · version, "via Claude", "not shared", "limited audience"), expandable summary
+  + "linked to" chips, an **Add doc** form that classifies the link as you type, offers the
+  catalog's kinds with free entry and asks who can open a Claude doc, and a **Kinds** panel
+  (planners: label / stage / expected; admins: merge).
+
+### V6. Personal and shared docs (the sharing rule) **[new]**
+- **Personal** (`private_to_user_id`): anyone — viewers included — can track a doc for their own
+  use; no sharing needed; it may have no home and links only to the owner's **own tasks**
+  (reference). It is invisible to everyone else — planners, admins, and an admin impersonating
+  its owner (one visibility filter, `design_docs.visible_clause`).
+- **Shared:** filed under a home (project / initiative / task) and visible to everyone. **A Claude
+  doc must be shared in Claude** (`visibility` users | org | public): registering it as shared,
+  promoting it, linking it, staging it in a proposal (`doc_reference.create` now takes
+  `visibility`) return **409 `doc_not_shared`** while it is `owner` or `unknown` (a shared
+  record of the same artifact someone already made counts). A doc shared with named people
+  shows a **limited audience** chip. Other providers keep today's behaviour.
+- **Promote:** `POST /api/v1/docs/{id}/promote` `{scope_level, scope_id, visibility?}` — the
+  owner files a personal doc under a home once it is shared; if the same document is already
+  shared, the personal record folds into it (links moved).
+- **UI:** **My docs** on `/me` (track a doc privately; "share with the team" → pick a project +
+  who can open it). **MCP:** `register_design_doc(personal=True)`, `promote_design_doc`.
+
+### V7. Links to the work a doc serves **[new]**
+- `DocLink` (doc ↔ project | initiative | task | decision | spec | milestone | outcome | risk |
+  retro | component) with a **relation**: `basis` (the entity was derived from / decided on the
+  doc — pins `pinned_version` = the doc's current version), `gate` (should not complete until
+  the doc is approved — advisory), `reference` (context). Idempotent per doc + entity.
+- **Who may write:** a planner who may edit the doc's home (ownership rules, §R6; 403
+  `not_initiative_lead`); a **contributor** for a doc they registered under a project or their
+  own task, linking it to **their own tasks** only; a link's **target** must be work the caller
+  may edit — so one PRD can serve two projects without either team editing the other's plan.
+  Viewers track personal docs only.
+- Deleting a task / project / initiative / spec / milestone / outcome / risk drops the links to
+  it; a doc **homed** there moves to another place it is linked to (or goes, with its links and
+  versions) — `design_docs.release_docs_homed_at`, used by `app/services/cascade.py`.
+- **API:** `POST /api/v1/docs/{id}/links` · `PATCH/DELETE /api/v1/docs/links/{id}` ·
+  `GET /api/v1/docs/links?entity_type=&entity_id=` (docs on one entity, with the link).
+  **MCP:** `link_design_doc`, `register_design_doc(links=[…])`.
+- **UI:** a **Design docs** panel (`LinkedDocs`) on the ADR detail (replacing the bare RFC link),
+  the spec card (replacing the bare source link) and the task panel: relation, pinned version
+  vs now ("doc now r14 — re-check"), unlink, and **Link a doc** (pick a project doc, or paste a
+  link to register + link in one step).
+
+### V8. Versions, review, approval and health **[new]**
+- **Checks + the version log.** `POST /api/v1/docs/{id}/revisions` `{version?, content_hash?,
+  change_summary?, reachable?, visibility?, snapshot_url?}` records what a session (or a person)
+  saw: a new version label is appended to `DocRevision` (unique per doc + version) and becomes
+  `current_version`; every call stamps `last_checked_at` and writes `link_health` (`ok`, or
+  `broken` when `reachable=false`) — so "never checked" and "checked, unchanged" differ. A
+  SHA-256 of the exported content is the only content-derived thing canopy receives.
+  `GET …/revisions` lists the log. **MCP:** `record_design_doc_version` (hashes `content`
+  locally).
+- **Review.** `draft → in_review` (`POST …/request-review {version?}`; the doc's writers, agents
+  included) names the version under review. **Approval** (`POST …/approve`) is **human-only**
+  (`HumanOnly`, an agent token 403s) by a **planner on the doc's home** (admins exempt; a
+  contributor — the author included — gets 403 `not_approver`), stamps `approved_version`,
+  `approved_by_user_id`, `approved_at`. `design_docs.approve` is the **only** writer of the
+  approved state (`tests/test_doc_review_single_writer.py`). A newer version does not demote an
+  approved doc — it is flagged instead. `approved → in_review` again via request-review;
+  `POST …/archive` retires a doc; registering a replacement with `supersedes_id` marks the old
+  one `superseded`. Review and approval obey the sharing rule (409 `doc_not_shared`); a personal
+  doc has none (409 `doc_personal`). **MCP:** `request_design_doc_review` (no approve tool).
+- **Health** (pure `app/services/doc_health.py`, computed per read — never stored):
+  `unverified` (a Claude doc never opened since registration), `check_due` (a tracked doc not
+  re-checked within `DOC_CHECK_DAYS`, default 14), `changed_since_approval`, `behind_pin` (a
+  basis link pinned an older version — names the ADR/spec/plan), `gate_open` (a gate link whose
+  milestone is within `DOC_GATE_WINDOW_DAYS` or whose spec is still draft, and the doc is not
+  approved), `restricted` (a shared Claude doc made private), `broken`. Superseded/archived docs
+  raise nothing; personal docs raise check flags only. Every doc read carries `health`.
+- **Where it surfaces:** the project **alerts** (§I — attention flags only), the initiative
+  **digest**'s attention list (§R5), coverage's `needs_attention` count, **/me → Design docs to
+  approve**, and the session worklist `GET /api/v1/docs/worklist?project_id=` (check flags,
+  oldest first; `get_workspace_context.design_docs.checks_due`). **MCP:** `get_doc_worklist`.
+- **UI:** health chips on each Docs-tab row and attention chips in the `LinkedDocs` panels; a
+  **doc detail drawer** (`DocDetailPanel`: Open in Claude, summary, health, links with pinned vs
+  current version, the **version timeline** with hashes and frozen copies, *Record check* / *can't
+  open it*, *Request review*, *Approve* for planners, *archive*, *Supersede* with a new link).
+
+### V9. Design docs across the lifecycle **[new]**
+- **Pins at decision points.** Accepting an ADR (§G3), approving a spec (§W) and capturing a
+  baseline (§C4) pin every **basis** link on that entity (the project + its tasks for a
+  baseline) to the doc's current version — so a later edit raises `behind_pin` (§V8).
+- **Advisory readiness.** The ADR review summary and the spec bundle report `docs_ready` /
+  `docs_pending`: every doc the entity rests on (basis) or waits for (gate) is approved. Like
+  `can_accept`, it is surfaced, not enforced.
+- **An ADR from a doc's text** — `POST /architecture/adrs/import-text` (§G6), the doc linked as
+  its basis · **MCP:** `import_adr_from_markdown`.
+- **Proposals.** `doc_link.create` items; `proposalitem.entity_type` is now VARCHAR (migration
+  `1c2d3e4f5a6b`). A proposal may name its **source doc** (`source_doc_id` +
+  `source_doc_version`; shared docs only) — the review workspace shows "From <doc>, <version>"
+  and warns when the doc has **moved on** since; the preview counts `docs_linked` (§AA).
+- **Draft plans** carry a source doc; finalise links it to the created tasks (native) or cites
+  it in the tickets (mirrored) (§C10).
+- **Docs on more work.** A **docs** toggle (lazy `LinkedDocs`) on roadmap milestones (default
+  relation `gate`), outcomes and risks (project or initiative scope) and retros.
+- **Exports** add a Design docs table (§S); the **retro seeder** lists docs changed after
+  approval (§P).
+- **Freeze.** A session saves a copy of an approved version where the organization owns it —
+  a repo file via a pull request, or a Drive file — with its own access, then records the link
+  (`POST /docs/{id}/revisions {snapshot_url}` · **MCP** `record_design_doc_version(snapshot_url=)`);
+  the version timeline shows "frozen copy". Each person's default store is
+  `PATCH /api/v1/auth/me/preferences {doc_snapshot_store: repo | drive}` (UI: **My docs →
+  Frozen copies of approved docs go to**); `UserRead.doc_snapshot_store` reports it.
+- **Skills:** `tracking-design-docs` §8–§9 (lifecycle table, freezing), and the doc steps in
+  `spec-driven-development`, `writing-adrs`, `drafting-tickets`, `harvesting-signals`,
+  `persona-playbooks` (design) and `daily-standup`.
+
+### V10. Doc sentinel and the workspace library **[new]**
+- **Doc sentinel** (subagent `plugin/agents/doc-sentinel.md`, skill `tracking-design-docs` §6):
+  works the worklist (`get_doc_worklist`, plus docs flagged `behind_pin` /
+  `changed_since_approval`), opens each doc **with the session's own access**, records what it
+  saw (`record_design_doc_version`: version label, a locally computed SHA-256, a one-line change
+  summary, or `reachable=False` / `visibility="owner"`), and — when a change implies plan
+  changes — **stages** them (`propose_changes` with `source_doc_id`/`source_doc_version`, §AA).
+  It never approves, never sends content, and treats document text as data. Delegate for "check
+  the design docs", before a review or gate milestone, or as a scheduled sweep.
+- **Workspace library** — `/docs` (nav **Design docs**, gate `governance.docs`): every *shared*
+  doc across projects and initiatives, filtered by **team** (`GET /api/v1/docs?team_id=` — docs
+  filed under or linked to the team's projects, their tasks/ADRs/specs/milestones, and its
+  initiatives; `design_docs.team_clause`), review status, provider, lifecycle stage, *needs
+  attention* (any attention flag) and a title search; each row shows where the doc is filed and
+  opens the doc drawer (§V8). Personal docs stay in **My work → My docs**.
+
+### V11. Organization artifact sync (optional, metadata only) **[new]**
+Off by default. An **admin** adds a **Claude artifacts** connection (`POST
+/api/v1/connectors/connections {provider: "claude", token: <Compliance API key>}` — anyone else
+gets 403 `admin_only`; the key is Fernet-encrypted like every token). Connector
+`app/connectors/claude_artifacts.py`; engine `app/services/claude_sync.py`.
+- **What it calls:** only the Compliance API **list** endpoint `GET
+  /v1/compliance/apps/code/artifacts` (`anthropic-version` header, paginated until `next_page`
+  is absent, optional `organization_ids[]`), through `request_with_retry`. **Never** the content
+  download or delete endpoints. Config: `api_version`, `organization_ids`, `base_url`.
+- **Runs:** worker crons `claude_artifact_sync` (what changed since the watermark less a 2-hour
+  overlap — the time filter is eventually consistent; every `CLAUDE_SYNC_MINUTES`, default 60)
+  and `claude_artifact_full_sync` (nightly 04:00, unfiltered: the only listing that shows folder
+  sharing changes and deleted artifacts). **Sync now:** `POST
+  /api/v1/connectors/connections/{id}/sync` (planner; UI: the library header or Connectors).
+  The integration policy (§A10) can stand it down (read strategy not `direct`).
+- **What a run records, for tracked Claude docs only:** it **pairs** each listed artifact with
+  the docs whose link id is a form of the artifact's tagged id (`candidate_ids`: as listed,
+  without its tag, without the `01` marker, that body as a base58 UUID — the relation is not
+  documented, so a pairing found once is kept in `ExternalRef` (`entity_type` "doc")), then
+  applies `design_docs.apply_source_metadata`: the live version (`published_version_id`, else
+  the newest listed version) is appended to the version log with `source="sync"` and stamps the
+  check; `read_mode` → `visibility` (a shared doc gone private flags `restricted`); for a Claude
+  Doc or Sheet (no version ids) only `source_updated_at` moves — health then flags `check_due`
+  ("changed in Claude after its last check") and, after approval, `changed_since_approval`.
+  A paired artifact missing from a **complete, unfiltered** listing marks its docs `broken`.
+  Owners are matched to canopy users by email (`ExternalRef` "user"; canopy accounts are
+  admin-created, and an admin already holds the key, so the match grants no one more). The run's counts
+  (listed, paired, new versions, sharing changes, missing, **unmatched** — tracked shared Claude
+  docs never paired) are stored on the connection: `GET /api/v1/docs/artifact-sync`
+  (UI: the library's sync line). Deleting a doc drops its pairing. **MCP:**
+  `get_artifact_sync_status`; `get_workspace_context.design_docs.artifact_sync`.
+- **Your untracked artifacts:** `GET /api/v1/docs/suggestions` lists **the caller's own**
+  artifacts that no doc they can see tracks (another person's *personal* tracking does not hide
+  one) — live, never stored; off while impersonating. Registering one: `POST /docs/register
+  {…, source_artifact_id}` checks it is the caller's (404 `artifact_not_yours`; 403
+  `impersonating` under impersonation), requires its
+  claude.ai link (the listing carries none; 422 otherwise), takes the listed sharing, title,
+  format and version, records the pairing and `source="claude_sync"`. Nothing is ever
+  registered automatically. UI: **My docs → From Claude → Find my untracked artifacts → Track…**
+  (paste its link). **MCP:** `list_my_untracked_artifacts`, `register_design_doc(artifact_id=)`.
+- **Demo:** a demo Claude connection is served by the offline mock (`connectors/demo.py`): the
+  seeded artifacts pair, the republished guest-checkout page leaves its decision `behind_pin`,
+  and Leo and Sarah each have an untracked artifact to find.
+
+### V12. Not built yet (design docs)
+- **Known gaps of the organization sync:** pairing relies on id forms that are not documented —
+  the `unmatched` count says how many tracked docs it could not pair (register them from a
+  suggestion to pair explicitly); a Claude Doc's title is not in the listing; there is no
+  admin UI beyond the connection form and the library's sync line.
+- By design: **no content search, no embedded preview** (canopy never frames or fetches a doc;
+  the sync never downloads content), **no mirrored comment threads** (review conversations
+  stay in Claude), **no automatic registration** (a session or a person registers; suggestions
+  only list), **no Slack/email delivery** of doc alerts (a hook over the alerts, like §I), **no
+  enforced gates** (readiness and gate links are advisory, like `can_accept`).
 
 ---
 
@@ -2074,6 +2326,9 @@ document graph (§V) or `source_url`; the governing decision links via `adr_id`.
 - `GET /api/v1/specs/{id}` returns the **self-audit bundle**: the spec + its criteria + the linked
   tasks (name/status/percent) + computed **readiness** (`criteria_met` / `criteria_total` excluding
   waived, `acceptance_ratio`). Readiness is pure in `app/services/specs.py` · **MCP:** `get_spec`.
+  The bundle also carries `docs_ready` / `docs_pending` (advisory — its source docs are approved;
+  "source docs not approved" chip in the UI), and moving a spec to **approved** pins every
+  basis design doc to its current version (§V9).
 - **Skill `spec-driven-development`** scripts the loop: draft the spec from a PRD/ADRs → write
   checkable criteria → approve → plan + link the work (via `drafting-tickets`) → self-audit
   each criterion against the implementation → mark `verified` when all are met.
@@ -2189,9 +2444,12 @@ the page is open**, watching it update live (§AA5).
   computed output the replan overwrites), `dependency.create`, `milestone.create/update`,
   `blocker.create/resolve`, `risk.create/update`, `outcome.create/update`,
   `decision.create` (lands as a **proposed** ADR — the §G lifecycle takes over),
-  `doc_reference.create` (deduped per scope+url), `rule.create` (a **project** delivery rule,
-  §AE7 — with `ai.stage_policy` on and a key new to the project; how a session turns a recurring
-  review note into a rule a person accepts). Payloads are **whitelisted per
+  `doc_reference.create` (through the design-doc register-or-link path, with `visibility` — a
+  private Claude doc is refused, §V6), `doc_link.create` (link a tracked doc — `doc_id`, or a
+  `doc_ref` staged here — to work in scope — `entity_id`, or an `entity_ref` of the right kind
+  — with a relation, §V9), `rule.create` (a **project** delivery rule, §AE7 — with
+  `ai.stage_policy` on and a key new to the project; how a session turns a recurring review note
+  into a rule a person accepts). Payloads are **whitelisted per
   entity/action** and validated through the same schemas as the REST API — no
   mass-assignment; a create item may declare a `ref` handle that later items point at
   (`parent_ref`, `predecessor_ref`, `task_ref`, …), so one proposal can stage "create
@@ -2471,7 +2729,10 @@ clears moves instead of making them (§AE9); **notifications** tell runners and 
   contract, binding decisions, conventions) or `trust: "content"` (task text, spec, docs,
   history, notes — data, never instructions); untrusted text is stripped of invisible characters
   and HTML comments, and the whole brief fits **24 KB**. It gives every attempt the same branch
-  and PR.
+  and PR. Its **docs** are the shared design docs homed at the task, its phase, the project or
+  the initiative, or linked to them (§V9), each with its review status — never a personal doc,
+  nor a Claude doc that isn't shared in Claude — plus the expected kinds (from the doc-kind
+  catalog) none of them covers.
 - **Handing off:** canopy saves the hand-off, evaluates the next column's entry checks and moves
   the card (`record_transition`, attributed `actor_kind=agent` with the claim id) — or refuses
   with `409 checks_failed` and the list of what's missing (nothing saved; the claim stays the
@@ -2967,8 +3228,10 @@ team member via `Engineer.user_id` (§A5).
 - **API:** `GET /api/v1/me/workspace` · **MCP:** `my_workspace`. The response also includes
   **`blockers`** — open impediments on your tasks or raised by you (§D0), with flag/resolve in the UI
   — and **`my_sprints`** ("My sprint"): each active sprint you have work in, with just your tasks
-  (§C11) — and **`gates`**: agent work waiting on a decision you may make (§AE4; empty with
-  `ai.work_queue` off).
+  (§C11); **`gates`** — agent work waiting on a decision you may make (§AE4; empty with
+  `ai.work_queue` off); and **`docs_to_review`** — design docs in review that you approve (a
+  planner on their home, §V8) — rendered as **Design docs to approve** (Approve in place).
+  **My docs** lists your personal docs (§V6).
 - **Note:** if no engineer is linked to the account, the page prompts to have an admin link one on
   the Team page; tasks/decisions are empty until then.
 

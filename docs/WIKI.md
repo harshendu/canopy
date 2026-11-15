@@ -117,13 +117,14 @@ deep-linkable with `?tab=` (e.g. `/projects/12?tab=drift`).
 Install the `canopy` plugin, point it at your Canopy URL, and paste a token. You then get **140+
 curated MCP tools** (one per architect *intent*, not a 1:1 mirror of REST routes), plus:
 
-- **16 skills** (runbooks): `updating-canopy` (the session operating guide), `harvesting-signals`,
+- **17 skills** (runbooks): `updating-canopy` (the session operating guide), `harvesting-signals`,
   `persona-playbooks`, `planning-roadmaps`, `writing-adrs`, `syncing-trackers`, `mcp-ingest`,
   `capacity-planning`, `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-tickets`,
-  `mapping-epic-docs`, `planning-sprints`, `working-the-board`, `spec-driven-development`,
-  `daily-standup`.
-- **7 subagents** (isolated multi-step work): `gantt-planner`, `tracker-sync`, `risk-analyst`,
-  `drift-sentinel`, `scenario-architect`, `delivery-enricher`, `signal-harvester`.
+  `mapping-epic-docs`, `tracking-design-docs` (Claude docs + artifacts as tracked design docs),
+  `planning-sprints`, `working-the-board`, `spec-driven-development`, `daily-standup`.
+- **8 subagents** (isolated multi-step work): `gantt-planner`, `tracker-sync`, `risk-analyst`,
+  `drift-sentinel`, `scenario-architect`, `delivery-enricher`, `signal-harvester`,
+  `doc-sentinel` (opens tracked design docs, records versions, stages what a change implies).
 
 Both front doors call the **same REST API** (`/api/v1/...`), so anything you can click you can also
 ask Claude to do — and vice-versa.

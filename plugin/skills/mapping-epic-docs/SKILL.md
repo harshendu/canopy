@@ -24,7 +24,9 @@ confirm the mapping with the admin, save it, and harvest.
    `remote_links`; plus `distinct_fields` (the union across the sample).
 
 3. **Infer a mapping.** For each candidate field, decide its `doc_kind` from the field name
-   and the URL domain. Heuristics:
+   and the URL domain. Kinds are an open catalog — call `canopy:list_doc_kinds` and reuse a
+   key the team already has; a field that holds something else (a threat model, an API
+   contract) may get a new kind, which joins the catalog under stage `other`. Heuristics:
    - `figma.com`, `zeplin`, `abstract` → **design**
    - a field named "PRD" / "Product Requirements" / a `docs.google.com` doc named like a PRD → **prd**
    - "Tech Design" / "RFC" / "Design Doc" (engineering) → **tech_design**
@@ -51,7 +53,8 @@ confirm the mapping with the admin, save it, and harvest.
    the created/updated/skipped counts.
 
 7. **Check coverage.** `canopy:get_doc_coverage(scope_level, scope_id)` for a project or
-   initiative shows which expected kinds (prd / design / tech_design / architecture) are
+   initiative shows which expected kinds (from the catalog — by default prd / design /
+   tech_design / architecture) are
    **present vs missing**. A missing kind is a signal worth flagging — absence of a doc is not
    neutral.
 
@@ -60,4 +63,6 @@ confirm the mapping with the admin, save it, and harvest.
   attaches to the epic's existing canopy entity and **skips** epics that aren't mapped yet.
 - Re-run this skill (steps 2–6) whenever the team adds a new doc field or changes conventions.
 - canopy reads only; it never writes the links back to Jira and never stores the documents.
-- Individual one-off links can be added with `canopy:add_doc_reference` without a mapping.
+- Individual one-off docs are tracked with `canopy:register_design_doc` (skill
+  `tracking-design-docs`) without a mapping. A link found on several epics stays one doc,
+  linked to each epic's entity.

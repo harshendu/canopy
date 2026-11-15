@@ -116,6 +116,8 @@ def register(mcp, client) -> None:
         items: list[dict],
         summary: str | None = None,
         origin: str | None = None,
+        source_doc_id: int | None = None,
+        source_doc_version: str | None = None,
     ) -> dict:
         """Stage a batch of canopy changes for **human review** — the default way to write
         anything you inferred (from Slack/email/meetings/Jira/GitHub/docs) rather than were
@@ -129,10 +131,17 @@ def register(mcp, client) -> None:
         `source_label`, `source_url`.
 
         - `entity_type`: task | dependency | milestone | blocker | risk | outcome |
-          decision | doc_reference | rule. `action`: create | update | resolve (blockers
-          only). A `rule` (create only, project scope) is a working agreement suggested by
-          recurring review notes (`suggest_rules`): key, title, body, kind (guidance |
-          attestation), enforcement, roles, tags, paths — a person accepts it.
+          decision | doc_reference | doc_link | rule. `action`: create | update | resolve
+          (blockers only).
+        - `rule` (create only, project scope): a working agreement suggested by recurring
+          review notes (`suggest_rules`) — key, title, body, kind (guidance | attestation),
+          enforcement, roles, tags, paths; a person accepts it.
+        - `doc_link` (create): link a tracked design doc to the work it serves —
+          `{"doc_id": 12 | "doc_ref": "<a doc_reference item's ref>", "entity_type": "task" |
+          "decision" | "milestone" | "spec" | "risk" | "outcome" | …, "entity_id": 7 |
+          "entity_ref": "<a ref created in this proposal>", "relation": "basis" | "gate" |
+          "reference"}`. A `doc_reference` item takes `visibility` (users | org | public — a
+          Claude doc must be shared in Claude).
         - Payload fields mirror the create/update APIs (task: name, duration, type,
           parent_id, constraint_start, deadline, assignee_engineer_id, tags, estimate_*;
           dependency: predecessor_id, successor_id, type, lag; blocker: task_id, reason,
@@ -153,6 +162,9 @@ def register(mcp, client) -> None:
           github | drive | document | chat), `source_label`, and `source_url` on every item
           you derived from an external source — the reviewer sees where each change came from.
         - `reason`: one line on *why* this change (shown beside the diff).
+        - **From a design doc:** pass `source_doc_id` + `source_doc_version` (the version you
+          read) when the batch comes from a tracked design doc; the reviewer sees "from <doc>,
+          <version>" and a warning if the doc moved on before they apply.
 
         Validation is strict (400 lists per-item errors — fix and restage). Returns the
         staged proposal (id, items) plus `review_url`. Follow up with `preview_proposal`
@@ -168,6 +180,8 @@ def register(mcp, client) -> None:
                 "summary": summary,
                 "origin": origin or "claude-session",
                 "items": items,
+                "source_doc_id": source_doc_id,
+                "source_doc_version": source_doc_version,
             },
         )
         proposal["review_url"] = _review_url(proposal.get("id"))
@@ -332,6 +346,9 @@ def register(mcp, client) -> None:
           holds (**resume those before claiming anything new**), the gates waiting on the
           user's decision (tell them; only they can decide, in the UI) and the projects whose
           agent intake is on (null when the queue is switched off).
+        - `design_docs.checks_due`: tracked design docs a session should open and re-check
+          (`get_doc_worklist`; skill `tracking-design-docs`). `design_docs.artifact_sync`:
+          whether the organization artifact sync keeps versions/sharing current server-side.
         - `dashboard_url` / `reviews_url`: where to send the user to look and to commit.
         """
         context: dict = {
@@ -382,6 +399,24 @@ def register(mcp, client) -> None:
             ]
         except httpx.HTTPStatusError:
             context["initiatives"] = []  # portfolio.initiatives gated off
+        try:
+            worklist = await client.get("/docs/worklist", params={"limit": 5})
+            context["design_docs"] = {
+                # docs a session should open and re-check (`get_doc_worklist`, skill
+                # `tracking-design-docs`)
+                "checks_due": worklist.get("total", 0),
+                "oldest": [
+                    {"id": d.get("id"), "title": d.get("title"), "url": d.get("url")}
+                    for d in worklist.get("docs", [])
+                ],
+            }
+            try:
+                sync = await client.get("/docs/artifact-sync")
+                context["design_docs"]["artifact_sync"] = bool(sync.get("available"))
+            except httpx.HTTPStatusError:  # an older backend without the sync
+                context["design_docs"]["artifact_sync"] = False
+        except httpx.HTTPStatusError:
+            context["design_docs"] = None  # governance.docs gated off (or an older backend)
         try:
             open_rows = await client.get("/proposals", params={"status": "open"})
             context["open_proposals"] = [

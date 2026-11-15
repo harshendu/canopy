@@ -37,6 +37,15 @@ and a Claude Code plugin (FastMCP server + skills + subagents).
   ticket, canopy posts the plan as a comment through `WorkTracker.add_comment` (trackers with the
   `comments` capability; queued in the outbox) — content only, never status, and only a person's
   decision in canopy triggers it (with `write_strategy=mcp` the session posts it instead).
+- **Claude** (claude.ai) owns the Claude Docs and artifacts a session publishes. canopy keeps one
+  record per document (link, identity, kind, version, summary, review state, links to the work)
+  and **never receives the content** — only an optional SHA-256 the MCP server computes locally.
+  A Claude doc joins shared work only once it is **shared in Claude** (`visibility` users | org |
+  public; else 409 `doc_not_shared`); a **personal** doc (`private_to_user_id`) is seen by its
+  owner alone — not by admins, not under impersonation (`design_docs.visible_clause`).
+  **Scoped read:** the optional organization artifact sync (an admin's Compliance API key, a
+  `claude` connection) calls only the **list** endpoint — metadata for docs canopy already
+  tracks, never content, never a delete, never an automatic registration.
 
 ## Layout
 ```
@@ -124,8 +133,8 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   (`app/models/proposal.py`) stage **inbound canopy writes** an agent inferred (from
   Slack/email/meetings/docs) for a human to review and apply in the UI — the inbound twin of
   draft plans. Items are whitelisted per entity×action (task/dependency/milestone/blocker/
-  risk/outcome/decision/doc_reference/rule — a `rule` is a project delivery rule; task `status`
-  stageable only on canopy-owned tasks, never on a mirrored one), scope-contained
+  risk/outcome/decision/doc_reference/doc_link/rule — a `rule` is a project delivery rule; task
+  `status` stageable only on canopy-owned tasks, never on a mirrored one), scope-contained
   to one project/initiative, may reference each other via `ref`/`*_ref` handles, and carry
   provenance (`source_kind/label/url`) + a stage-time `before` snapshot. Apply is
   **all-or-nothing** + auto-replan (`app/services/proposals.py`); staging/withdraw/**revise**
@@ -281,6 +290,46 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   URL/ADF extraction + harvest + coverage roll-up) attaches references to the entity each epic maps
   to. MCP: `sample_epic_doc_fields`/`set_epic_doc_field_mapping`/`harvest_epic_docs`/`get_doc_coverage`
   (skill: `mapping-epic-docs`). USER_FLOWS §V.
+- **Design docs (Claude docs + artifacts) over the doc graph:** a `DocReference` row is one
+  *document* — `provider` + `external_id` from the pure classifier `app/services/doc_urls.py`
+  (exact-host match; claude.ai artifact ids, Drive ids, repo paths…), `format`, `visibility`,
+  `review_status` (NULL = an untracked plain link), versions, `summary`. **Register-or-link**
+  (`design_docs.register_core`) is the one dedupe path — the API, the Jira harvest and proposal
+  apply all use it, so a document already tracked gains a **`DocLink`** (relation basis | gate |
+  reference; basis pins a version) instead of a copy. **Kinds are an open slug** backed by the
+  `DocKindDef` catalog (label + lifecycle stage + expected flag): reports read the *stage*, never
+  the kind name. Writes are ownership-scoped in `app/services/design_docs.py` (planner on the
+  doc's home; a contributor on a doc they registered, linking their own tasks; a link's target
+  must be editable by the caller). Deleting an entity drops its links and re-homes docs filed
+  there (`release_docs_homed_at`, used by `cascade.py`). Views assemble in `doc_views.py`.
+  **Review:** `request-review` (writers, agents too) → `approve` (**human-only**, a planner on the
+  home; `design_docs.approve` is the single writer of the approved state —
+  `tests/test_doc_review_single_writer.py`); a check (`POST /docs/{id}/revisions`) appends new
+  versions to `DocRevision` and stamps `last_checked_at`/`link_health`. **Health** flags are
+  pure in `app/services/doc_health.py` (never stored) and feed the project alerts
+  (`doc_*` kinds), the initiative digest, coverage's `needs_attention`, `/me` approvals and the
+  session worklist (`DOC_CHECK_DAYS`, `DOC_GATE_WINDOW_DAYS`).
+  **Lifecycle:** accepting an ADR, approving a spec and capturing a baseline pin basis links
+  (`design_docs.pin_basis_links`); ADR review + spec bundle report advisory `docs_ready`;
+  `POST /architecture/adrs/import-text` makes an ADR from a doc's markdown; proposals stage
+  `doc_link` items (`proposalitem.entity_type` is VARCHAR) and carry a `source_doc_id`; draft
+  plans carry one too (finalise links it to native tasks / cites it in tickets); exports and the
+  retro seeder list design docs; frozen copies are recorded as `DocRevision.snapshot_url`
+  (`User.doc_snapshot_store` = repo | drive).
+  **Automation:** the `doc-sentinel` subagent works the worklist with the session's own access
+  and stages what a doc change implies; `/docs` is the workspace library (`GET /docs?team_id=`,
+  `design_docs.team_clause`). The **organization artifact sync** (`app/connectors/
+  claude_artifacts.py` + `app/services/claude_sync.py`, worker `claude_artifact_sync` /
+  nightly `claude_artifact_full_sync`) pairs listed artifacts with tracked docs through
+  `ExternalRef` (`entity_type` "doc"; owners as "user") and writes only through
+  `design_docs.apply_source_metadata` (version log `source="sync"`, visibility,
+  `source_updated_at` for Claude Docs/Sheets) and `mark_source_missing` (complete, unfiltered
+  listings only). `GET /docs/suggestions` lists the caller's own untracked artifacts, live and
+  never stored; `POST /docs/register {source_artifact_id}` pairs one explicitly.
+  MCP: `register_design_doc`/`link_design_doc`/`promote_design_doc`/`get_design_doc`/
+  `list_design_docs`/`list_doc_kinds`/`record_design_doc_version`/`request_design_doc_review`/
+  `get_doc_worklist`/`import_adr_from_markdown`/`list_my_untracked_artifacts`/
+  `get_artifact_sync_status` (skill `tracking-design-docs`). USER_FLOWS §V5-§V12.
 - **Specs (spec-driven development):** `Spec` + `SpecCriterion` (`app/models/spec.py`) capture
   *intent as the source of truth* — a problem statement + explicit, checkable **acceptance
   criteria** — before work begins. Tasks implement a spec via `Task.spec_id`; an agent self-audits
@@ -442,25 +491,27 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
     `session.delete()` 500s on PG/MySQL and silently orphans on SQLite. `tests/test_cascade_delete.py`
     verifies it under `PRAGMA foreign_keys=ON` over the full demo graph, so a missed table fails CI.
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
-  REST routes (~167 across projects/planning/proposals/work queue/connectors/tracking/team/architecture/
+  REST routes (~179 across projects/planning/proposals/work queue/connectors/tracking/team/architecture/
   scenarios/specs/docs/delivery/outcomes/sprints; tracker tools are neutral — `sync_tracker`,
   `link_tracker_item`, `ingest_work_items`, `finalize_draft_plan`, `*_project_tracking`). Skills
   are runbooks (`updating-canopy` — the
   session operating guide every canopy session starts from, `harvesting-signals`,
   `persona-playbooks`, `planning-roadmaps`, `writing-adrs`, `syncing-trackers`, `mcp-ingest`,
   `capacity-planning`, `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-tickets`,
-  `mapping-epic-docs`, `planning-sprints`, `working-the-board`, `spec-driven-development`,
-  `daily-standup`, `working-the-queue`, `implementing-tasks`, `reviewing-changes`,
-  `verifying-changes`); subagents do isolated multi-step work (`tracker-sync`, `gantt-planner`,
-  `risk-analyst`, `drift-sentinel`, `scenario-architect`, `delivery-enricher`, `signal-harvester`,
-  `task-implementer`, `change-reviewer`, `qa-verifier`). Add a tool when Claude needs a new verb; register it
+  `mapping-epic-docs`, `tracking-design-docs`, `planning-sprints`, `working-the-board`,
+  `spec-driven-development`, `daily-standup`, `working-the-queue`, `implementing-tasks`,
+  `reviewing-changes`, `verifying-changes`); subagents do isolated multi-step work
+  (`tracker-sync`, `gantt-planner`, `risk-analyst`, `drift-sentinel`, `scenario-architect`,
+  `delivery-enricher`, `signal-harvester`, `doc-sentinel`, `task-implementer`, `change-reviewer`,
+  `qa-verifier`). Add a tool when Claude needs a new verb; register it
   in `mcp_server/server.py`.
 - **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the agent work
   queue's reaper (`reap_work_claims`: lapsed claims expire, waiting gates escalate), the tracker
   reconciliation poll (`tracker_incremental_sync` over every enabled direct-read tracker), a
   **nightly changelog backfill**
   (`tracker_history_backfill`, bounded per binding via its cursor) and a **nightly risk-snapshot sweep** (`capture_risk_snapshots` → `run_risk_snapshots`)
-  so the risk timeline is a real trend. Drift carries a **scan log** (`DriftScan`): `GET .../drift`
+  so the risk timeline is a real trend; with a `claude` connection, the organization artifact
+  sync (`claude_artifact_sync` every `CLAUDE_SYNC_MINUTES`, `claude_artifact_full_sync` nightly). Drift carries a **scan log** (`DriftScan`): `GET .../drift`
   returns `last_scanned_at` + `scan_due` (true when code bindings exist but the scan is missing or
   >7 days old), surfacing staleness so the Drift Sentinel re-scans (the server can't crawl code).
 - **Startup refuses guessable secrets** (`app/core/startup_checks.py`): the API lifespan and the

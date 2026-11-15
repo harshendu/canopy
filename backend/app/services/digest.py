@@ -37,6 +37,7 @@ class DigestInputs:
     # and tasks canopy parked.
     gates_waiting: int = 0
     parked_tasks: int = 0
+    doc_attention: list[str] = field(default_factory=list)  # design-doc exceptions (§V8)
 
 
 def attention_items(inp: DigestInputs) -> list[str]:
@@ -63,6 +64,7 @@ def attention_items(inp: DigestInputs) -> list[str]:
                      "reminder.")
     if inp.parked_tasks:
         items.append(f"{inp.parked_tasks} agent task(s) parked — sessions couldn't finish them.")
+    items.extend(inp.doc_attention)
     return items
 
 

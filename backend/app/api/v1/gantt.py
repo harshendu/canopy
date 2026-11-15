@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.events import publish
 from app.models.base import (
     ClaimState,
+    DocLinkEntity,
     GateKind,
     GateStatus,
     RiskScope,
@@ -57,11 +58,13 @@ from app.schemas.entities import (
     ReplanResult,
     WhatIfRequest,
 )
+from app.services import design_docs
 from app.services.access import ensure_project_editable, project_can_edit
 from app.services.alerts import (
     AgentWorkFacts,
     AlertBlocker,
     AlertClaim,
+    AlertDocFlag,
     AlertGate,
     AlertMilestone,
     AlertRiskItem,
@@ -78,6 +81,7 @@ from app.services.capacity import (
     mondays,
     over_allocated_weeks,
 )
+from app.services.doc_health import ATTENTION_FLAGS
 from app.services.features import feature_enabled
 from app.services.forecast import monte_carlo_forecast, weekly_throughput
 from app.services.metadata import risk_exposure
@@ -216,6 +220,12 @@ async def set_baseline(
         task.baseline_start = task.start
         task.baseline_end = task.end
         count += 1
+    # The plan-of-record pins the docs it was planned from (basis links on the project and its
+    # tasks) to their current versions (§V9).
+    await design_docs.pin_basis_links(session, DocLinkEntity.project, [project_id])
+    await design_docs.pin_basis_links(
+        session, DocLinkEntity.task, [t.id for t in tasks if t.id is not None]
+    )
     baseline = Baseline(
         project_id=project_id,
         note=payload.note if payload else None,
@@ -646,6 +656,15 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
     ]
     alert_gates, alert_claims = await agent_work_alert_facts(session, project_id, task_names)
     flow_facts = await agent_flow_alert_facts(session, project_id, task_names)
+    # Design docs bearing on the project: changed after approval, behind a pin, a gate close
+    # to its date, made private, unreachable (USER_FLOWS §V8).
+    project_docs = await design_docs.docs_in_project(session, project_id)
+    doc_flags = [
+        AlertDocFlag(doc_id, flag.flag, flag.severity, flag.message)
+        for doc_id, flags in (await design_docs.health_for(session, project_docs)).items()
+        for flag in flags
+        if flag.flag in ATTENTION_FLAGS
+    ]
     computed = compute_alerts(
         date.today(),
         alert_tasks,
@@ -658,6 +677,7 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
         alert_claims,
         claim_overrun_hours=settings.WORK_CLAIM_OVERRUN_HOURS,
         agent_work=flow_facts,
+        doc_flags=doc_flags,
     )
     return AlertsResponse(
         project_id=project_id,

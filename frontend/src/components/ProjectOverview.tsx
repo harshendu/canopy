@@ -27,6 +27,13 @@ const ALERT_TAB: Record<string, ProjectTab> = {
   milestone_overdue: "gantt",
   over_allocation: "capacity",
   risk_overdue: "raid",
+  // design docs (§V8): changed after approval, a basis behind the doc, a gate near its date,
+  // made private, unreachable — all open the Docs tab
+  doc_changed_since_approval: "docs",
+  doc_behind_pin: "docs",
+  doc_gate_open: "docs",
+  doc_restricted: "docs",
+  doc_broken: "docs",
 };
 
 function alertDot(severity: string): string {

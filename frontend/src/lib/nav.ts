@@ -63,6 +63,13 @@ const NAV: NavDef[] = [
     group: "primary",
     visible: (c) => c.isFeatureOn("architecture"),
   },
+  {
+    to: "/docs",
+    label: "Design docs",
+    icon: "docs",
+    group: "primary",
+    visible: (c) => c.isFeatureOn("governance.docs"),
+  },
   { to: "/team", label: "Team", icon: "team", group: "primary", visible: ALWAYS },
   {
     to: "/agent-setup",
