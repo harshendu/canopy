@@ -295,8 +295,8 @@ as P1–P11.
   waiting on a person (a gate) — and is never encoded in a status name. Agent work adds a lease
   and a decision queue; it does not add a second workflow.
 - **P2 — Pull, do not push; canopy does not run agents.** canopy offers work and holds state. It
-  has no repository credentials and no compute for agents (the same boundary as "the server can't
-  crawl code", §N). Runners are the team's choice.
+  has no write access to repositories and no compute for agents (the same boundary as "the
+  server can't crawl code", §N). Runners are the team's choice.
 - **P3 — Sessions are disposable; state lives in canopy.** A session can die, be compacted or end
   at any gate. Whatever the next session needs — plan, progress, feedback, answers — is on the
   ticket. Pause and resume is "the task becomes ready again", not "the process stays alive".
@@ -340,7 +340,7 @@ as P1–P11.
 | **Artifact** | A typed, versioned note on a task: `plan`, `handoff`, `review`, `qa_report`, `note` | `TaskArtifact` |
 | **Check** | A machine-evaluated condition for entering a column ("a PR is linked", "the plan is approved") | stage policy |
 | **Gate** | A blocking request for a human decision on a task, with allowed responses and routing | `Gate` |
-| **Rule** | A team or project working agreement: guidance for the brief, or a Definition-of-Done item the hand-off must attest | `Rule` |
+| **Rule** | A team or project working agreement: guidance for the brief, or a Definition-of-Done item the hand-off must attest | `DeliveryRule` |
 | **Work event** | The append-only record of everything above | `WorkEvent` |
 
 The vocabulary is deliberately small. "Queue" is not an entity: it is the set of tasks that are
@@ -409,7 +409,7 @@ stateDiagram-v2
     direction LR
     [*] --> active: claim_work
     active --> active: heartbeat or any call with the claim (renews the lease)
-    active --> completed: submit_work / submit_review / ask_human
+    active --> completed: submit_work / submit_review / ask_human / a plan that needs approval
     active --> released: release_work (gave it back)
     active --> failed: could not do it, needs a person
     active --> expired: lease ran out
@@ -513,7 +513,7 @@ onto the same card. One transaction, portable across PostgreSQL, MySQL/MariaDB a
 `SKIP LOCKED`, no `RETURNING`):
 
 1. If the candidate's current claim has an expired lease, expire it with a compare-and-swap —
-   `UPDATE work_claim SET state='expired' … WHERE id=:old AND state='active' AND
+   `UPDATE workclaim SET state='expired' … WHERE id=:old AND state='active' AND
    lease_expires_at < :now` — and, when that changed a row, clear `task.active_claim_id`.
 2. Insert the new claim (`attempt` = the task's previous highest + 1) and flush for its id.
 3. `UPDATE task SET active_claim_id = :new WHERE id = :task AND active_claim_id IS NULL`. One row
@@ -536,7 +536,7 @@ intake switched off; claim no longer active). Liveness is the runner's job, not 
 this order of preference: a timer in the runner process, a plugin hook on tool events (§14.4),
 and the implicit renewal on every claim-bearing call.
 
-**Fencing.** Every claim-bound write begins with `UPDATE work_claim SET heartbeat_at = :now,
+**Fencing.** Every claim-bound write begins with `UPDATE workclaim SET heartbeat_at = :now,
 lease_expires_at = :new WHERE id = :id AND state = 'active'`. Zero rows changed is `409
 claim_lost`, and nothing else in the request happens. A session whose claim was expired and
 re-issued cannot overwrite its successor's plan, hand-off or status. canopy can only fence its
@@ -575,12 +575,12 @@ pure shaping function (`work_brief.py`) — deterministic, no model in the serve
 | Section | Contents | Source |
 |---|---|---|
 | `task` | key, name, description, tags, deadline, estimate; project; the parent phase's name and description; the accountable person | `Task`, `Project` |
-| `stage` | column and role; the stage's **instructions**; the **exit contract** — the next column's entry checks as a checklist, with enforcement levels; which decisions policy will ask for; lease, heartbeat interval, attempt *n* of *m*, rework *n* of *m* | stage policy (§9) |
+| `stage` | column and role; the stage's **instructions**; the **exit contract** — the next column's entry checks as a checklist, with enforcement levels; which decisions policy will ask for; lease, heartbeat interval, attempt *n* of *m* in this stage, rework *n* of *m* | stage policy (§9) |
 | `intent` | the spec's problem, context and out-of-scope; acceptance criteria with ids and current verdicts — or `missing: true` | `Spec`, `SpecCriterion` (§W) |
 | `decisions` | ADRs that bind this work: number, title, the decision in a few lines, reversibility, why it is relevant, its fitness rules. Separately, `unsettled`: proposed or under-discussion ADRs on the same components | `ArchitectureDecision`, `ADRComponentLink`, `ADRFitnessFunction` |
 | `components` | the components the task touches: kind, criticality, owner, and where they live in code (repo, path globs) | `TaskComponentLink`, `ComponentCodeBinding` |
 | `docs` | typed links (PRD, design, tech design, QA plan, runbook…) from the nearest scope outward — task, phase, project, initiative — and which expected kinds are missing | `DocReference` (§V) |
-| `rules` | guidance that applies to this role and task; the Definition-of-Done items this hand-off must attest | `Rule` (§10) |
+| `rules` | guidance that applies to this role and task; the Definition-of-Done items this hand-off must attest | `DeliveryRule` (§10) |
 | `dependencies` | predecessors with status and PR; successors; open blockers | `Dependency`, `Blocker` |
 | `history` | the latest plan and its approval state; earlier attempts with their outcome and last progress note; gate decisions and the notes people wrote; findings awaiting rework; branch and PR with review and check state | artifacts, claims, gates, `PullRequest` |
 | `conventions` | repository; branch name `<task-key>-<slug>` and PR title prefix, so the PR links itself to the task (§J6) | the components' code bindings (`ComponentCodeBinding.repo`, else its connection's repository) |
@@ -633,8 +633,11 @@ Appendix B shows a complete brief.
 - **Approvals bind to revisions.** A plan-approval gate names the plan revision it reviewed; a new
   revision needs a new approval. Review and QA verdicts carry the PR's `head_sha`; when the PR
   head has moved past it the verdict is stale and no longer satisfies a check.
-- **A person can write one too.** Approving "with edits" is a new plan revision authored by the
-  approver; guidance for a retry is a `note`.
+- **A person can write one too.** An approver who wants a different plan chooses *edit and
+  approve* (§9.4): their version becomes a new revision, authored by them, and it is that
+  revision the approval binds to. Guidance for a retry is a `note`. Outside a claim, adding a
+  plan revision is human-only — an agent writes plans only through `submit_plan`, where the
+  checkpoint is evaluated.
 - **Follow-up work found on the way** — a missing task, a new dependency, a risk — is staged as a
   change proposal (§AA) by the session, as today. Execution does not get a side door into the plan.
 
@@ -660,9 +663,14 @@ workspace template's (§C9.1).
       {"check": "pr_linked",       "params": {"state": "open"},            "enforcement": "block"},
       {"check": "pr_checks",       "params": {"state": "passing"},         "enforcement": "block"},
       {"check": "plan_approved",                                            "enforcement": "block"},
-      {"check": "attestations_complete",                                    "enforcement": "warn"}
+      {"check": "distinct_actor",  "params": {"role": "implementer"},      "enforcement": "block"},
+      {"check": "attestations_complete",                                    "enforcement": "warn"},
+      {"check": "pr_size",         "params": {"max_changed_lines": 400},   "enforcement": "warn"}
     ]
   },
+  "on_changes": null,                    // where a failed verdict sends the task; default: the
+                                         // nearest earlier column worked by another agent role
+  "decision": null,                      // set on a decision column (§9.4)
   "checkpoints": {},                     // e.g. {"plan": {"required": true, "approval_when": […]}}
   "lease_minutes": 30,
   "max_attempts": 3,
@@ -704,7 +712,8 @@ alternative G).
 | `distinct_issuer` (`role`) | …and so does the person behind the token | observed |
 
 Each entry carries `enforcement` — `off`, `warn` or `block`, the vocabulary WIP limits already use
-— and `applies_to`, `agents` (default) or `everyone`. The last column is P8 made concrete: the
+— and `applies_to`: `agents` (the default — agent claims, and canopy's own moves after a gate or
+a PR event) or `everyone`. The last column is P8 made concrete: the
 Reviews page shows *observed* facts and *attested* ones differently, so an approver knows which
 lines canopy saw for itself.
 
@@ -788,7 +797,7 @@ task is **held**: it is not ready for any role, and nothing advances it.
   // "Sign-off" in the Appendix A template
   {
     "worked_by": "human",
-    "enter": {"checks": [{"check": "verdict", "params": {"kind": "qa_report", "in": ["pass"]}, "enforcement": "block"},
+    "enter": {"checks": [{"check": "verdict", "params": {"kind": "qa_report", "in": ["pass", "concerns"]}, "enforcement": "block"},
                          {"check": "criteria_met", "enforcement": "warn"}]},
     "decision": {
       "kind": "signoff",
@@ -821,8 +830,8 @@ resolved when it opened, so a later policy edit does not re-route work already w
 
 | Kind | Allowed decisions | What happens next |
 |---|---|---|
-| `plan_approval` (checkpoint) | **approve** · **approve with conditions** (a note carried into the next brief) · **request changes** (note required) · **reject** (note required) · **take over** | approve → ready again for the same role, plan marked approved · changes → ready again, rework +1, the note in the brief · reject → `on_reject` (default: the first cancelled column) · take over → undelegated, claims superseded, the task stays put for a person |
-| `signoff` and other decision columns | the same five | approve → `on_approve` · changes → `on_changes` (default: the nearest earlier agent-worked column) · reject → `on_reject` · take over as above |
+| `plan_approval` (checkpoint) | **approve** · **edit and approve** (the approver's own revision becomes the approved plan) · **approve with conditions** (a note carried into the next brief) · **request changes** (note required) · **reject** (note required) · **take over** | approve → ready again for the same role, plan marked approved · changes → ready again, rework +1, the note in the brief · reject → `on_reject` (default: the first cancelled column) · take over → undelegated, claims superseded, the task stays put for a person |
+| `signoff` and other decision columns | approve · approve with conditions · request changes · reject · take over | approve → `on_approve` · changes → `on_changes` (default: the nearest earlier agent-worked column) · reject → `on_reject` · take over as above |
 | `question` | **answer** (an option, or text) · **take over** · **reject** | answer → ready again for the same role, the answer in the brief |
 | `escalation` | **retry with guidance** (note) · **take over** · **reject** | retry → attempts reset, ready again |
 
@@ -849,7 +858,7 @@ resolved when it opened, so a later policy edit does not re-route work already w
 - **Approval is not the last word on reality.** If a gate is approved but the next column's
   checks do not pass yet (sign-off given, PR not merged), the task waits in place marked "approved
   — waiting for merge", and moves when the evidence arrives. Conversely, when a PR is merged while
-  its task is still upstream, canopy moves the task to done, closes its gates as satisfied by the
+  its task — a delegated, canopy-owned one — is still upstream, canopy moves the task to done, closes its gates as satisfied by the
   merge, stops any active claim, and records `merged_ahead_of_stage` naming the stages skipped —
   the board follows reality, and the skipped stages show up in alerts rather than being hidden.
 
@@ -862,8 +871,9 @@ brief carries the decision in `history`. A session that would rather wait calls 
 - A reviewer or QA session ends its claim with `submit_review`: a `review` or `qa_report` artifact
   and a verdict. **`pass`** advances the task. **`concerns`** advances it and flags the next
   decision — a person can accept the concerns at sign-off, which is recorded as a waiver with
-  their reason. **`fail`** routes the task to the column's `on_changes` target (by default the
-  implementer's column) with the findings in the brief.
+  their reason. **`fail`** routes the task to the column's `on_changes` target — by default the
+  nearest earlier column worked by another agent role, which is the implementer's — with the
+  findings in the brief.
 - **The loop is bounded.** Every fail or request-changes adds one to the task's rework count for
   the stage it returns to (derived from work events, not stored). At `max_rework` (default 3)
   canopy opens an escalation gate — "this review loop is not converging" — with the findings of
@@ -882,11 +892,11 @@ brief carries the decision in `history`. A session that would rather wait calls 
 
 ## 10. Rules: team and project working agreements
 
-A `Rule` is a short, named statement a team wants every piece of work to honour.
+A rule (`DeliveryRule`) is a short, named statement a team wants every piece of work to honour.
 
 | Field | Meaning |
 |---|---|
-| `scope` | `workspace`, a team, or a project |
+| `scope_level`, `scope_id` | `workspace` (id 0), a team, or a project |
 | `key`, `title`, `body` | a stable slug, a headline, and at most 800 characters of markdown |
 | `kind` | `guidance` — delivered in the brief · `attestation` — a Definition-of-Done item the hand-off must attest, with evidence |
 | `roles` | which agent roles it is for (empty = all) |
@@ -922,18 +932,21 @@ A `Rule` is a short, named statement a team wants every piece of work to honour.
 
 Seven new tables, and additive columns on five existing ones. Models live in
 `app/models/work.py` (`WorkClaim`, `TaskArtifact`, `WorkEvent`), `app/models/gate.py` (`Gate`) and
-`app/models/policy.py` (`StagePolicy`, `Rule`); `TaskComponentLink` joins the architecture models.
+`app/models/policy.py` (`StagePolicy`, `DeliveryRule`); `TaskComponentLink` joins the architecture models.
 
 ### 11.1 New tables
 
-**`work_claim`** — one session's lease on a task.
+Tables take SQLModel's default name — the lowercased class name — as every existing table but
+`app_user` and `agent_token` does.
+
+**`workclaim`** (`WorkClaim`) — one session's lease on a task.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | PK | the handle a session presents on every call; checked on every write (§6.3) |
 | `task_id` | FK `task`, indexed | |
 | `role`, `stage` | VARCHAR(32), VARCHAR(64) | the role claimed as; the column name when claimed |
-| `attempt` | INT | the nth claim on this task, across roles |
+| `attempt` | INT | the nth claim on this task, across roles — an ordering. The per-stage count that parking uses is derived from claims, like the rework count |
 | `state` | VARCHAR(16) | `active` · `completed` · `released` · `failed` · `expired` · `superseded` |
 | `outcome` | VARCHAR(16), null | `advanced` · `returned` · `gated` · `released` · `failed` · `expired` · `superseded` |
 | `user_id`, `agent_token_id` | FK `app_user`, FK `agent_token` (null) | the issuer the token acts as, and the token |
@@ -944,7 +957,7 @@ Seven new tables, and additive columns on five existing ones. Models live in
 | `branch`, `pr_url` | VARCHAR(255), TEXT — null | declared by the session |
 | `usage` | JSON, null | what the runner chose to report when the claim ended: `turns`, `cost_usd`, `duration_s` |
 
-**`task_artifact`** — append-only; unique on (`task_id`, `kind`, `revision`).
+**`taskartifact`** (`TaskArtifact`) — append-only; unique on (`task_id`, `kind`, `revision`).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -952,9 +965,9 @@ Seven new tables, and additive columns on five existing ones. Models live in
 | `kind`, `revision` | VARCHAR(16), INT | `plan` · `handoff` · `review` · `qa_report` · `note`; 1, 2, … per task and kind |
 | `title`, `body`, `data` | VARCHAR(200), TEXT, JSON | the structured fields of §8 live in `data` |
 | `verdict`, `head_sha` | VARCHAR(12), VARCHAR(64) — null | promoted from `data` for the `verdict` check and staleness |
-| `author_kind`, `author_user_id`, `work_claim_id` | VARCHAR(8), FK `app_user`, FK `work_claim` (null) | `agent` or `human` |
+| `author_kind`, `author_user_id`, `work_claim_id` | VARCHAR(8), FK `app_user`, FK `workclaim` (null) | `agent` or `human` |
 
-**`gate`**
+**`gate`** (`Gate`)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -963,34 +976,38 @@ Seven new tables, and additive columns on five existing ones. Models live in
 | `status` | VARCHAR(20) | the coarse outcome: `open` · `approved` · `changes_requested` · `rejected` · `answered` · `cancelled` (the exact response — `approve_with_conditions`, `retry`, `take_over`, … — is `decision`) |
 | `title`, `prompt`, `options`, `allowed_decisions` | VARCHAR(200), TEXT, JSON, JSON | the ask and the responses offered |
 | `reasons`, `evidence` | JSON | matched conditions; the policy evaluation and PR / verdict snapshot when it opened |
-| `subject_artifact_id` | FK `task_artifact`, null | the revision under review |
+| `subject_artifact_id` | FK `taskartifact`, null | the revision under review |
 | `requested_by_claim_id`, `requested_by_user_id` | FKs (claim null) | |
 | `approvers`, `approver_engineer_ids`, `exclude_requester`, `satisfied_by` | VARCHAR(24), JSON, BOOL, JSON | resolved from policy when the gate opens |
 | `remind_at`, `escalate_at`, `escalation_level` | DATETIME (null), DATETIME (null), INT | |
 | `on_approve`, `on_changes`, `on_reject` | VARCHAR(64), null | routing, resolved when the gate opens |
-| `decision`, `decided_by_user_id`, `decided_by_label`, `decided_via`, `decided_at` | VARCHAR(24), FK (null), VARCHAR, VARCHAR(12), DATETIME | `decided_via`: `canopy` · `pr_review` · `pr_merge` · `policy`; the label keeps a GitHub login that maps to no canopy user |
+| `decision`, `decided_by_user_id`, `decided_by_label`, `decided_via`, `decided_at` | VARCHAR(24), FK (null), VARCHAR(120), VARCHAR(12), DATETIME | `decided_via`: `canopy` · `pr_review` · `pr_merge` · `policy`; the label keeps a GitHub login that maps to no canopy user |
 | `response_note`, `response_data` | TEXT, JSON | the note; the chosen option; conditions |
 | `routed_at` | DATETIME, null | set when the routing move has happened (an approved gate may wait for evidence, §9.4) |
 
-**`stage_policy`** — one row per column that has a policy; unique on (`workflow_id`,
-`status_name`). Columns: `workflow_id` (FK, null), `binding_id` (null; a tracker binding, §17),
-`status_name` VARCHAR(64), `worked_by` VARCHAR(32) null, `instructions` TEXT, `pulls_from` JSON,
-`enter` JSON, `checkpoints` JSON, `lease_minutes` / `max_attempts` / `max_rework` INT null. The
+**`stagepolicy`** (`StagePolicy`) — one row per column that has a policy; unique on (`owner_type`, `owner_id`,
+`status_name`). Columns: `owner_type` VARCHAR(12) (`workflow`, or `binding` for a tracker's
+statuses, §17) and `owner_id` INT, both not null, so the key never rests on NULLs; `status_name`
+VARCHAR(64); `worked_by` VARCHAR(32) null; `instructions` TEXT; `pulls_from` JSON; `enter` JSON;
+`on_changes` VARCHAR(64) null; `decision` JSON null (decision columns); `checkpoints` JSON;
+`lease_minutes` / `max_attempts` / `max_rework` INT null. The
 JSON documents are validated by Pydantic schemas at the API boundary, like a tracker binding's
 `scope` and `mapping`. Policies are keyed by column *name* because `save_workflow` replaces
 `WorkflowStatus` rows on every save; it learns to carry a policy across a rename
 (`previous_name`) and to drop it with a removed column.
 
-**`rule`** — unique on (`scope_level`, `scope_id`, `key`), with `scope_id = 0` for the workspace
-(a UNIQUE constraint does not constrain NULLs). Columns as in §10.
+**`deliveryrule`** (`DeliveryRule`) — unique on (`scope_level`, `scope_id`, `key`), with
+`scope_id = 0` for the workspace (a UNIQUE constraint does not constrain NULLs). Columns as in
+§10. The model is not called `Rule` for the reason `User`'s table is `app_user`: `RULE` is a
+keyword in PostgreSQL.
 
-**`work_event`** — append-only. `task_id`, `project_id`, `at` (all indexed), `kind` VARCHAR(32)
-(`delegated` · `claimed` · `expired` · `released` · `artifact_added` · `checks_evaluated` ·
-`advanced` · `returned` · `gate_opened` · `gate_decided` · `override` · `merged_ahead_of_stage` ·
-`policy_changed` · `intake_changed` · …), `actor_kind` (`human` · `agent` · `system`), `user_id`,
+**`workevent`** (`WorkEvent`) — append-only. `task_id`, `project_id`, `at` (all indexed), `kind` VARCHAR(32)
+(`delegated` · `intake_changed` · `claimed` · `claim_ended`, with the outcome · `artifact_added` ·
+`checks_evaluated` · `advanced` · `returned` · `gate_opened` · `gate_decided` · `override` ·
+`merged_ahead_of_stage` · `moved_without_clearance` · `policy_changed`), `actor_kind` (`human` · `agent` · `system`), `user_id`,
 `agent_token_id`, `work_claim_id`, `gate_id`, `artifact_id` (all null), `data` JSON.
 
-**`task_component_link`** — (`task_id`, `component_id`), both primary key and FK, like
+**`taskcomponentlink`** (`TaskComponentLink`) — (`task_id`, `component_id`), both primary key and FK, like
 `ADRComponentLink`: the components a task touches. It is what lets the brief find governing
 decisions before any code exists, and it is half of roadmap gap #5; the other half is
 `Task.implements_adr_id` below.
@@ -1007,7 +1024,7 @@ at another table, so SQLite needs no table rebuild.
 | `task` | `delegation` VARCHAR(12) null · `delegated_by_user_id` INT null · `delegated_at` DATETIME null · `active_claim_id` INT null · `implements_adr_id` INT null |
 | `taskstatushistory` | `actor_kind` VARCHAR(8) null · `work_claim_id` INT null — so a status change made by an agent is distinguishable from one made by the person whose token it used |
 | `agent_token` | `roles` JSON (empty = any) · `project_ids` JSON (empty = any the issuer may work) · `max_active_claims` INT default 1 · `last_used_at` DATETIME null |
-| `pull_request` | `draft` BOOL · `merged` BOOL · `merged_at` · `merged_by` · `head_branch` · `head_sha` · `review_decision` VARCHAR(20) (`approved` / `changes_requested` / `review_required`) · `approved_by` JSON (logins that approved the current head) · `checks_state` VARCHAR(12) (`pending` / `passing` / `failing`) · `additions` · `deletions` · `changed_files` |
+| `pullrequest` | `draft` BOOL · `merged` BOOL · `merged_at` · `merged_by` · `head_branch` · `head_sha` · `review_decision` VARCHAR(20) (`approved` / `changes_requested` / `review_required`) · `approved_by` JSON (logins that approved the current head) · `checks_state` VARCHAR(12) (`pending` / `passing` / `failing`) · `additions` · `deletions` · `changed_files` |
 
 ### 11.3 Pull-request signals
 
@@ -1022,8 +1039,9 @@ Claude (`read_strategy = mcp`, §A8) is not left out. After every PR upsert two 
 `gates.on_pull_request` (satisfy or route gates, §9.4) and `work_service.on_pull_request` (the
 merged-ahead rule; retry an approved gate's pending move).
 
-These run in the arq worker, and canopy's SSE broker is in-process (§K): until the Redis pub/sub
-upgrade, a change caused by a webhook reaches open pages on their next refetch, not instantly.
+These hooks run in the arq worker, as the claim reaper does (§6.3), and canopy's SSE broker is
+in-process (§K): until the Redis pub/sub upgrade, a change caused by a webhook or by the reaper
+reaches open pages on their next refetch, not instantly.
 The inbox and the Agents view poll every 30 seconds as a backstop.
 
 ### 11.4 Portability
@@ -1036,8 +1054,8 @@ The inbox and the Agents view poll every 30 seconds as a backstop.
 - No uniqueness rule depends on how an engine treats NULLs (`idempotency_key` is never null;
   workspace rules use `scope_id = 0`).
 - `op.batch_alter_table` with the default `recreate='auto'` for the added columns.
-- `app/services/cascade.py` learns the new tables in child → parent order (`work_event`, `gate`,
-  `task_artifact`, `work_claim`, `task_component_link` before `task`; `stage_policy` with its
+- `app/services/cascade.py` learns the new tables in child → parent order (`workevent`, `gate`,
+  `taskartifact`, `workclaim`, `taskcomponentlink` before `task`; `stagepolicy` with its
   workflow), and `tests/test_cascade_delete.py` fails until it does. The demo reset already walks
   `SQLModel.metadata`, so it needs no change.
 
@@ -1055,7 +1073,7 @@ The inbox and the Agents view poll every 30 seconds as a backstop.
 | `app/services/work_brief.py` | loader + pure shaping | the brief (§7) |
 | `app/services/rules.py` | pure + thin DB | effective rules: inheritance, locks, selectors |
 | `app/services/agent_flow.py` | pure | the metrics of §19 |
-| `app/services/workflow.py` | existing | still the single status writer. `record_transition` gains two optional parameters, `actor_kind` and `work_claim_id`, stored on the history row; `move_task` gains a policy evaluation for its warnings |
+| `app/services/workflow.py` | existing | still the single status writer. `record_transition` and `move_task` gain two optional parameters, `actor_kind` and `work_claim_id`, stored on the history row; `move_task` also gains a policy evaluation for its warnings |
 | `app/services/alerts.py` | existing, pure | new alert kinds (§19) |
 
 The pairs follow the codebase's existing split — `sprints.py` (pure) with `sprint_service.py`,
@@ -1066,17 +1084,22 @@ The pairs follow the codebase's existing split — `sprints.py` (pure) with `spr
 1. `workflow.record_transition` is still the only writer of `Task.status` — the existing test,
    unchanged. Claims, gates and PR events all route status changes through `workflow.move_task`.
 2. Only `work_service` assigns `WorkClaim.state` or `Task.active_claim_id`; only `gates` assigns
-   `Gate.status` or `Gate.decision` (AST checks).
+   `Gate.status` or `Gate.decision` (AST checks, covering constructors as the status test does —
+   so the demo seed builds its claims and gates through those two services).
 3. A task never has two active claims — a concurrency test with two database sessions racing,
-   run in CI against PostgreSQL, MySQL/MariaDB and SQLite.
+   on PostgreSQL, MySQL/MariaDB and SQLite. Today pytest runs only on in-memory SQLite
+   (`tests/conftest.py`) and CI's server databases run migrations only, so this needs a
+   configurable test engine and a new CI job; both are Phase 1 work (§21).
 4. A lost claim never writes: after expiry and re-claim, every verb on the old claim answers
    `409 claim_lost` and changes nothing.
 5. Preview equals enforcement: `advance-check` and `submit_work` return the same decision for
    the same state, because they call the same function.
 6. A held task is never ready, for any role.
 7. An agent token cannot decide a gate, edit a policy or a rule, delegate a task, switch intake,
-   or move a delegated task outside a claim (`tests/test_bounded_agency.py` grows).
-8. Every claim, gate and policy state change writes exactly one work event.
+   add a plan revision outside a claim, or move a delegated task outside a claim
+   (`tests/test_bounded_agency.py` grows).
+8. Every claim, gate and policy state change writes a work event. One request may write several: a
+   hand-off that advances a task records the artifact, the evaluation and the move.
 9. The brief stays within its size budget and labels every block `policy` or `content`.
 
 ---
@@ -1092,7 +1115,7 @@ All under `/api/v1`. "Agent" in the last column means an `agent`-scope token is 
 |---|---|---|
 | `GET /work/queue?role=&project_id=&team_id=&repo=` | ready tasks for a role, plus reason counts for delegated tasks that are not ready | any authenticated user |
 | `POST /work/claims` `{role, task_id?, project_id?, team_id?, repo?, agent: {label?, runner?, session_ref?}, wait_s?}` | claim a named task or the next ready one; returns the claim **and the brief**; `{claim: null, retry_after_s, reasons}` when nothing is ready (`wait_s` ≤ 25 long-polls first). `repo` narrows to projects with a component bound to that repository | contributor · agent |
-| `GET /work/claims?task_id=&state=&project_id=` · `GET /work/claims/{id}` | read claims | any |
+| `GET /work/claims?task_id=&state=&project_id=&mine=` · `GET /work/claims/{id}` | read claims; `mine=true&state=active` is the claim the calling token holds | any |
 | `POST /work/claims/{id}/heartbeat` `{note?, steps?}` | renew the lease; returns `{lease_expires_at, directive, reason?}` | claim holder · agent |
 | `POST /work/claims/{id}/artifacts` `{kind, title?, body, data}` | add a `plan` or `note`; a plan returns `{artifact, governing_decisions, fitness_rules, unsettled, approval: {required, reasons, gate_id?}}` | claim holder · agent |
 | `POST /work/claims/{id}/gates` `{kind: question\|escalation, title, prompt, options?, allow_text?}` | ask a person; ends the claim (`gated`) | claim holder · agent |
@@ -1101,7 +1124,7 @@ All under `/api/v1`. "Agent" in the last column means an `agent`-scope token is 
 | `GET /tasks/{id}/brief?role=` | the brief, without claiming | any |
 | `GET /tasks/{id}/advance-check?to_status=` | dry-run policy evaluation | any |
 | `GET /tasks/{id}/execution` | the task's timeline: claims, artifacts, gates, events | any |
-| `GET /tasks/{id}/artifacts` · `GET /artifacts/{id}` · `POST /tasks/{id}/artifacts` | read; a person adds a `note` or a new `plan` revision | any · contributor |
+| `GET /tasks/{id}/artifacts` · `GET /artifacts/{id}` · `POST /tasks/{id}/artifacts` | read; a person adds a `note` or a new `plan` revision | any · contributor (a `plan` revision here is **human-only**) |
 | `POST /tasks/{id}/delegation` `{delegation: "agent" \| null}` | delegate or take back; returns readiness warnings | planner who may edit, or the assignee · **human-only** |
 | `PUT /tasks/{id}/components` `{component_ids}` | declare the components a task touches | planner · agent |
 | `POST /projects/{id}/agent-intake` `{state}` | `off` / `on` / `paused` | planner who may edit · **human-only** |
@@ -1112,7 +1135,7 @@ arrive with `ai.stage_policy`).
 | Endpoint | Purpose | Who |
 |---|---|---|
 | `GET /gates?status=&mine=&project_id=&kind=` · `GET /gates/{id}` | the inbox; one gate with its evidence bundle, the subject artifact, the diff from the previous revision and the trail | any |
-| `POST /gates/{id}/decide` `{decision, note?, option?, subject_revision}` | respond | an eligible approver · **human-only** |
+| `POST /gates/{id}/decide` `{decision, note?, option?, plan?, subject_revision}` | respond; `plan` carries the approver's revision for *edit and approve* | an eligible approver · **human-only** |
 | `POST /gates/{id}/reassign` `{approver_engineer_ids}` | hand the decision to someone else | planner · **human-only** |
 | `POST /gates/{id}/cancel` | withdraw (the asking session, or a planner) | claim holder · planner · agent |
 | `GET /gates/{id}/wait?timeout_s=` | long poll until decided (≤ 25 s per call) | any · agent |
@@ -1159,12 +1182,12 @@ as elsewhere.
 
 | Tool | Endpoint | Intent |
 |---|---|---|
-| `find_work(role?, project_id?, repo?)` | `GET /work/queue` | what is ready for me, and why the rest is not |
-| `claim_work(role, task_id?, project_id?, repo?)` | `POST /work/claims` | take the next ready task, or a named one — returns the claim and the brief |
+| `find_work(role?, project_id?, team_id?, repo?)` | `GET /work/queue` | what is ready for me, and why the rest is not |
+| `claim_work(role, task_id?, project_id?, team_id?, repo?, wait_s?)` | `POST /work/claims` | take the next ready task, or a named one — returns the claim and the brief. The MCP server fills in `agent` (label, runner, session reference) from its own configuration |
 | `get_work_brief(task_id, role?)` | `GET /tasks/{id}/brief` | re-read the brief |
 | `report_progress(claim_id, note, steps?)` | `…/heartbeat` | renew the lease, leave a note, tick plan steps; returns the directive |
 | `submit_plan(claim_id, …)` | `…/artifacts` | record the plan; learn the decisions that govern it and whether a person must approve |
-| `ask_human(claim_id, question, options?, kind?)` | `…/gates` | "I need an answer" or "I should not continue" — ends the claim, returns the review link |
+| `ask_human(claim_id, title, prompt, options?, allow_text?, kind?)` | `…/gates` | "I need an answer" or "I should not continue" — ends the claim, returns the review link |
 | `submit_work(claim_id, summary, pr_url, verification, attestations, …)` | `…/submit` | hand off; canopy evaluates, then advances, gates or refuses |
 | `submit_review(claim_id, kind, verdict, findings, …)` | `…/submit` | a review or QA verdict, and its routing |
 | `release_work(claim_id, reason, note, needs_human?)` | `…/release` | give the task back |
@@ -1244,8 +1267,8 @@ server, so no canopy credential has to reach a shell command.
 | `Stop` | calls `handoff_check`; while the token still holds an active claim, blocks with "hand off, ask, or release before ending" | no dangling claims |
 
 `session_context`, `heartbeat` and `handoff_check` are small tools that exist for these hooks.
-The server finds the session's claim from the token alone, because a token holds one active
-claim at a time (§6.3).
+They find the session's claim from the token alone (`GET /work/claims?mine=true&state=active`),
+because a token holds one active claim at a time (§6.3).
 
 Hooks raise the quality of hand-offs; they do not guarantee one. Claude Code ends the turn anyway
 after eight consecutive Stop-hook continuations, does not run Stop hooks on an interrupt, an API
@@ -1304,7 +1327,9 @@ events. Planners get **Take over**, **Release claim** and **Add guidance** (a no
 attempt).
 
 **Reviews** (`/reviews`, §AA2). The page gains tabs — **Decisions** (gates) and **Change
-proposals** (as today) — and the nav badge counts both. A gate row shows its kind, the task, the
+proposals** (as today) — and the nav badge counts both. Today the entry and its badge are gated
+by `ai.proposals` alone; they show when either `ai.proposals` or `ai.work_queue` is on, and each
+tab follows its own feature. A gate row shows its kind, the task, the
 one-line ask, why it exists, who asked, and its age against the reminder threshold. The gate page
 (`/reviews/gates/:id`), top to bottom:
 
@@ -1354,8 +1379,8 @@ delegation, the brief, artifacts, rules, agent-raised gates and checkpoints. Wha
 work advances.
 
 - **Policy attaches to the tracker's statuses.** A mirrored project's columns are its binding's
-  status map (§C9.1). `StagePolicy.binding_id` keys a policy to one of those statuses, edited on
-  the Tracking tab.
+  status map (§C9.1). A `StagePolicy` owned by the binding (`owner_type = binding`) keys a
+  policy to one of those statuses, edited on the Tracking tab.
 - **Claiming moves nothing.** The claim is canopy's; the board shows the claim badge on a card
   whose status the tracker still owns.
 - **`submit_work` clears; it does not move.** canopy evaluates the policy and answers
@@ -1373,8 +1398,10 @@ work advances.
   a decision column: `"checkpoints": {"handoff": {"decision": {…}}}` holds the task in place when
   the hand-off is submitted, exactly as the plan checkpoint does.
 - **The plan on the ticket.** When a person approves a plan, canopy can post it to the tracker
-  item as a comment through a new optional tracker capability, `comments` (content only; a
-  person's approval triggers it, so the rule that agent tokens make no external writes holds).
+  item as a comment through a new optional tracker capability, `comments`. It is content only,
+  and only a decision a person makes in canopy triggers it (`decided_via = canopy`), so the rule
+  that agent tokens make no external writes holds. It would be a third scoped write beside the
+  two `CLAUDE.md` lists under "Source-of-truth boundaries", and belongs in that list when built.
   When the tracker's writes are routed via MCP (§A8), the session posts it itself.
 
 This is Phase 3. It is designed now so that Phases 1–2 do not paint it into a corner: nothing in
@@ -1520,7 +1547,7 @@ leaves projects with intake `off` exactly as they are today.
 
 **Phase 0 — foundations** (no new surface)
 
-- Pull-request signals: review and check events on the GitHub webhook, the new `pull_request`
+- Pull-request signals: review and check events on the GitHub webhook, the new `pullrequest`
   columns, the same fields on MCP and file ingest (§11.3).
 - `actor_kind` and `work_claim_id` on status history, through `record_transition`.
 - Role and project scope, `max_active_claims` and `last_used_at` on agent tokens.
@@ -1538,10 +1565,12 @@ leaves projects with intake `off` exactly as they are today.
 - Plugin: worker verbs, `working-the-queue` and `implementing-tasks`, `task-implementer`, hooks.
 - UI: board badges, the task panel's Execution section, the Agents view.
 - Alerts `gate_waiting`, `task_parked`, `claim_stale`; demo seed; `USER_FLOWS.md`.
+- A pytest engine that can target PostgreSQL and MySQL/MariaDB, and a CI job that runs the
+  claim-race test on them.
 
 *Done when:* on a native project, a delegated task is claimed by an interactive and by a headless
 session, planned, implemented and handed off to *In Review* with a PR; killing the session
-mid-task returns the task to the queue within one lease; a question the agent raises is answered
+mid-task returns the task to the queue within one lease plus one reaper period; a question the agent raises is answered
 in the UI and a fresh session resumes with the answer; three failed attempts park the task.
 
 **Phase 2 — stage policy, gates and roles** (`ai.stage_policy`)
@@ -1550,7 +1579,7 @@ in the UI and a fresh session resumes with the answer; three failed attempts par
   raise to `block`; the dry run.
 - The plan checkpoint and its conditions; decision columns; routing; bounded rework.
 - Gates satisfied by GitHub approvals and merges; the merged-ahead rule.
-- `Rule` and Definition-of-Done attestations; the Rules views.
+- `DeliveryRule` and Definition-of-Done attestations; the Rules views.
 - Reviewer and QA runbooks and subagents; role-scoped tokens enforced.
 - `agent-flow` metrics, the remaining alerts, the digest.
 
@@ -1561,7 +1590,7 @@ satisfied by a GitHub approval from someone other than the requester.
 **Phase 3 — reach**
 
 - Mirrored projects (§17), including the tracker `comments` capability.
-- A reference SDK runner; outbound webhooks for `work.ready` and `gate.decided`; long-polling.
+- A reference SDK runner; outbound webhooks for `work.ready` and `gate.decided`.
 - Gate notifications over the alert-delivery hook — the Slack/email delivery §I has deferred now
   has its strongest reason to exist: a person holding up a queue should hear about it.
 - Recipes for scheduled cloud sessions and GitHub-event-triggered reviewers.
@@ -1594,7 +1623,8 @@ Beyond the nine invariants of §12:
   permissions; gate decisions including self-approval and stale subjects; gates satisfied by
   simulated GitHub webhooks; the merged-ahead rule; warnings and overrides on a person's move;
   `use_work_claim` for agents.
-- **Concurrency.** Racing claims on all three databases.
+- **Concurrency.** Racing claims on all three databases — with the configurable test engine and the
+  CI job that invariant 3 calls for.
 - **A scripted worker.** A small script that plays an agent through the REST API — claim, plan,
   submit, get refused, fix, submit — runs in CI and doubles as executable documentation of the
   protocol, since real agent sessions cannot run there.
@@ -1624,8 +1654,8 @@ Beyond the nine invariants of §12:
 
 **Deliberately not in this design**
 
-- canopy does not start, host, sandbox or supervise agent sessions, and holds no repository
-  credentials for them.
+- canopy does not start, host, sandbox or supervise agent sessions, and hands them no
+  credentials.
 - canopy does not merge pull requests, and never writes a status to a tracker.
 - Nothing is approved by a timeout, and no MCP tool decides a gate.
 - Agents are not `Engineer` rows: no capacity, allocation or per-person view models them.
@@ -1668,7 +1698,7 @@ concurrency and protects its review capacity — and the template sets WIP enfor
 | In Review | in_progress | `reviewer` | `artifact: handoff` · `pr_linked: open` · `pr_checks: passing` · `plan_approved` · `distinct_actor: implementer` (block); `attestations_complete` · `pr_size: 400` (warn) | — |
 | QA | in_progress | `qa` | `verdict: review ∈ {pass, concerns}` · `distinct_actor: implementer` (block) | — |
 | Sign-off | in_progress | people | `verdict: qa_report ∈ {pass, concerns}` (block); `criteria_met` (warn) | **decision** `signoff`: always; approvers: project planners, requester excluded; satisfied by a decision in canopy, a PR approval, or a merge; approve → Done · changes → In Progress · reject → Cancelled |
-| Done | done | — | `pr_linked: merged` (block for agents and automation, warn for people) | — |
+| Done | done | — | `pr_linked: merged` (block) | — |
 | Cancelled | cancelled | — | — | — |
 
 Defaults on every agent-worked column: lease 30 minutes, three attempts, three rework rounds.
@@ -1707,12 +1737,14 @@ the example).
       {"check": "pr_linked:open", "enforcement": "block"},
       {"check": "pr_checks:passing", "enforcement": "block"},
       {"check": "plan_approved", "enforcement": "block"},
-      {"check": "attestations_complete", "enforcement": "warn"}
+      {"check": "distinct_actor:implementer", "enforcement": "block"},
+      {"check": "attestations_complete", "enforcement": "warn"},
+      {"check": "pr_size:400", "enforcement": "warn"}
     ],
     "checkpoints": {"plan": {"required": true,
                              "approval_when": ["one_way_door", "unsettled_decision", "no_spec", "low_confidence", "probation:5"]}},
     "limits": {"lease_minutes": 30, "heartbeat_interval_s": 300,
-               "attempt": 1, "max_attempts": 3, "rework": 0, "max_rework": 3}
+               "stage_attempt": 1, "max_attempts": 3, "rework": 0, "max_rework": 3}
   },
   "intent": {
     "spec": {"id": 7, "title": "Provider webhooks", "status": "approved",
@@ -1737,13 +1769,13 @@ the example).
   },
   "components": [
     {"name": "payments-service", "kind": "service", "criticality": "high", "owner": "Priya Shah",
-     "code": [{"repo": "example/shop", "path_glob": "services/payments/**"}]}
+     "code": [{"repo": "example-shop/checkout", "path_glob": "services/payments/**"}]}
   ],
   "docs": [
     {"kind": "tech_design", "title": "Webhook handling design", "url": "https://docs.example.com/d/abc", "scope": "task"},
     {"kind": "prd", "title": "Payments migration PRD", "url": "https://docs.example.com/d/def", "scope": "project"}
   ],
-  "docs_missing": ["qa"],
+  "docs_missing": ["design", "architecture"],
   "rules": {
     "trust": "policy",
     "guidance": [
@@ -1758,7 +1790,7 @@ the example).
   "dependencies": {"predecessors": [{"key": "PAYMENTS-7", "name": "Ledger & idempotency keys", "category": "done"}],
                    "successors": [{"key": "PAYMENTS-13", "name": "Dual-run reconciliation"}], "blockers": []},
   "history": {"plan": null, "attempts": [], "decisions": [], "findings": [], "pull_requests": []},
-  "conventions": {"repo": "example/shop", "branch": "payments-11-webhooks-retries", "pr_title_prefix": "PAYMENTS-11"},
+  "conventions": {"repo": "example-shop/checkout", "branch": "payments-11-webhooks-retries", "pr_title_prefix": "PAYMENTS-11"},
   "more": {"get_adr": [1, 2], "get_spec": [7], "read_design_doc": ["abc"], "adr_impact": [1]}
 }
 ```
@@ -1798,7 +1830,7 @@ decision is still open — and it opens a plan-approval gate whose reasons say e
 | `checks_failed` | the hand-off does not meet the exit contract | fix what is listed, resubmit |
 | `plan_missing` | the stage requires a plan | `submit_plan` first |
 | `use_work_claim` | you tried to move a delegated card directly | use the worker verbs |
-| a heartbeat `stop` directive | a person took over, cancelled, or paused intake | stop, and say what state the branch is in |
+| a heartbeat `stop` directive | a person took over, the task was cancelled, or intake was switched off | stop, and say what state the branch is in |
 
 ---
 
