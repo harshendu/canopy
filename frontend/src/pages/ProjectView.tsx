@@ -59,6 +59,7 @@ const BurndownChart = lazy(() => import("../components/BurndownChart"));
 const DraftPlanView = lazy(() => import("../components/DraftPlanView"));
 const TrackingPanel = lazy(() => import("../components/tracking/TrackingPanel"));
 const TrackerLinksPanel = lazy(() => import("../components/TrackerLinksPanel"));
+const AgentsView = lazy(() => import("../components/AgentsView"));
 
 export default function ProjectView() {
   const { projectId } = useParams();
@@ -675,6 +676,12 @@ export default function ProjectView() {
       {activeTab === "retros" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading retros…</p>}>
           <RetrosView projectId={id} />
+        </Suspense>
+      )}
+
+      {activeTab === "agents" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading agent work…</p>}>
+          <AgentsView projectId={id} onOpenTask={setSelectedTaskId} />
         </Suspense>
       )}
 

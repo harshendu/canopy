@@ -53,6 +53,8 @@ export interface Project {
   /** native: canopy owns every status; mirrored: a bound tracker owns the work it knows (§C12). */
   tracking_mode?: TrackingMode;
   task_key_prefix?: string | null;
+  /** Whether delegated tasks are offered to agents (docs/AGENT_EXECUTION.md §6.1). */
+  agent_intake?: AgentIntake;
 }
 
 export interface Initiative {
@@ -209,6 +211,12 @@ export interface Task {
   estimate_pessimistic: number | null;
   pert_mean: number | null;
   estimate_spread: number | null;
+  /** "agent" when a person delegated the task to the agent work queue; they stay accountable. */
+  delegation?: Delegation | null;
+  delegated_at?: string | null;
+  /** The claim of the session working it right now, if any. */
+  active_claim_id?: number | null;
+  implements_adr_id?: number | null;
 }
 
 export interface GanttTask {
@@ -785,6 +793,31 @@ export interface BoardTaskItem {
   story_points?: number | null;
   /** Working days — the estimate of teams that size sprints in days. */
   duration?: number | null;
+  /** Agent work (docs/AGENT_EXECUTION.md §16): delegated to the queue, the session working it,
+   *  the gate holding it for a person, and whether canopy parked it. */
+  delegation?: Delegation | null;
+  claim?: BoardClaim | null;
+  gate?: BoardGate | null;
+  parked?: boolean;
+}
+
+/** The session working a card. */
+export interface BoardClaim {
+  id: number;
+  role: string;
+  label: string | null;
+  since: string;
+  heartbeat_age_s: number;
+}
+
+/** The open gate holding a card for a person. */
+export interface BoardGate {
+  id: number;
+  kind: GateKind;
+  origin: GateOrigin;
+  parked: boolean;
+  title: string;
+  age_hours: number;
 }
 
 /** A column: the workflow's columns arrive in order, empty ones included. `in_workflow=false`
@@ -804,6 +837,8 @@ export interface BoardLane {
   scope_wip?: number | null;
   over_limit?: boolean;
   in_workflow?: boolean;
+  /** Who works the column: an agent role, "human" (a decision column), or none. */
+  worked_by?: string | null;
 }
 
 /** What the caller may do on the board. */
@@ -1073,12 +1108,31 @@ export interface MyWorkspace {
   blockers: Blocker[];
   /** "My sprint": my tasks in active sprints (§C11). */
   my_sprints: MySprint[];
+  /** Agent work waiting on my decision (ai.work_queue). */
+  gates?: MyGate[];
 }
 
 export interface MyToday {
   user: User;
   focus_tasks: Task[];
   decisions_to_push: ADR[];
+  gates?: MyGate[];
+}
+
+/** An open gate this person may decide. */
+export interface MyGate {
+  id: number;
+  task_id: number;
+  project_id: number;
+  kind: GateKind;
+  origin: GateOrigin;
+  title: string;
+  stage: string | null;
+  task_key: string | null;
+  task_name: string | null;
+  project_key: string | null;
+  age_hours: number;
+  parked: boolean;
 }
 
 export interface Allocation {
@@ -1937,4 +1991,241 @@ export interface BusinessReview {
   initiatives: ReviewInitiative[];
   open_note_count: number;
   attention: string[];
+}
+
+
+// --- Agent work: the work queue, claims, artifacts, gates (docs/AGENT_EXECUTION.md) ---------
+
+export type AgentIntake = "off" | "on" | "paused";
+export type Delegation = "agent";
+export type ClaimState = "active" | "completed" | "released" | "expired" | "failed" | "superseded";
+export type ClaimOutcome =
+  | "advanced"
+  | "returned"
+  | "gated"
+  | "released"
+  | "failed"
+  | "expired"
+  | "superseded";
+export type ArtifactKind = "plan" | "handoff" | "review" | "qa_report" | "note";
+export type GateKind = "plan_approval" | "handoff_approval" | "signoff" | "question" | "escalation";
+export type GateOrigin = "checkpoint" | "column" | "agent" | "system";
+export type GateStatus =
+  | "open"
+  | "approved"
+  | "changes_requested"
+  | "rejected"
+  | "answered"
+  | "cancelled";
+export type GateDecision =
+  | "approve"
+  | "edit_and_approve"
+  | "approve_with_conditions"
+  | "request_changes"
+  | "reject"
+  | "answer"
+  | "retry"
+  | "take_over"
+  | "cancelled";
+
+export interface WorkClaim {
+  id: number;
+  task_id: number;
+  role: string;
+  stage: string;
+  attempt: number;
+  state: ClaimState;
+  outcome: ClaimOutcome | null;
+  end_reason: string | null;
+  user_id: number;
+  agent_token_id: number | null;
+  agent_label: string | null;
+  runner: string | null;
+  session_ref: string | null;
+  claimed_at: string;
+  heartbeat_at: string;
+  lease_minutes: number;
+  lease_expires_at: string;
+  finished_at: string | null;
+  progress_note: string | null;
+  branch: string | null;
+  pr_url: string | null;
+  usage: Record<string, unknown> | null;
+}
+
+export interface TaskArtifact {
+  id: number;
+  task_id: number;
+  kind: ArtifactKind;
+  revision: number;
+  title: string | null;
+  body: string;
+  data: Record<string, unknown>;
+  verdict: string | null;
+  head_sha: string | null;
+  author_kind: string;
+  author_user_id: number | null;
+  work_claim_id: number | null;
+  created_at: string;
+}
+
+export interface GateOption {
+  value: string;
+  label?: string | null;
+}
+
+export interface Gate {
+  id: number;
+  task_id: number;
+  project_id: number;
+  kind: GateKind;
+  origin: GateOrigin;
+  stage: string | null;
+  status: GateStatus;
+  title: string;
+  prompt: string | null;
+  options: GateOption[];
+  allow_text: boolean;
+  allowed_decisions: GateDecision[];
+  reasons: string[];
+  evidence: Record<string, unknown>;
+  subject_artifact_id: number | null;
+  requested_by_claim_id: number | null;
+  requested_by_user_id: number | null;
+  approvers: string;
+  exclude_requester: boolean;
+  satisfied_by: string[];
+  remind_at: string | null;
+  escalate_at: string | null;
+  escalation_level: number;
+  decision: GateDecision | null;
+  decided_by_user_id: number | null;
+  decided_by_label: string | null;
+  decided_via: string | null;
+  decided_at: string | null;
+  response_note: string | null;
+  response_data: Record<string, unknown>;
+  routed_at: string | null;
+  created_at: string;
+  task_key: string | null;
+  task_name: string | null;
+  project_key: string | null;
+  requester_name: string | null;
+  age_hours: number;
+  /** The caller may decide this gate (always false for an agent token). */
+  may_decide: boolean;
+  /** Approved, but the next column's checks aren't met yet (e.g. the PR isn't merged). */
+  waiting_for_evidence: boolean;
+}
+
+export interface WorkEvent {
+  id: number;
+  task_id: number | null;
+  project_id: number;
+  at: string;
+  kind: string;
+  actor_kind: string;
+  user_id: number | null;
+  agent_token_id: number | null;
+  work_claim_id: number | null;
+  gate_id: number | null;
+  artifact_id: number | null;
+  data: Record<string, unknown>;
+}
+
+export interface GateDetail {
+  gate: Gate;
+  task: Task;
+  subject: TaskArtifact | null;
+  previous: TaskArtifact | null;
+  handoff: TaskArtifact | null;
+  reviews: TaskArtifact[];
+  trail: WorkEvent[];
+}
+
+export interface GateDecideRequest {
+  decision: GateDecision;
+  note?: string | null;
+  option?: string | null;
+  subject_revision?: number | null;
+}
+
+export interface RoleReadiness {
+  ready: boolean;
+  reason: string | null;
+  stage: string | null;
+  detail: string | null;
+}
+
+export interface TaskExecution {
+  task_id: number;
+  delegation: Delegation | null;
+  stage: string | null;
+  worked_by: string | null;
+  active_claim: WorkClaim | null;
+  claims: WorkClaim[];
+  artifacts: TaskArtifact[];
+  gates: Gate[];
+  events: WorkEvent[];
+  exit_contract: Record<string, unknown> | null;
+  readiness: { intake: AgentIntake; by_role: Record<string, RoleReadiness> } | null;
+}
+
+export interface DelegationResponse {
+  task: Task;
+  hints: string[];
+}
+
+export interface QueueItem {
+  task_id: number;
+  key: string | null;
+  name: string;
+  project_id: number;
+  project_key: string;
+  status: string | null;
+  stage: string;
+  pull: boolean;
+  rank: number;
+}
+
+export interface AgentStage {
+  status: string;
+  category: string;
+  worked_by: string | null;
+  source: string;
+}
+
+export interface AgentsWorking {
+  claim: WorkClaim;
+  task_key: string | null;
+  task_name: string;
+  heartbeat_age_s: number;
+}
+
+export interface ParkedTask {
+  task_id: number;
+  key: string | null;
+  name: string;
+  gate_id: number;
+}
+
+export interface AgentsView {
+  project_id: number;
+  agent_intake: AgentIntake;
+  can_manage: boolean;
+  /** False while the project runs on the built-in default pipeline. */
+  configured: boolean;
+  stages: AgentStage[];
+  ready: Record<string, QueueItem[]>;
+  reasons: Record<string, number>;
+  working: AgentsWorking[];
+  waiting: Gate[];
+  parked: ParkedTask[];
+  delegated: number;
+}
+
+export interface IntakeResponse {
+  project_id: number;
+  agent_intake: AgentIntake;
+  stopped: number;
 }

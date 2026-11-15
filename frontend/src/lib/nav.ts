@@ -37,7 +37,8 @@ const NAV: NavDef[] = [
     icon: "reviews",
     group: "primary",
     badge: "reviews",
-    visible: (c) => c.isFeatureOn("ai.proposals"),
+    // Staged changes (ai.proposals) and agent work waiting on a person (ai.work_queue).
+    visible: (c) => c.isFeatureOn("ai.proposals") || c.isFeatureOn("ai.work_queue"),
   },
   {
     to: "/review",

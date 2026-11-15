@@ -14,10 +14,10 @@ const ALL_ON = () => true;
 const ALL_OFF = () => false;
 
 describe("PROJECT_GROUPS / TAB_GROUP", () => {
-  it("places every one of the 19 leaf views under exactly one group", () => {
+  it("places every one of the 20 leaf views under exactly one group", () => {
     const tabs = PROJECT_GROUPS.flatMap((g) => g.tabs);
-    expect(tabs).toHaveLength(19);
-    expect(new Set(tabs).size).toBe(19); // no duplicates
+    expect(tabs).toHaveLength(20);
+    expect(new Set(tabs).size).toBe(20); // no duplicates
     for (const tab of tabs) expect(TAB_GROUP[tab]).toBeTruthy();
   });
 
@@ -47,6 +47,14 @@ describe("PROJECT_GROUPS / TAB_GROUP", () => {
 describe("resolveProjectTab", () => {
   it("defaults to Overview when no tab is requested", () => {
     expect(resolveProjectTab(null, ALL_ON)).toEqual({ group: "overview", tab: null });
+  });
+
+  it("opens the Agents view under Execution, behind the work-queue gate", () => {
+    expect(resolveProjectTab("agents", ALL_ON)).toEqual({ group: "execution", tab: "agents" });
+    expect(resolveProjectTab("agents", (f) => f !== "ai.work_queue")).toEqual({
+      group: "overview",
+      tab: null,
+    });
   });
 
   it("resolves a known leaf and auto-selects its parent group (deep-link contract)", () => {
@@ -109,7 +117,8 @@ describe("visibleProjectNav", () => {
   });
 
   it("keeps only the enabled leaves inside a partially-gated group", () => {
-    const isOn = (f: string) => f !== "tracking.board" && f !== "tracking.delivery";
+    const isOn = (f: string) =>
+      f !== "tracking.board" && f !== "tracking.delivery" && f !== "ai.work_queue";
     const execution = visibleProjectNav(isOn).find((v) => v.group.key === "execution");
     expect(execution?.tabs).toEqual(["capacity", "burndown", "activity"]);
   });
@@ -125,7 +134,8 @@ describe("defaultTabForGroup", () => {
   });
 
   it("skips gated-off leaves when choosing the landing view", () => {
-    const isOn = (f: string) => f !== "tracking.board";
+    const isOn = (f: string) => f !== "tracking.board" && f !== "ai.work_queue";
     expect(defaultTabForGroup("execution", isOn)).toBe("capacity");
+    expect(defaultTabForGroup("execution", (f) => f !== "tracking.board")).toBe("agents");
   });
 });

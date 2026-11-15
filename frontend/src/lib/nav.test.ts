@@ -21,7 +21,13 @@ describe("visibleNavItems", () => {
   });
 
   it("hides feature-gated links when their feature is off", () => {
-    const off = new Set(["ai.proposals", "portfolio.initiatives", "architecture", "integrations"]);
+    const off = new Set([
+      "ai.proposals",
+      "ai.work_queue",
+      "portfolio.initiatives",
+      "architecture",
+      "integrations",
+    ]);
     const paths = visibleNavItems(ctx({ isFeatureOn: (f) => !off.has(f) })).map((n) => n.to);
     expect(paths).not.toContain("/reviews");
     expect(paths).not.toContain("/initiatives");
@@ -50,6 +56,13 @@ describe("visibleNavItems", () => {
       "/admin/integrations",
       "/admin/demo",
     ]);
+  });
+
+  it("shows Reviews when either inbox is on", () => {
+    const onlyQueue = visibleNavItems(ctx({ isFeatureOn: (f) => f === "ai.work_queue" }));
+    expect(onlyQueue.map((n) => n.to)).toContain("/reviews");
+    const onlyProposals = visibleNavItems(ctx({ isFeatureOn: (f) => f === "ai.proposals" }));
+    expect(onlyProposals.map((n) => n.to)).toContain("/reviews");
   });
 
   it("tags the reviews link with its badge", () => {

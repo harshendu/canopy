@@ -3,7 +3,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "./api/client";
-import type { Engineer, PortfolioResponse, Proposal } from "./api/types";
+import type { Engineer, Gate, PortfolioResponse, Proposal } from "./api/types";
 import { useAuth } from "./lib/auth";
 import { useCurrentUser } from "./lib/useCurrentUser";
 import { canContribute, canWriteProjects } from "./lib/permissions";
@@ -24,6 +24,7 @@ import MyWorkspace from "./pages/MyWorkspace";
 import MyToday from "./pages/MyToday";
 import Reviews from "./pages/Reviews";
 import ReviewWorkspace from "./pages/ReviewWorkspace";
+import GateReview from "./pages/GateReview";
 import AdminUsers from "./pages/AdminUsers";
 import AdminFeatures from "./pages/AdminFeatures";
 import DemoData from "./pages/DemoData";
@@ -64,7 +65,14 @@ function ProtectedLayout() {
     enabled: isAuthenticated && featureOn(features, "ai.proposals"),
     staleTime: 30 * 1000,
   });
-  const reviewCount = openProposals.data?.length ?? 0;
+  // Agent work waiting on this person's decision (ai.work_queue) counts toward the same badge.
+  const myGates = useQuery({
+    queryKey: ["gates", "mine"],
+    queryFn: () => api.get<Gate[]>("/gates?mine=true"),
+    enabled: isAuthenticated && featureOn(features, "ai.work_queue"),
+    staleTime: 30 * 1000,
+  });
+  const reviewCount = (openProposals.data?.length ?? 0) + (myGates.data?.length ?? 0);
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
@@ -146,6 +154,7 @@ export default function App() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:projectId" element={<ProjectView />} />
         <Route path="/reviews" element={<Reviews />} />
+        <Route path="/reviews/gates/:gateId" element={<GateReview />} />
         <Route path="/reviews/:proposalId" element={<ReviewWorkspace />} />
         <Route path="/me" element={<MyWorkspace />} />
         <Route path="/me/today" element={<MyToday />} />

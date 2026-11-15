@@ -4,7 +4,7 @@ import type { IconName } from "../components/icons";
  * The project cockpit's two-level navigation, kept pure (no React) so the grouping, feature-gating,
  * and `?tab=` deep-link resolution are unit-testable — `ProjectView` just renders what these return.
  *
- * The 19 leaf views map onto the backend's own feature domains (`app/services/features.py`:
+ * The 20 leaf views map onto the backend's own feature domains (`app/services/features.py`:
  * planning / tracking / architecture / governance / integrations), plus an at-a-glance **Overview**
  * entry. Leaf keys are unchanged from the old flat tab bar, so every existing `?tab=<leaf>` deep
  * link (the preview drawer, the Drift Sentinel, shared URLs) keeps working and just auto-selects the
@@ -30,7 +30,8 @@ export type ProjectTab =
   | "risk"
   | "raid"
   | "retros"
-  | "activity";
+  | "activity"
+  | "agents";
 
 export type ProjectGroupKey =
   | "overview"
@@ -56,7 +57,7 @@ export const PROJECT_GROUPS: ProjectGroupDef[] = [
     key: "execution",
     label: "Execution",
     icon: "board",
-    tabs: ["board", "capacity", "delivery", "burndown", "activity"],
+    tabs: ["board", "agents", "capacity", "delivery", "burndown", "activity"],
   },
   {
     key: "architecture",
@@ -85,6 +86,7 @@ export const PROJECT_GROUPS: ProjectGroupDef[] = [
 /** The feature gate each leaf sits behind (absent = core, always on). Mirrors the backend catalog. */
 export const TAB_FEATURES: Partial<Record<ProjectTab, string>> = {
   board: "tracking.board",
+  agents: "ai.work_queue",
   specs: "governance.specs",
   capacity: "tracking.capacity",
   decisions: "architecture",
@@ -120,6 +122,7 @@ export const TAB_LABELS: Record<ProjectTab, string> = {
   raid: "Risk register",
   retros: "Retros",
   activity: "Activity",
+  agents: "Agents",
 };
 
 export const TAB_ICONS: Record<ProjectTab, IconName> = {
@@ -142,6 +145,7 @@ export const TAB_ICONS: Record<ProjectTab, IconName> = {
   raid: "alerts", // register/ledger — a distinct mark from the score's gauge icon
   retros: "retros",
   activity: "activity",
+  agents: "agent-setup",
 };
 
 /** Leaf view → the group it lives under (derived from PROJECT_GROUPS). */

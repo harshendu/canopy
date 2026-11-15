@@ -33,6 +33,7 @@ import { useCurrentUser } from "../lib/useCurrentUser";
 import { featureOn, useFeatures } from "../lib/useFeatures";
 import { useMoveCard } from "../lib/useMoveCard";
 import { useProjectTeam } from "../lib/useProjectTeam";
+import ExecutionSection from "./ExecutionSection";
 import { Icon } from "./icons";
 import RiskRegister from "./RiskRegister";
 import TagEditor from "./TagEditor";
@@ -141,6 +142,10 @@ export default function TaskDetailPanel({
               canEdit={mayPlan}
               onStructuralChange={onStructuralChange}
             />
+          )}
+
+          {task.data && featureOn(features, "ai.work_queue") && (
+            <ExecutionSection task={task.data} projectId={projectId} mayContribute={mayContribute} />
           )}
 
           <section>

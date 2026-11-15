@@ -85,8 +85,20 @@ export function BoardColumnHeader({
         <Icon name="chevron-down" size={14} />
       </button>
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-sm font-medium" title={lane.status}>
-          {lane.status}
+        <h3 className="flex items-center gap-1 truncate text-sm font-medium" title={lane.status}>
+          <span className="truncate">{lane.status}</span>
+          {lane.worked_by && (
+            <span
+              title={
+                lane.worked_by === "human"
+                  ? "A decision column: a person decides what happens next"
+                  : `Agent sessions work this column as ${lane.worked_by}`
+              }
+              className="shrink-0 rounded bg-violet-50 px-1 text-[10px] font-normal text-violet-700"
+            >
+              {lane.worked_by === "human" ? "decision" : lane.worked_by}
+            </span>
+          )}
         </h3>
         <div className={`truncate text-[11px] ${lane.over_limit ? "text-red-600" : "text-slate-400"}`}>
           {columnHint(lane)}

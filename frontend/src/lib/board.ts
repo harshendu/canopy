@@ -97,6 +97,7 @@ export function normalizeBoard(raw: BoardResponse): Board {
         scope_wip,
         over_limit: lane.over_limit ?? overLimit({ wip: lane.wip, scope_wip, wip_limit }),
         in_workflow: lane.in_workflow ?? true,
+        worked_by: lane.worked_by ?? null,
       };
     }),
   };
@@ -127,6 +128,10 @@ function normalizeCard(t: BoardTaskItem, projectId: number): Card {
     sprint_id: t.sprint_id ?? null,
     story_points: t.story_points ?? null,
     duration: t.duration ?? null,
+    delegation: t.delegation ?? null,
+    claim: t.claim ?? null,
+    gate: t.gate ?? null,
+    parked: t.parked ?? false,
   };
 }
 
