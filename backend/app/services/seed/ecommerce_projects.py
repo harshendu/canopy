@@ -280,6 +280,9 @@ _ONEPAGE = ProjectSpec(
             options=("Apple Pay and Google Pay", "Apple Pay only",
                      "All three, PayPal behind a flag"),
         ),
+        # Delegated, waiting for a session (this project keeps the default pipeline, which
+        # only warns about unfinished predecessors).
+        AgentWorkSpec("A/B test vs legacy checkout", "ready", components=("web-checkout",)),
     ),
 )
 
@@ -449,6 +452,7 @@ _PAYMENTS = ProjectSpec(
     pod="Checkout & Payments",
     owner="Priya Shah",
     agent_intake="on",
+    stage_policy="agentic-delivery",
     agent_work=(
         # A session is working on it right now.
         AgentWorkSpec(
@@ -473,7 +477,8 @@ _PAYMENTS = ProjectSpec(
                 "Same ledger mismatch; it needs a decision on how partial refunds are booked.",
             ),
         ),
-        # Delegated, waiting for a session.
+        # Delegated; the agentic-delivery template's In Progress column blocks until its
+        # predecessors are done, so it waits on them.
         AgentWorkSpec("Dual-run reconciliation", "ready", components=("payments-ledger",)),
     ),
 )

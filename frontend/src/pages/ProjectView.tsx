@@ -60,6 +60,7 @@ const DraftPlanView = lazy(() => import("../components/DraftPlanView"));
 const TrackingPanel = lazy(() => import("../components/tracking/TrackingPanel"));
 const TrackerLinksPanel = lazy(() => import("../components/TrackerLinksPanel"));
 const AgentsView = lazy(() => import("../components/AgentsView"));
+const RulesView = lazy(() => import("../components/RulesView"));
 
 export default function ProjectView() {
   const { projectId } = useParams();
@@ -682,6 +683,12 @@ export default function ProjectView() {
       {activeTab === "agents" && (
         <Suspense fallback={<p className="text-sm text-slate-500">Loading agent work…</p>}>
           <AgentsView projectId={id} onOpenTask={setSelectedTaskId} />
+        </Suspense>
+      )}
+
+      {activeTab === "rules" && (
+        <Suspense fallback={<p className="text-sm text-slate-500">Loading rules…</p>}>
+          <RulesView target={{ kind: "project", id }} />
         </Suspense>
       )}
 

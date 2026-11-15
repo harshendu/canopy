@@ -17,6 +17,7 @@ import {
   refusalText,
   waitedPhrase,
 } from "../lib/execution";
+import { evidenceChecks, type EvidenceCheck } from "../lib/policy";
 import { timeAgo } from "../lib/proposals";
 import { PageHeader } from "../components/PageHeader";
 
@@ -50,6 +51,7 @@ export default function GateReview() {
   }
   const { gate, task, subject, previous, handoff, reviews, trail } = detail.data;
   const pr = (gate.evidence?.pull_request ?? null) as Record<string, unknown> | null;
+  const checks = evidenceChecks(gate.evidence);
 
   return (
     <div className="space-y-6">
@@ -122,6 +124,23 @@ export default function GateReview() {
                 {pr.review_decision ? ` · ${String(pr.review_decision).replaceAll("_", " ")}` : ""}
                 {typeof pr.changed_lines === "number" ? ` · ${pr.changed_lines} lines changed` : ""}
               </p>
+            </section>
+          )}
+          {checks && (
+            <section className="rounded-lg border border-slate-200 bg-white p-4 text-sm">
+              <h2 className="font-semibold text-slate-700">What canopy checked</h2>
+              <div className="mt-2 grid gap-4 md:grid-cols-2">
+                <CheckList
+                  title="Canopy saw"
+                  hint="Read from CI, the pull request and canopy’s own records."
+                  checks={checks.observed}
+                />
+                <CheckList
+                  title="The session stated"
+                  hint="Verdicts, criteria and attestations an agent recorded — spot-check these."
+                  checks={checks.attested}
+                />
+              </div>
             </section>
           )}
           <section>
@@ -358,7 +377,9 @@ function ArtifactPanel({
           {timeAgo(artifact.created_at)}
         </span>
       </div>
-      {typeof d.summary === "string" && <p className="mt-2 font-medium text-slate-700">{d.summary}</p>}
+      {typeof d.summary === "string" && d.summary.trim() !== artifact.body.trim() && (
+        <p className="mt-2 font-medium text-slate-700">{d.summary}</p>
+      )}
       <p className="mt-2 whitespace-pre-wrap text-slate-700">{artifact.body}</p>
       {steps.length > 0 && (
         <ol className="mt-2 list-decimal pl-5 text-slate-600">
@@ -431,5 +452,34 @@ function ArtifactPanel({
         </div>
       )}
     </section>
+  );
+}
+
+function CheckList({ title, hint, checks }: { title: string; hint: string; checks: EvidenceCheck[] }) {
+  return (
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
+      <p className="text-[11px] text-slate-400">{hint}</p>
+      {checks.length === 0 ? (
+        <p className="mt-1 text-xs text-slate-400">Nothing of this kind.</p>
+      ) : (
+        <ul className="mt-1 space-y-1">
+          {checks.map((c) => (
+            <li key={c.check} className="flex gap-2 text-xs">
+              <span
+                aria-label={c.passed ? "passed" : c.enforcement === "block" ? "failed" : "warning"}
+                className={c.passed ? "text-emerald-600" : c.enforcement === "block" ? "text-red-600" : "text-amber-600"}
+              >
+                {c.passed ? "✓" : c.enforcement === "block" ? "✗" : "!"}
+              </span>
+              <span>
+                <span className="font-medium text-slate-700">{c.label}</span>
+                {c.message && <span className="text-slate-500"> — {c.message}</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

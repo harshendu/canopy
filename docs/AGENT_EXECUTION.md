@@ -1,9 +1,11 @@
 # Agent execution — canopy as the work queue, state store and policy keeper for delivery agents
 
-> **Status: proposal — nothing here is built.** This document designs how agent sessions (Claude
-> Code first, any MCP client in principle) pull delegated tasks from canopy, work them with the
-> context canopy already holds, and move them through gated stages to done — with humans deciding
-> at the points that matter, in the canopy UI.
+> **Status: being built in the phases of §21.** Phases 0–2 have landed (PR signals and
+> attribution; the work queue, gates and worker verbs; stage policy, rules, reviewer/QA roles and
+> the agent-flow measures). This document designs how agent sessions (Claude Code first, any MCP
+> client in principle) pull delegated tasks from canopy, work them with the context canopy
+> already holds, and move them through gated stages to done — with humans deciding at the points
+> that matter, in the canopy UI.
 > [`USER_FLOWS.md`](./USER_FLOWS.md) remains the source of truth for what *is* built; as each phase
 > in §21 lands, its flows move there (`CLAUDE.md` → "Keeping USER_FLOWS.md in sync").
 >
@@ -908,7 +910,7 @@ A rule (`DeliveryRule`) is a short, named statement a team wants every piece of 
 - **Inheritance.** A project's effective rules are the workspace's, then its team's, then its own.
   A rule with the same `key` lower down replaces the one above — nearest wins — unless the higher
   one is `locked`. For attestations the stricter enforcement always wins. `GET
-  /rules?effective_for_project=` returns the resolved set with where each came from.
+  /rules/effective?project_id=` returns the resolved set with where each came from.
 - **Guidance is for what the code cannot say.** Build commands and code conventions belong in the
   repository's `CLAUDE.md` / `AGENTS.md`, which the session loads anyway. canopy rules hold what
   lives above one repository: team process ("PRs under 400 changed lines"; "feature-flag anything
@@ -1146,7 +1148,7 @@ arrive with `ai.stage_policy`).
 |---|---|---|
 | `GET/PUT /teams/{id}/workflow/policy` · `GET/PUT /projects/{id}/workflow/policy` · `GET/PUT /workflows/template/policy` | read the resolved policies (with `inherited`), replace them at one scope | as the matching workflow endpoints (§C9.1) |
 | `POST /projects/{id}/workflow/apply-template` `{template: "agentic-delivery", dry_run}` | preview, then save, the Appendix A columns and policies at project scope (`/teams/{id}/…` for a team) | as above |
-| `GET /rules?scope_level=&scope_id=` · `GET /rules?effective_for_project=` · `POST /rules` · `PATCH/DELETE /rules/{id}` | rules and the resolved set | §10 |
+| `GET /rules?scope_level=&scope_id=` · `GET /rules/effective?project_id=` · `GET /rules/scopes?project_id=\|team_id=` · `POST /rules` · `PATCH/DELETE /rules/{id}` | rules, the resolved set, and which scopes the caller may edit | §10 |
 
 **Changed endpoints.**
 

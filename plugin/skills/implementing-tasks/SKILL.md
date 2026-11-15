@@ -58,7 +58,11 @@ the hand-off carries them. A failing check you can't fix is a `known_gap`, state
 result}], criteria_audit=[{criterion_id, status: met|unmet|waived, evidence}],
 attestations=[{rule_key, status, evidence}], known_gaps=[…], follow_ups=[…])`.
 
-- `attestations` answer `brief.rules.attestations` (the Definition-of-Done rules for this stage).
+- `attestations` answer `brief.rules.attestations` (the Definition-of-Done rules for this stage):
+  one `{rule_key, status: done | n/a | not_done, evidence}` each. A rule marked `block` refuses
+  the hand-off until it is attested; `not_done` is honest and allowed where the rule only warns.
+- `check_advance(task_id)` first shows what the next column still needs (a linked PR, passing
+  checks, an approved plan…).
 - `checks_failed` → nothing was saved, the claim is still yours: fix what the evaluation lists
   (a missing PR link, an unmet criterion…) and submit again.
 - A gate in the response → a person decides next; give the user the `review_url`.

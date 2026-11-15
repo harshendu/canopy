@@ -286,3 +286,122 @@ def test_agent_work_alerts() -> None:
     folded = alerts.compute_alerts(NOW.date(), [], [], [], gates=gates, claims=claims)
     assert {a.kind for a in folded} == {"claim_overrun", "claim_stale", "gate_waiting",
                                         "task_parked"}
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2: agent-flow metrics, rule resolution, the remaining alerts
+# --------------------------------------------------------------------------- #
+
+
+def test_agent_flow_measures() -> None:
+    from app.services import agent_flow
+    from app.services.agent_flow import (
+        AgentFlowFacts,
+        ClaimRow,
+        GateRow,
+        ReadyRow,
+        TaskRow,
+        VerdictRow,
+    )
+
+    since = NOW - timedelta(weeks=4)
+    h = timedelta(hours=1)
+    claims = [
+        # Task 1: implemented (4 h of work), then reviewed; done 24 h after the first claim.
+        ClaimRow(1, "implementer", "advanced", NOW - 30 * h, NOW - 26 * h, cost_usd=1.5),
+        ClaimRow(1, "reviewer", "advanced", NOW - 20 * h, NOW - 19 * h, cost_usd=0.5),
+        # Task 2: sent back once, then expired.
+        ClaimRow(2, "implementer", "advanced", NOW - 40 * h, NOW - 38 * h),
+        ClaimRow(2, "reviewer", "returned", NOW - 37 * h, NOW - 36 * h),
+        ClaimRow(2, "implementer", "expired", NOW - 30 * h, NOW - 29 * h),
+    ]
+    gates = [
+        GateRow(1, "signoff", "column", "approved", "approve", NOW - 10 * h, NOW - 6 * h),
+        GateRow(2, "plan_approval", "checkpoint", "changes_requested", "request_changes",
+                NOW - 39 * h, NOW - 38 * h, reasons=["The plan's own confidence is low"]),
+        GateRow(2, "plan_approval", "checkpoint", "approved", "approve", NOW - 35 * h,
+                NOW - 33 * h, reasons=["The plan's own confidence is low"]),
+        GateRow(3, "question", "agent", "open", None, NOW - 8 * h, None,
+                remind_at=NOW - 4 * h, escalate_at=NOW + 16 * h),
+    ]
+    facts = AgentFlowFacts(
+        claims=claims, gates=gates,
+        verdicts=[VerdictRow(2, "review", "fail", NOW - 36 * h),
+                  VerdictRow(1, "review", "pass", NOW - 19 * h)],
+        tasks=[TaskRow(1, NOW - 6 * h, 0), TaskRow(2, None, 1)],
+        ready=[ReadyRow(4, "implementer", 30.0)], held={"question": 1}, parked=0,
+    )
+    out = agent_flow.compute(facts, now=NOW, since=since)
+    assert out["sufficient"] is True and out["claims"]["finished"] == 5
+    assert out["claims"]["by_outcome"] == {"advanced": 3, "expired": 1, "returned": 1}
+    assert out["human_wait"]["by_kind"]["signoff"] == {"decided": 1, "median_hours": 4.0,
+                                                       "p85_hours": 4.0}
+    assert out["human_wait"]["open_past_reminder"] == 1
+    assert out["first_pass"] == {"approvals": 0.5, "reviews": 0.5}
+    assert out["rework"] == {"tasks_returned_share": 0.5, "rounds_per_returned_task": 1.0}
+    assert out["flow_efficiency"] == round(5 / 24, 2)  # 4 h + 1 h worked over 24 h elapsed
+    assert out["unassisted_share"] == 1.0  # task 1 had only a sign-off
+    assert out["cost_per_task_usd"] == 2.0
+    assert out["queue"] == {"ready_by_role": {"implementer": 1}, "oldest_ready_hours": 30.0,
+                            "held_by_kind": {"question": 1}, "parked": 0}
+    assert out["gate_load"]["top_reasons"] == [
+        {"reason": "The plan's own confidence is low", "count": 2}]
+    thin = agent_flow.compute(AgentFlowFacts(claims=claims[:2]), now=NOW, since=since)
+    assert thin["sufficient"] is False and "2 agent session" in thin["reason"]
+    assert agent_flow.p85([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) == 9
+
+
+def _rule(key: str, **kw: object) -> object:
+    from app.models.policy import DeliveryRule
+
+    base: dict[str, object] = {"scope_level": "workspace", "scope_id": 0, "key": key,
+                               "title": key, "kind": "guidance", "enforcement": "warn"}
+    base.update(kw)
+    return DeliveryRule(**base)
+
+
+def test_rules_merge_nearest_wins_locks_hold_and_attestations_tighten() -> None:
+    from app.services import rules
+
+    workspace = [_rule("a"), _rule("locked", locked=True),
+                 _rule("dod", kind="attestation", enforcement="block"), _rule("gone")]
+    team = [_rule("a", title="team a"), _rule("locked", title="override?"),
+            _rule("dod", kind="attestation", enforcement="warn")]
+    project = [_rule("gone", disabled=True), _rule("p")]
+    merged = {e.key: e for e in rules.merge([("workspace", workspace), ("team", team),
+                                              ("project", project)])}
+    assert set(merged) == {"a", "locked", "dod", "p"}
+    assert merged["a"].origin == "team" and merged["a"].overrides == ["workspace"]
+    assert merged["locked"].origin == "workspace"
+    assert merged["dod"].origin == "team" and merged["dod"].enforcement == "block"
+
+
+def test_rules_apply_by_role_tag_component_and_path() -> None:
+    from app.services import rules
+
+    r = _rule("x", roles=["implementer"],
+              selector={"tags": ["payments"], "components": [3], "paths": ["services/pay/*"]})
+    ok = {"role": "implementer", "tags": ["Payments"], "component_ids": [3, 4],
+          "paths": ["services/pay/vault.py"]}
+    assert rules.applies(r, **ok)  # type: ignore[arg-type]
+    assert not rules.applies(r, **{**ok, "role": "reviewer"})  # type: ignore[arg-type]
+    assert not rules.applies(r, **{**ok, "tags": ["search"]})  # type: ignore[arg-type]
+    assert not rules.applies(r, **{**ok, "component_ids": [9]})  # type: ignore[arg-type]
+    assert not rules.applies(r, **{**ok, "paths": ["web/x.ts"]})  # type: ignore[arg-type]
+    assert rules.applies(r, **{**ok, "paths": None})  # type: ignore[arg-type]  # no plan yet
+
+
+def test_agent_flow_alerts() -> None:
+    facts = alerts.AgentWorkFacts(
+        unclaimed=[(1, "PAY-1", "implementer", 30.0), (2, "PAY-2", "reviewer", 2.0)],
+        unclaimed_hours=24,
+        rework=[(3, "PAY-3", "In Progress", 3, 3)],
+        saturated=[("In Review", 2, 2, 4)],
+        merged_ahead=[(5, "PAY-5", ["QA", "Sign-off"])],
+        stale_rules=[("small-prs", "Small PRs", "ADR-0001 X is superseded")],
+    )
+    got = [(a.kind, a.entity_id) for a in alerts.agent_flow_alerts(facts)]
+    assert got == [("work_unclaimed", 1), ("rework_loop", 3), ("review_saturated", None),
+                   ("merged_ahead_of_stage", 5), ("rule_stale", None)]
+    merged = alerts.agent_flow_alerts(alerts.AgentWorkFacts(merged_ahead=[(5, "PAY-5", ["QA"])]))
+    assert merged[0].message == "'PAY-5' was merged before its QA stage ran"

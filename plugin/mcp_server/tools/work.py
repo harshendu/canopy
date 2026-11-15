@@ -56,6 +56,9 @@ HINTS: dict[str, str] = {
     "no_rework_target": "There is no earlier agent column to send this back to — use "
     "ask_human to ask a person what should happen.",
     "human_only": "Only a person can do this, in the canopy UI.",
+    "wrong_artifact": "This claim's stage hands off something else: an implementer submits "
+    "submit_work, a reviewer or QA session submit_review (see `expected`).",
+    "plan_missing": "This stage requires a plan first: submit_plan, then hand off.",
 }
 
 
@@ -453,6 +456,48 @@ def register(mcp, client) -> None:
         return await _call(
             client.put(f"/tasks/{task_id}/components", {"component_ids": component_ids})
         )
+
+    @mcp.tool
+    async def get_stage_policy(project_id: int | None = None, team_id: int | None = None) -> dict:
+        """The board's pipeline for agents: each column with who works it (an agent role,
+        "human" for a decision column, or nobody), what it hands off, and its policy — entry
+        checks with their enforcement, plan / hand-off checkpoints and when they ask a person,
+        a decision column's approvers and routing, lease / attempt / rework limits.
+        `configured: false` means the built-in default (the first in-progress column is the
+        implementer's). Read-only: policy is changed by people in the UI."""
+        if team_id is not None:
+            return await _call(client.get(f"/teams/{team_id}/workflow/policy"))
+        return await _call(client.get(f"/projects/{project_id}/workflow/policy"))
+
+    @mcp.tool
+    async def list_rules(project_id: int) -> list | dict:
+        """A project's working agreements as they apply to it — workspace, then team, then
+        project, each with its origin; `kind` guidance (advice) or attestation (a
+        Definition-of-Done item a hand-off attests, with its enforcement); `stale` when the
+        decision it came from was superseded. Your brief already carries the ones that apply to
+        your task and role. Read-only here."""
+        return await _call(client.get("/rules/effective", params={"project_id": project_id}))
+
+    @mcp.tool
+    async def get_agent_flow(
+        project_id: int | None = None,
+        initiative_id: int | None = None,
+        team_id: int | None = None,
+        weeks: int = 8,
+    ) -> dict:
+        """How agent work is flowing (team-level, never per person): the queue (ready by role,
+        oldest wait, held by gate kind, parked), how long people take to decide each kind of
+        gate, first-pass acceptance of plans / hand-offs / reviews, rework, how sessions end,
+        flow efficiency, the review load each gate creates and its approval rate, the share of
+        work done with no person stepping in, and cost per task where runners report it.
+        `sufficient: false` means too little data to read rates from."""
+        params = {"weeks": weeks}
+        if team_id is not None:
+            return await _call(client.get(f"/teams/{team_id}/agent-flow", params=params))
+        if initiative_id is not None:
+            return await _call(client.get(f"/initiatives/{initiative_id}/agent-flow",
+                                          params=params))
+        return await _call(client.get(f"/projects/{project_id}/agent-flow", params=params))
 
     # ------------------------------------------------------------------ hook tools
 

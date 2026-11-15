@@ -19,7 +19,13 @@ from app.models.org import Team
 from app.models.policy import DeliveryRule
 from app.models.project import Project
 from app.models.user import User
-from app.schemas.policy import EffectiveRuleRead, RuleCreate, RuleRead, RuleUpdate
+from app.schemas.policy import (
+    EffectiveRuleRead,
+    RuleCreate,
+    RuleRead,
+    RuleScopeRead,
+    RuleUpdate,
+)
 from app.services import rules as rules_service
 from app.services.access import project_can_edit, team_can_manage
 
@@ -112,6 +118,44 @@ async def effective_rules(
             can_edit=can_edit,
         ))
     return out
+
+
+@router.get("/rules/scopes", response_model=list[RuleScopeRead])
+async def rule_scopes(
+    session: SessionDep, user: CurrentUser, scope: TokenScopeDep,
+    project_id: int | None = None, team_id: int | None = None,
+) -> list[RuleScopeRead]:
+    """The scopes whose rules reach a project (workspace, its team, itself) or a team
+    (workspace, itself), broadest first, each with whether the caller may edit its rules — so
+    a client offers only the scopes it may add to. Agent tokens never edit rules."""
+    from app.services.org import project_team_id
+
+    project: Project | None = None
+    if project_id is not None:
+        project = await session.get(Project, project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        team_id = await project_team_id(session, project)
+    elif team_id is None:
+        raise HTTPException(status_code=422, detail={
+            "code": "scope_required", "message": "Pass project_id or team_id"})
+    levels: list[tuple[str, int, str]] = [(RuleScope.workspace.value, 0, "Workspace")]
+    if team_id is not None:
+        team = await session.get(Team, team_id)
+        if team is None:
+            if project is None:
+                raise HTTPException(status_code=404, detail="Team not found")
+        else:
+            levels.append((RuleScope.team.value, team_id, team.name))
+    if project is not None and project.id is not None:
+        levels.append((RuleScope.project.value, project.id, project.name))
+    return [
+        RuleScopeRead(
+            scope_level=level, scope_id=scope_id, name=name,
+            can_edit=scope != TokenScope.agent and await may_edit(session, user, level, scope_id),
+        )
+        for level, scope_id, name in levels
+    ]
 
 
 @router.post("/rules", response_model=RuleRead, status_code=status.HTTP_201_CREATED)

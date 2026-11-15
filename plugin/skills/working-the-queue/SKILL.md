@@ -27,7 +27,10 @@ Everything you do lands on the task's **execution timeline** for people to read.
    say. The **exit contract** is this stage's definition of done. Fetch more only as needed
    (`more` names the tools: `get_adr`, `get_spec`, `adr_impact`, `read_design_doc`,
    `read_repo_file`).
-4. **Do the stage's work** with the role runbook: `implementing-tasks` for an implementer.
+4. **Do the stage's work** with the role runbook: `implementing-tasks` for an implementer,
+   `reviewing-changes` for a reviewer, `verifying-changes` for QA. The board's stage policy
+   (`get_stage_policy`) says which roles exist and what each column requires; a claim hands off
+   exactly what its stage expects — a hand-off (`submit_work`) or a verdict (`submit_review`).
 5. **Keep the claim alive and canopy current.** `report_progress(claim_id, note=…)` at real
    milestones and at least every `brief.claim.heartbeat_interval_s` (the plugin's hook also
    renews it after tool batches). The note is what a successor learns if you die — make it
@@ -59,6 +62,9 @@ Everything you do lands on the task's **execution timeline** for people to read.
 | heartbeat `directive: "stop"` | taken over, undelegated, cancelled, or intake off | stop; say what state the branch is in |
 | `checks_failed` | the hand-off doesn't meet the exit contract | fix what's listed, resubmit |
 | `use_work_claim` | you tried `move_task` on a delegated card | use the worker verbs |
+| `wrong_artifact` | your stage hands off something else | an implementer `submit_work`s, a reviewer / QA session `submit_review`s |
+| `plan_missing` | the stage requires a plan first | `submit_plan`, then hand off |
+| `same_actor` (claim refused) | this session did the earlier stage — reviews need another | leave it for another session |
 | `role_not_allowed` | this token can't work that role | use a role it has (`roles`) |
 | `approval.required: true` (plan) | a person must approve the plan | stop; the claim has ended |
 

@@ -24,6 +24,7 @@ from app.models.base import (
     SprintState,
     StatusCategory,
     TaskType,
+    WorkEventKind,
     utcnow,
 )
 from app.models.gate import Gate
@@ -39,7 +40,7 @@ from app.models.risk_register import RiskItem
 from app.models.sprint import Sprint
 from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.models.user import User
-from app.models.work import WorkClaim
+from app.models.work import WorkClaim, WorkEvent
 from app.schemas.entities import (
     AlertRead,
     AlertsResponse,
@@ -58,6 +59,7 @@ from app.schemas.entities import (
 )
 from app.services.access import ensure_project_editable, project_can_edit
 from app.services.alerts import (
+    AgentWorkFacts,
     AlertBlocker,
     AlertClaim,
     AlertGate,
@@ -359,6 +361,73 @@ def _is_open(task: Task) -> bool:
     )
 
 
+async def agent_flow_alert_facts(
+    session: AsyncSession, project_id: int, task_names: dict[int, str]
+) -> AgentWorkFacts | None:
+    """Where the project's agent work is stuck (docs/AGENT_EXECUTION.md §19); None with
+    `ai.work_queue` off."""
+    if not await feature_enabled(session, "ai.work_queue"):
+        return None
+    from app.services import agent_flow_service, gates, policy_service, rules
+    from app.services.workflow import resolve_workflow, wip_counts, wip_scope_project_ids
+
+    project = await session.get(Project, project_id)
+    if project is None:
+        return None
+    facts = AgentWorkFacts(unclaimed_hours=settings.WORK_UNCLAIMED_HOURS)
+    pipeline = await policy_service.resolve_pipeline(session, project)
+    ready = await agent_flow_service.ready_work(session, [project_id])
+    facts.unclaimed = [(r.task_id, task_names.get(r.task_id, f"#{r.task_id}"), r.role,
+                        r.ready_hours) for r in ready]
+    # Review loops one round from their cap (the next return escalates).
+    delegated = (await session.execute(
+        select(Task).where(Task.project_id == project_id, col(Task.delegation).is_not(None))
+    )).scalars().all()
+    for task in delegated:
+        stage = pipeline.stage(task.status)
+        if task.id is None or stage is None or not stage.is_agent_stage:
+            continue
+        rounds = await gates.rework_rounds(session, task, stage.status_name)
+        if rounds >= stage.max_rework:
+            facts.rework.append((task.id, task.name, stage.status_name, rounds,
+                                 stage.max_rework))
+    # A review / decision column at its WIP limit while ready work waits upstream.
+    view = await resolve_workflow(session, project)
+    counts = await wip_counts(session, await wip_scope_project_ids(session, project, view))
+    first_agent = min((s.position for s in pipeline.stages if s.is_agent_stage), default=None)
+    for column in view.columns:
+        stage = pipeline.stage(column.name)
+        if (stage is None or stage.worked_by is None or column.wip_limit is None
+                or first_agent is None or stage.position <= first_agent):
+            continue
+        cards = counts.get(column.name.casefold(), 0)
+        waiting = sum(
+            1 for r in ready
+            if any(s.position < stage.position for s in pipeline.stages_for(r.role))
+        )
+        if cards >= column.wip_limit and waiting:
+            facts.saturated.append((column.name, cards, column.wip_limit, waiting))
+    # PRs merged ahead of their stages, recently.
+    recent = utcnow() - timedelta(days=14)
+    for event in (await session.execute(
+        select(WorkEvent).where(
+            WorkEvent.project_id == project_id,
+            WorkEvent.kind == WorkEventKind.merged_ahead_of_stage.value,
+            col(WorkEvent.at) >= recent,
+        )
+    )).scalars().all():
+        if event.task_id is not None:
+            skipped = [str(s) for s in (event.data or {}).get("skipped") or []]
+            facts.merged_ahead.append(
+                (event.task_id, task_names.get(event.task_id, f"#{event.task_id}"), skipped))
+    if await feature_enabled(session, "ai.stage_policy"):
+        facts.stale_rules = [
+            (e.key, e.rule.title, e.stale_reason or "")
+            for e in await rules.effective_rules(session, project) if e.stale
+        ]
+    return facts
+
+
 def _escalate_after_hours(gate: Gate) -> float | None:
     if gate.escalation_level > 0:
         return 0.0  # it has escalated at least once, so it is past its threshold
@@ -553,6 +622,7 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
         and category_of_task(t) not in (StatusCategory.done, StatusCategory.cancelled)
     ]
     alert_gates, alert_claims = await agent_work_alert_facts(session, project_id, task_names)
+    flow_facts = await agent_flow_alert_facts(session, project_id, task_names)
     computed = compute_alerts(
         date.today(),
         alert_tasks,
@@ -564,6 +634,7 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
         alert_gates,
         alert_claims,
         claim_overrun_hours=settings.WORK_CLAIM_OVERRUN_HOURS,
+        agent_work=flow_facts,
     )
     return AlertsResponse(
         project_id=project_id,

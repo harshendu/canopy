@@ -38,6 +38,7 @@ from app.services.seed.catalog import (
     ProposalSpec,
     PullRequestSpec,
     RiskSpec,
+    RuleSpec,
     ScenarioAddedTask,
     ScenarioAllocSpec,
     ScenarioAvailSpec,
@@ -666,6 +667,37 @@ PROPOSALS: tuple[ProposalSpec, ...] = (
 )
 
 
+# --------------------------------------------------------------------------- #
+# Rules — working agreements and the Definition of Done (docs/AGENT_EXECUTION.md §10)
+# --------------------------------------------------------------------------- #
+RULES: tuple[RuleSpec, ...] = (
+    RuleSpec("workspace", "small-prs", "Keep pull requests small",
+             "Aim for under 400 changed lines. Split larger work into slices that ship behind "
+             "a flag rather than one long-lived branch."),
+    RuleSpec("workspace", "tests-added", "Tests added at the right level",
+             "New behaviour has tests where it lives: unit tests for logic, an integration test "
+             "for anything crossing a service boundary.",
+             kind="attestation", enforcement="warn", roles=("implementer",), locked=True),
+    RuleSpec("workspace", "escalation", "Who to ask when stuck",
+             "Ask the task's assignee first, then the project's owner. Don't guess at "
+             "product behaviour — ask_human with the options you see."),
+    RuleSpec("team:SHOP", "flags", "Feature-flag shopper-visible changes",
+             "Anything a shopper can see ships dark behind a flag and is turned on per "
+             "market.", kind="attestation", enforcement="warn", roles=("implementer",)),
+    RuleSpec("team:OPS", "runbook", "Runbook updated for operational changes",
+             "A change to alerting, retries, queues or scaling updates the service's runbook "
+             "in the same PR.", kind="attestation", enforcement="warn"),
+    RuleSpec("project:PAYMENTS", "small-prs", "Payments PRs stay under 200 lines",
+             "Payment code is reviewed line by line; keep each PR under 200 changed lines."),
+    RuleSpec("project:PAYMENTS", "card-data", "Card data stays in the provider's vault",
+             "Never log, store or forward a card number or CVC. Services see tokens only; "
+             "scan new log lines for anything card-shaped.",
+             kind="attestation", enforcement="block", paths=("services/payments/**",),
+             source_adr="Tokenize cards through the provider vault"),
+    RuleSpec("project:SEARCH", "escalation", "Who to ask when stuck", disabled=True),
+)
+
+
 ECOMMERCE = Dataset(
     key="ecommerce",
     name="Online retail — e-commerce",
@@ -697,4 +729,5 @@ ECOMMERCE = Dataset(
     teams=TEAMS,
     proposals=PROPOSALS,
     agent_owner_email=_email("rahul"),
+    rules=RULES,
 )

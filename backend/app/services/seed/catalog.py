@@ -293,6 +293,28 @@ class AgentWorkSpec:
     attempt_notes: tuple[str, ...] = ()  # parked: each released attempt's note
 
 
+@dataclass(frozen=True)
+class RuleSpec:
+    """A delivery rule (docs/AGENT_EXECUTION.md §10): guidance read in the brief, or a
+    Definition-of-Done item a hand-off attests. ``scope`` is ``workspace``, ``team:<KEY>`` or
+    ``project:<KEY>``; the same ``key`` lower down replaces one above unless that one is
+    locked, and ``disabled`` switches an inherited rule off."""
+
+    scope: str
+    key: str
+    title: str
+    body: str = ""
+    kind: str = "guidance"  # guidance | attestation
+    enforcement: str = "warn"  # off | warn | block (attestations)
+    roles: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+    paths: tuple[str, ...] = ()
+    locked: bool = False
+    disabled: bool = False
+    source_adr: str | None = None  # an ADR title in the rule's project (project scope only)
+    source_url: str | None = None
+
+
 # --------------------------------------------------------------------------- #
 # Projects + initiatives + scenarios
 # --------------------------------------------------------------------------- #
@@ -331,6 +353,9 @@ class ProjectSpec:
     # delegated tasks.
     agent_intake: str = "off"  # off | on | paused
     agent_work: tuple[AgentWorkSpec, ...] = ()
+    # "agentic-delivery": the project's own columns and stage policies become the Appendix A
+    # template, applied after its agent work is built (the team adopting it mid-flight).
+    stage_policy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -538,6 +563,7 @@ class Dataset:
     # The planner who delegates the seeded agent work, switches intake and issues the agent
     # tokens the sessions ran under (docs/AGENT_EXECUTION.md).
     agent_owner_email: str | None = None
+    rules: tuple[RuleSpec, ...] = ()  # working agreements + the Definition of Done
 
     def accounts(self) -> list[DemoAccount]:
         return [DemoAccount(u.email, u.full_name, u.role.value, u.function.value)

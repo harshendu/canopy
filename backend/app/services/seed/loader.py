@@ -70,6 +70,7 @@ from app.models.base import (
     RiskGrade,
     RiskScope,
     RiskStatus,
+    RuleScope,
     SpecStatus,
     SprintState,
     StatusCategory,
@@ -91,6 +92,7 @@ from app.models.integration import (
 from app.models.leadership import InitiativeLead, LeadershipNote
 from app.models.org import Pod, Team, TeamMember
 from app.models.outcome import Outcome
+from app.models.policy import DeliveryRule, StagePolicy
 from app.models.project import (
     Baseline,
     Blocker,
@@ -1249,6 +1251,65 @@ async def _build_agent_work(session: AsyncSession, refs: _Refs) -> None:
         await session.flush()
 
 
+async def _build_stage_policies(session: AsyncSession, refs: _Refs) -> None:
+    """Projects that adopted the agentic-delivery template (Appendix A): its columns and
+    policies become the project's own, through the same service the policy API uses — applied
+    after the agent work, like a team adopting it mid-flight."""
+    from app.services import policy_template
+
+    owner = refs.users.get(refs.ds.agent_owner_email or "")
+    if owner is None:
+        return
+    for spec in refs.ds.projects:
+        project = refs.projects.get(spec.key)
+        if spec.stage_policy != "agentic-delivery" or project is None or project.id is None:
+            continue
+        if not await project_can_edit(session, owner, project):
+            continue
+        await policy_template.apply_template(
+            session, owner, actor=owner.full_name or owner.email, team_id=None,
+            project_id=project.id)
+        await session.flush()
+
+
+def _rule_scope(refs: _Refs, scope: str) -> tuple[RuleScope, int] | None:
+    if scope == RuleScope.workspace.value:
+        return RuleScope.workspace, 0
+    level, _, key = scope.partition(":")
+    if level == RuleScope.team.value:
+        team = refs.teams.get(key)
+        return (RuleScope.team, team.id) if team is not None and team.id is not None else None
+    if level == RuleScope.project.value:
+        project = refs.projects.get(key)
+        return ((RuleScope.project, project.id)
+                if project is not None and project.id is not None else None)
+    return None
+
+
+async def _build_rules(session: AsyncSession, refs: _Refs) -> None:
+    """Working agreements and the Definition of Done at each scope (§10)."""
+    owner = refs.users.get(refs.ds.agent_owner_email or "")
+    for spec in refs.ds.rules:
+        where = _rule_scope(refs, spec.scope)
+        if where is None:
+            continue
+        level, scope_id = where
+        adr_id: int | None = None
+        if spec.source_adr is not None and level == RuleScope.project:
+            adr_id = (await session.execute(
+                select(ArchitectureDecision.id).where(
+                    ArchitectureDecision.project_id == scope_id,
+                    ArchitectureDecision.title == spec.source_adr)
+            )).scalars().first()
+        await _add(session, DeliveryRule(
+            scope_level=level.value, scope_id=scope_id, key=spec.key, title=spec.title,
+            body=spec.body, kind=spec.kind, roles=list(spec.roles),
+            selector={"tags": list(spec.tags), "components": [], "paths": list(spec.paths)},
+            enforcement=spec.enforcement, locked=spec.locked, disabled=spec.disabled,
+            source_adr_id=adr_id, source_url=spec.source_url,
+            created_by_user_id=owner.id if owner is not None else None))
+
+
 async def load_seed_data(
     session: AsyncSession, keep_user_ids: set[int], dataset: Dataset | None = None
 ) -> dict[str, int]:
@@ -1268,7 +1329,9 @@ async def load_seed_data(
     await _build_scenarios(session, refs)
     await _build_leadership_notes(session, refs)
     await _build_proposals(session, refs)
+    await _build_rules(session, refs)
     await _build_agent_work(session, refs)
+    await _build_stage_policies(session, refs)
     await session.commit()
     return await seed_summary(session)
 
@@ -1297,6 +1360,6 @@ async def seed_summary(session: AsyncSession) -> dict[str, int]:
         "draft_plans": DraftPlan, "connections": Connection, "scenarios": Scenario,
         "activity_events": ActivityEvent, "status_history": TaskStatusHistory,
         "documents": DocReference, "proposals": Proposal, "work_claims": WorkClaim,
-        "gates": Gate,
+        "gates": Gate, "stage_policies": StagePolicy, "rules": DeliveryRule,
     }
     return {name: await _count(session, model) for name, model in models.items()}

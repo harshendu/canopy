@@ -419,3 +419,27 @@ class AgentsViewResponse(BaseModel):
     waiting: list[GateRead] = []
     parked: list[ParkedRead] = []
     delegated: int = 0
+
+
+class AgentFlowResponse(BaseModel):
+    """Agent-flow metrics for a project, initiative or team (docs/AGENT_EXECUTION.md §19) —
+    team-level by design; `sufficient: false` (with `reason`) on thin data."""
+
+    scope: str
+    scope_id: int
+    weeks: int
+    since: datetime
+    projects: int
+    sufficient: bool
+    reason: str | None = None
+    queue: dict[str, Any]
+    human_wait: dict[str, Any]
+    first_pass: dict[str, Any]
+    rework: dict[str, Any]
+    claims: dict[str, Any]
+    flow_efficiency: float | None = None
+    gate_load: dict[str, Any]
+    gates_as_experiments: list[dict[str, Any]] = []
+    unassisted_share: float | None = None
+    agent_tasks_done: int = 0
+    cost_per_task_usd: float | None = None

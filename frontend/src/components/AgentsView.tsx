@@ -14,6 +14,9 @@ import {
   refusalText,
   waitedPhrase,
 } from "../lib/execution";
+import { featureOn, useFeatures } from "../lib/useFeatures";
+import AgentFlowCards from "./AgentFlowCards";
+import StagePolicyPanel from "./StagePolicyPanel";
 
 /**
  * A project's agent work at a glance (docs/AGENT_EXECUTION.md §16): the intake switch (the
@@ -28,6 +31,8 @@ export default function AgentsView({
   onOpenTask?: (taskId: number) => void;
 }) {
   const qc = useQueryClient();
+  const features = useFeatures();
+  const policyOn = featureOn(features, "ai.stage_policy");
   const view = useQuery({
     queryKey: ["agents", projectId],
     queryFn: () => api.get<AgentsViewData>(`/projects/${projectId}/agents`),
@@ -130,8 +135,12 @@ export default function AgentsView({
         )}
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
+      {policyOn && <StagePolicyPanel projectId={projectId} canApplyTemplate={data.can_manage} />}
+
+      {policyOn && <AgentFlowCards projectId={projectId} />}
+
+      <section className={`grid gap-4 ${policyOn ? "" : "md:grid-cols-2"}`}>
+        <div className={`rounded-lg border border-slate-200 bg-white p-4 ${policyOn ? "hidden" : ""}`}>
           <h2 className="font-semibold">Who works which column</h2>
           {agentStages.length === 0 ? (
             <p className="mt-1 text-sm text-slate-500">

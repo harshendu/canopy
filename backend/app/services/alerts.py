@@ -7,7 +7,7 @@ rows into these lightweight dataclasses; delivery (Slack/email) is a future hook
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 
@@ -95,6 +95,23 @@ class AlertClaim:
 
 
 @dataclass
+class AgentWorkFacts:
+    """The rest of the agent-work alert inputs (docs/AGENT_EXECUTION.md §19)."""
+
+    # (task id, name, role, hours ready) for work nobody has claimed
+    unclaimed: list[tuple[int, str, str, float]] = field(default_factory=list)
+    unclaimed_hours: float = 24
+    # (task id, name, stage, rounds so far, max rework) for review loops
+    rework: list[tuple[int, str, str, int, int]] = field(default_factory=list)
+    # (column, open cards, WIP limit, ready tasks waiting upstream)
+    saturated: list[tuple[str, int, int, int]] = field(default_factory=list)
+    # (task id, name, skipped stages) for PRs merged while the task was upstream (recent)
+    merged_ahead: list[tuple[int, str, list[str]]] = field(default_factory=list)
+    # (rule key, title, why) for rules whose source decision moved on
+    stale_rules: list[tuple[str, str, str]] = field(default_factory=list)
+
+
+@dataclass
 class Alert:
     kind: str
     severity: str  # info | warning | error
@@ -118,9 +135,12 @@ def compute_alerts(
     gates: list[AlertGate] | None = None,
     claims: list[AlertClaim] | None = None,
     claim_overrun_hours: float = 8,
+    agent_work: AgentWorkFacts | None = None,
 ) -> list[Alert]:
     alerts: list[Alert] = []
     alerts.extend(agent_work_alerts(gates or [], claims or [], claim_overrun_hours))
+    if agent_work is not None:
+        alerts.extend(agent_flow_alerts(agent_work))
 
     # Sprints never pin the schedule (CPM dates stay computed): surface the conflict instead.
     for st in sprint_tasks or []:
@@ -291,4 +311,47 @@ def agent_work_alerts(
                     entity_id=claim.task_id,
                 )
             )
+    return alerts
+
+
+def agent_flow_alerts(facts: AgentWorkFacts) -> list[Alert]:
+    """Where the agent work queue is stuck (§19): ready work nobody claims, review loops about
+    to hit their cap, a review or decision column full while work waits upstream, PRs merged
+    ahead of their stages, and rules whose source decision moved on."""
+    alerts: list[Alert] = []
+    for task_id, name, role, hours in facts.unclaimed:
+        if hours > facts.unclaimed_hours:
+            alerts.append(Alert(
+                kind="work_unclaimed", severity="warning",
+                message=(f"'{name}' has been ready for {role} for {hours:.0f} h — is anything "
+                         f"running {role} sessions?"),
+                entity_type="task", entity_id=task_id,
+            ))
+    for task_id, name, stage, rounds, cap in facts.rework:
+        alerts.append(Alert(
+            kind="rework_loop", severity="warning",
+            message=(f"'{name}' has gone back to {stage} {rounds} times — one more and canopy "
+                     f"escalates it (cap {cap})"),
+            entity_type="task", entity_id=task_id,
+        ))
+    for column, cards, limit, waiting in facts.saturated:
+        alerts.append(Alert(
+            kind="review_saturated", severity="warning",
+            message=(f"{column} is full ({cards}/{limit}) while {waiting} task(s) wait "
+                     "upstream — review capacity is the bottleneck"),
+        ))
+    for task_id, name, skipped in facts.merged_ahead:
+        stages = ", ".join(skipped)
+        message = (
+            f"'{name}' was merged before its {stages} stage{'s' if len(skipped) > 1 else ''} ran"
+            if skipped else f"'{name}' was merged ahead of its stages"
+        )
+        alerts.append(Alert(kind="merged_ahead_of_stage", severity="warning", message=message,
+                            entity_type="task", entity_id=task_id))
+    for key, title, why in facts.stale_rules:
+        alerts.append(Alert(
+            kind="rule_stale", severity="warning",
+            message=f"Rule '{title}' ({key}) follows a decision that moved on: {why}",
+            entity_type="rule",
+        ))
     return alerts

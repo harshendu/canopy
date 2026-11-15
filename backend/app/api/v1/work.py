@@ -40,6 +40,7 @@ from app.models.project import Project, Task
 from app.models.work import TaskArtifact, WorkClaim, WorkEvent
 from app.schemas.entities import TaskRead
 from app.schemas.work import (
+    AgentFlowResponse,
     AgentsViewResponse,
     AgentsWorkingRead,
     ArtifactCreate,
@@ -766,6 +767,43 @@ async def agents_view(
         ready=ready, reasons=reasons, working=working, waiting=waiting, parked=parked,
         delegated=delegated,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Agent-flow metrics (§19)
+# --------------------------------------------------------------------------- #
+
+
+async def _flow(session: SessionDep, scope: str, scope_id: int, weeks: int) -> AgentFlowResponse:
+    from app.services import agent_flow_service
+
+    data = await agent_flow_service.agent_flow_for(session, scope, scope_id, weeks)
+    return AgentFlowResponse.model_validate(data)
+
+
+@router.get("/projects/{project_id}/agent-flow", response_model=AgentFlowResponse)
+async def project_agent_flow(
+    session: SessionDep, _: CurrentUser, project_id: int, weeks: int = 8
+) -> AgentFlowResponse:
+    """How agent work is flowing: the queue, how long people take to decide, first-pass
+    acceptance, rework, claim outcomes, flow efficiency, gate load, the unassisted share and
+    cost per task. Team-level only — never per person or token."""
+    await _project(session, project_id)
+    return await _flow(session, "project", project_id, weeks)
+
+
+@router.get("/initiatives/{initiative_id}/agent-flow", response_model=AgentFlowResponse)
+async def initiative_agent_flow(
+    session: SessionDep, _: CurrentUser, initiative_id: int, weeks: int = 8
+) -> AgentFlowResponse:
+    return await _flow(session, "initiative", initiative_id, weeks)
+
+
+@router.get("/teams/{team_id}/agent-flow", response_model=AgentFlowResponse)
+async def team_agent_flow(
+    session: SessionDep, _: CurrentUser, team_id: int, weeks: int = 8
+) -> AgentFlowResponse:
+    return await _flow(session, "team", team_id, weeks)
 
 
 def readiness_reasons() -> list[str]:

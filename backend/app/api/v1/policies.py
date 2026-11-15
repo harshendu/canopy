@@ -32,7 +32,6 @@ from app.models.base import (
     TokenScope,
     UserRole,
     WipEnforcement,
-    WorkEventKind,
 )
 from app.models.org import Team
 from app.models.project import Project, Task
@@ -46,7 +45,7 @@ from app.schemas.policy import (
     TemplateMoveRead,
     TemplatePreview,
 )
-from app.services import flow, policy_store, stage_policy, work_service
+from app.services import policy_store, policy_template, stage_policy
 from app.services import workflow as workflow_service
 from app.services.access import (
     ensure_project_editable,
@@ -54,7 +53,7 @@ from app.services.access import (
     project_can_edit,
     team_can_manage,
 )
-from app.services.workflow import ColumnInput, TrackingError, WorkflowView
+from app.services.workflow import TrackingError, WorkflowView
 
 router = APIRouter()
 
@@ -71,10 +70,12 @@ def pipeline_read(
             worked_by=stage.worked_by,
             hands_off=stage.hands_off if stage.is_agent_stage else None,
             source=stage.source,
-            policy=stage.policy_doc() if stage.has_policy else None,
+            # The built-in default's stages carry their documents too, so a first edit saves
+            # them explicitly instead of silently dropping the default implementer stage.
+            policy=stage.policy_doc() if stage.has_policy or stage.source == "default" else None,
         ))
     return PipelineRead(
-        scope=view.scope, inherited=view.inherited, workflow_id=view.id,
+        scope=view.scope, inherited=view.inherited, workflow_id=view.id, team_id=view.team_id,
         configured=pipeline.configured, wip_enforcement=view.wip_enforcement,
         roles=pipeline.roles(), columns=columns, can_edit=can_edit,
     )
@@ -119,27 +120,14 @@ async def _save_policies(
     session: AsyncSession, user: User, view: WorkflowView, policies: dict[str, Any],
     *, team_id: int | None, project_id: int | None, template: str | None = None,
 ) -> stage_policy.Pipeline:
-    assert view.id is not None
     try:
-        pipeline = await policy_store.save(session, workflow_id=view.id, columns=view.columns,
-                                           policies=policies, user_id=user.id)
+        return await policy_template.save_policies(
+            session, user, view, policies, team_id=team_id, project_id=project_id,
+            template=template)
     except stage_policy.PolicyError as exc:
         await session.rollback()
         raise HTTPException(status_code=422, detail={
             "code": "policy_invalid", "message": str(exc), "column": exc.column}) from exc
-    caller = await work_service.caller_for(session, user, None, is_agent=False)
-    configured = [s.status_name for s in pipeline.stages if s.has_policy]
-    for project in await workflow_service.projects_using_scope(
-        session, team_id=team_id, project_id=project_id
-    ):
-        if project.id is None:
-            continue
-        work_service.record_event(
-            session, kind=WorkEventKind.policy_changed, project_id=project.id, task_id=None,
-            caller=caller, data={"scope": view.scope, "workflow_id": view.id,
-                                 "columns": configured, "template": template},
-        )
-    return pipeline
 
 
 async def _published(team_id: int | None, project_id: int | None) -> None:
@@ -247,50 +235,6 @@ async def put_template_policy(
 # --------------------------------------------------------------------------- #
 
 
-def suggest_moves(
-    current: list[flow.ColumnDef], template: list[tuple[str, str]], overrides: dict[str, str]
-) -> dict[str, str]:
-    """Where each current column the template lacks sends its cards: the planner's choice,
-    else by category (the last to-do column before work starts → Ready, other to-do columns →
-    Backlog; a review / QA / sign-off column by name; other started work → In Progress)."""
-    names = {name.casefold(): name for name, _ in template}
-    chosen = {k.strip().casefold(): v for k, v in overrides.items()}
-    ordered = sorted(current, key=lambda c: c.position)
-    first_started = next((c.position for c in ordered if c.category == flow.IN_PROGRESS), None)
-    todos_before = [c for c in ordered if c.category == flow.TODO
-                    and (first_started is None or c.position < first_started)]
-    feeder = todos_before[-1].name.casefold() if todos_before else None
-    moves: dict[str, str] = {}
-    for column in ordered:
-        key = column.name.casefold()
-        if key in names:
-            continue
-        if key in chosen:
-            target = names.get(chosen[key].strip().casefold())
-            if target is None:
-                raise HTTPException(status_code=422, detail={
-                    "code": "unknown_status",
-                    "message": f"{chosen[key]!r} is not a column of the template"})
-            moves[column.name] = target
-            continue
-        lowered = column.name.lower()
-        if column.category == flow.TODO:
-            moves[column.name] = "Ready" if key == feeder else "Backlog"
-        elif column.category == flow.DONE:
-            moves[column.name] = "Done"
-        elif column.category == flow.CANCELLED:
-            moves[column.name] = "Cancelled"
-        elif "review" in lowered:
-            moves[column.name] = "In Review"
-        elif any(word in lowered for word in ("qa", "test", "verif")):
-            moves[column.name] = "QA"
-        elif any(word in lowered for word in ("sign", "approv", "accept")):
-            moves[column.name] = "Sign-off"
-        else:
-            moves[column.name] = "In Progress"
-    return moves
-
-
 async def _cards_by_status(session: AsyncSession, project_ids: list[int]) -> dict[str, int]:
     """Canopy-owned cards per status (casefolded) — what a column change moves."""
     if not project_ids:
@@ -308,13 +252,20 @@ async def _cards_by_status(session: AsyncSession, project_ids: list[int]) -> dic
     return counts
 
 
+def _unknown_status(exc: policy_template.UnknownStatusError) -> HTTPException:
+    return HTTPException(status_code=422, detail={"code": "unknown_status", "message": str(exc)})
+
+
 async def _apply_template(
     session: AsyncSession, user: User, scope: TokenScope, payload: TemplateApplyRequest, *,
     team_id: int | None, project_id: int | None,
 ) -> TemplatePreview:
     columns, policies = stage_policy.agentic_delivery_template()
     current = await workflow_service.current_view(session, team_id=team_id, project_id=project_id)
-    moves = suggest_moves(current.columns, columns, payload.move_tasks_to)
+    try:
+        moves = policy_template.suggest_moves(current.columns, columns, payload.move_tasks_to)
+    except policy_template.UnknownStatusError as exc:
+        raise _unknown_status(exc) from exc
     project_ids = [p.id for p in await workflow_service.projects_using_scope(
         session, team_id=team_id, project_id=project_id) if p.id is not None]
     counts = await _cards_by_status(session, project_ids)
@@ -333,22 +284,17 @@ async def _apply_template(
     if payload.dry_run:
         return preview
     _human(scope)
-    limits = {c.name.casefold(): c.wip_limit for c in current.columns}
     try:
-        view = await workflow_service.save_workflow(
-            session, team_id=team_id, project_id=project_id,
-            name=current.name if not current.inherited else "Agentic delivery",
-            wip_enforcement=WipEnforcement.block.value,
-            columns=[ColumnInput(name=name, category=category,
-                                 wip_limit=limits.get(name.casefold()))
-                     for name, category in columns],
-            move_tasks_to=moves, actor=actor_name(user),
-        )
+        view, pipeline = await policy_template.apply_template(
+            session, user, actor=actor_name(user), team_id=team_id, project_id=project_id,
+            move_tasks_to=payload.move_tasks_to)
     except TrackingError as exc:
         await session.rollback()
         raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
-    pipeline = await _save_policies(session, user, view, dict(policies), team_id=team_id,
-                                    project_id=project_id, template=stage_policy.TEMPLATE_KEY)
+    except stage_policy.PolicyError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=422, detail={
+            "code": "policy_invalid", "message": str(exc), "column": exc.column}) from exc
     await session.commit()
     await _published(team_id, project_id)
     preview.applied = True

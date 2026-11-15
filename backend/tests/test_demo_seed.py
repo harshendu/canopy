@@ -54,6 +54,8 @@ async def test_seed_loader_builds_a_full_coherent_dataset(db_session):
     assert counts["status_history"] > 0
     assert counts["connections"] == 3
     assert counts["proposals"] == 2  # open change proposals awaiting review
+    assert counts["stage_policies"] >= 4  # the agentic-delivery template on PAYMENTS
+    assert counts["rules"] == len(seed.get_dataset().rules)
 
 
 @pytest.mark.asyncio
@@ -98,12 +100,55 @@ async def test_seed_agent_work_covers_every_state(db_session):
     park = (await db_session.execute(select(Gate).where(Gate.task_id == parked.id))).scalars().one()
     assert park.kind == "escalation" and park.origin == "system" and park.status == "open"
 
-    ready = await task("PAYMENTS", "Dual-run reconciliation")
+    ready = await task("ONEPAGE", "A/B test vs legacy checkout")
     rahul = (await db_session.execute(
         select(User).where(User.email == "rahul@shop.example.com"))).scalars().one()
     caller = await work_service.caller_for(db_session, rahul, None, is_agent=False)
     queue = await work_service.find_work(db_session, caller, "implementer")
     assert ready.id in {item.task.id for item in queue.ready}
+
+    # PAYMENTS adopted the agentic-delivery template after its work began: its own columns
+    # carry the Appendix A policies, so its delegated cut-over task waits on predecessors
+    # (a blocking entry check) instead of being offered.
+    held = await task("PAYMENTS", "Dual-run reconciliation")
+    assert held.status == "Ready"
+    payments = await work_service.find_work(db_session, caller, "implementer",
+                                            project_id=projects["PAYMENTS"].id)
+    assert payments.ready == [] and payments.reasons.get("waiting_on_dependencies") == 1
+    work = await work_service.load_project_work(db_session, projects["PAYMENTS"])
+    assert [s.status_name for s in work.pipeline.stages if s.worked_by] == [
+        "In Progress", "In Review", "QA", "Sign-off"]
+
+
+@pytest.mark.asyncio
+async def test_seed_rules_resolve_per_project(db_session):
+    """Workspace, team and project rules resolve the way §10 says: nearest wins, locks hold,
+    a switched-off rule disappears, and a rule names the decision it comes from."""
+    from app.models.project import Project
+    from app.services import rules
+
+    await seed.load_seed_data(db_session, set())
+    projects = {
+        p.key: p for p in (await db_session.execute(select(Project))).scalars().all()
+    }
+
+    async def effective(key: str) -> dict:
+        return {e.key: e for e in await rules.effective_rules(db_session, projects[key])}
+
+    payments = await effective("PAYMENTS")
+    assert set(payments) == {"small-prs", "tests-added", "escalation", "flags", "card-data"}
+    assert payments["small-prs"].origin == "project"
+    assert payments["small-prs"].overrides == ["workspace"]
+    assert payments["tests-added"].rule.locked and payments["tests-added"].origin == "workspace"
+    assert payments["flags"].origin == "team"  # the Shopping Experience team's
+    card = payments["card-data"]
+    assert card.rule.kind == "attestation" and card.enforcement == "block"
+    assert card.rule.source_adr_id is not None and not card.stale
+    search = await effective("SEARCH")
+    assert "escalation" not in search  # switched off for this project
+    assert {"small-prs", "tests-added", "flags"} <= set(search)
+    tracking = await effective("TRACKING")
+    assert "runbook" in tracking and "flags" not in tracking  # the operations team's
 
 
 @pytest.mark.asyncio
@@ -392,6 +437,23 @@ def _check_references(ds: Dataset) -> None:
             assert w.state != "question" or (w.question and w.options), (p.key, w.task)
         if p.agent_work:
             assert ds.agent_owner_email in users, f"{ds.key}: agent work needs an owner"
+        assert p.stage_policy in (None, "agentic-delivery"), (p.key, p.stage_policy)
+        assert p.stage_policy is None or ds.agent_owner_email in users, p.key
+
+    # Rules name real scopes (and decisions in their own project); keys are unique per scope.
+    seen: set[tuple[str, str]] = set()
+    for r in ds.rules:
+        level, _, key = r.scope.partition(":")
+        assert level in ("workspace", "team", "project"), r.scope
+        assert (level == "workspace") == (key == ""), r.scope
+        assert level != "team" or key in teams, r.scope
+        assert level != "project" or key in projects, r.scope
+        assert (r.scope, r.key) not in seen, (r.scope, r.key)
+        seen.add((r.scope, r.key))
+        assert r.kind in ("guidance", "attestation") and r.enforcement in ("off", "warn", "block")
+        if r.source_adr is not None:
+            assert level == "project", r.key
+            assert r.source_adr in {a.title for a in projects[key].adrs}, (r.key, r.source_adr)
 
     # Hand-offs name real tasks and stay inside one initiative (the API enforces the same).
     for (pk, t_pred), (sk, t_succ) in ds.cross_project_handoffs:

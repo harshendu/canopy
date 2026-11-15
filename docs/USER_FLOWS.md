@@ -318,7 +318,8 @@ entire install — e.g. run canopy as "plan + Jira sync + Gantt only" by disabli
   capacity) · `architecture` (drift) · `portfolio` (initiatives · outcomes) · `governance` (risk ·
   retros · specs · docs) · `integrations` (webhooks) · `reporting` (exports) · `ai`
   (agent_tokens · proposals · **work_queue** — the agent work queue, its Decisions inbox and the
-  Agents view, §AE · **stage_policy** — per-column agent policy, from Phase 2).
+  Agents view, §AE · **stage_policy** — per-column stage policy, rules and the agent-flow
+  measures, §AE6–§AE8).
   **Core flows are not gateable** (auth, projects, tasks/deps/milestones, Gantt + CPM replan, team,
   /me, activity, live events). A feature is effectively on iff its toggle **and** its group's are on.
 - **API:** `GET /api/v1/features` (any authenticated user — the effective map every client reads),
@@ -474,7 +475,9 @@ message}`.
   37signals/Cagan: green is silent, surface exceptions). Reuses the **rollup** (§R3) + **forecast**
   (§C8) and adds **open blockers** (across the initiative's projects) + **outcomes** (§Y). Returns
   a `headline`, an `attention` exception list (behind target, P85 past target, elevated risk/drift,
-  open blockers, decisions awaiting, at-risk sub-projects), the status numbers, the outcomes, and a
+  open blockers, decisions awaiting, at-risk sub-projects, and — with `ai.work_queue` on — agent
+  decisions waiting on a person past their reminder and parked agent tasks), the status numbers,
+  the outcomes, and a
   ready-to-send **`markdown`** rendering. Pure synthesis in `app/services/digest.py`.
 - **UI:** the initiative cockpit (§R3) now renders the digest at the top — the headline + the
   `attention` list — with a **Copy digest** action that copies the `markdown` rendering to the
@@ -549,8 +552,8 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
     **Capacity** · **Delivery** (§X) · **Burndown** · **Activity**
   - **Architecture** *(architecture)* — **Decisions** · **Architecture** (map) · **Drift**
   - **Governance** *(governance)* — **Risk score** (§Q1, the computed dashboard) · **Risk
-    register** (§Q3a, the human RAID ledger — a separate sub-view) · **Specs** (§W) · **Docs**
-    (§V) · **Retros**
+    register** (§Q3a, the human RAID ledger — a separate sub-view) · **Specs** (§W) · **Rules**
+    (§AE7, gate `ai.stage_policy`) · **Docs** (§V) · **Retros**
   - **Integrations** — **Tracking** (§C12, core — so the workspace always shows) · **Draft
     plans** (§C10) · **Tracker links** (§J9)
 
@@ -870,6 +873,10 @@ tracker sent its statuses, where the columns come from — differs.
   where they go → `move_tasks_to`), the WIP enforcement, **Save** (`PUT
   /projects/{id}/workflow`) and **Use team/workspace columns** (`DELETE`, when the project has
   its own). Server validation messages (e.g. a missing done column) show inline.
+- **Columns carry their stage policies** (§AE6): renaming a column keeps its policy, removing
+  one drops it, and going back to the team/workspace columns deletes the project's policies.
+  Once a workflow has policies, changing its columns is **human-only** (`403 human_only` for an
+  agent token) — an agent can't loosen its own guardrails by editing the board.
 - Built with `@dnd-kit` (lazy-loaded with the board); pure helpers (optimistic move, `canMove`,
   swimlanes, filters, drop placement, editor validation) in `frontend/src/lib/board.ts` /
   `lib/workflow.ts`, unit-tested with Vitest.
@@ -1326,6 +1333,13 @@ review it, alternatives, reversibility, and a discussion thread.
   sessions used up their attempts), **`gate_waiting`** (warning past the gate's reminder, error
   past its escalation threshold), **`claim_stale`** (warning — the session hasn't checked in for
   half its lease) and **`claim_overrun`** (warning — held longer than `WORK_CLAIM_OVERRUN_HOURS`).
+  With `ai.stage_policy` also on, where the flow is stuck (§AE8): **`work_unclaimed`** (ready for
+  a role longer than `WORK_UNCLAIMED_HOURS` — nothing is running that role's sessions),
+  **`rework_loop`** (a task has gone back for rework as often as its column allows — one more
+  escalates it), **`review_saturated`** (a review/QA/decision column is at its WIP limit while
+  work waits upstream), **`merged_ahead_of_stage`** (a PR merged before its review/QA/sign-off
+  ran, last 14 days) and **`rule_stale`** (a rule follows a decision that was superseded or
+  deprecated, §AE7).
 - **API:** `GET /api/v1/projects/{id}/alerts` (unchanged) · **MCP:** `list_alerts`.
 - **Notes:** delivery to Slack/email is **not built** — alerts are computed and shown/queried; a
   delivery integration is a future hook over this output.
@@ -2343,8 +2357,11 @@ work and **hands off**. canopy is the state machine and the keeper of the rules:
 hand-off against the next column and moves the card — or holds the task for a person (a
 **gate**: a question, an escalation, a parked task) and shows it in the Reviews inbox. Design:
 [`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md). Feature gate **`ai.work_queue`**; nothing changes
-in a project until a planner switches its **intake** on. Native (canopy-owned) projects only so
-far (mirrored ones: §AE7).
+in a project until a planner switches its **intake** on. With **`ai.stage_policy`** on, each
+column's **stage policy** says which role works it, what it requires to enter and when a person
+looks (§AE6); **rules** carry the team's working agreements and Definition of Done (§AE7); and
+the **agent-flow** measures show how it is going (§AE8). Native (canopy-owned) projects only so
+far (mirrored ones: §AE10).
 
 ### AE1. Delegate a task · switch the project's intake
 - **UI:** task panel (§C1a) → **Agent work** → **Delegate to agents** (it answers with advice
@@ -2364,7 +2381,7 @@ far (mirrored ones: §AE7).
   not_a_leaf`, `409 status_externally_owned`).
 
 ### AE2. What is ready, and why the rest isn't
-- **The built-in default pipeline** (until stage policies arrive, §AE7): the workflow's first
+- **The built-in default pipeline** (columns with no stage policy stored, §AE6): the workflow's first
   in-progress column is worked by the **implementer** role and pulls from the last to-do column
   before it; the column after it requires a **hand-off** from agents (`block`) and warns when no
   PR is linked. A team that configured nothing gets exactly this.
@@ -2413,6 +2430,14 @@ far (mirrored ones: §AE7).
   the card (`record_transition`, attributed `actor_kind=agent` with the claim id) — or refuses
   with `409 checks_failed` and the list of what's missing (nothing saved; the claim stays the
   session's). A retried hand-off replays the stored result.
+- **Each role hands off what its column says** (§AE6): an implementer a `handoff`
+  (`submit_work`), a reviewer a `review` and QA a `qa_report` (`submit_review`, with a verdict
+  `pass` · `concerns` · `fail` and findings) — anything else is `409 wrong_artifact` naming the
+  expected kind. A column whose plan checkpoint is required refuses a hand-off with no plan on
+  the task (`409 plan_missing`); a column that needs a different session or person than the
+  implementer refuses the claim (`409 same_actor`). A `fail` verdict sends the task back to the
+  column the work came from (**rework**, with the review in the next brief); past the column's
+  `max_rework` (default 3) canopy opens an **escalation** gate instead of looping.
 - **Unfinished attempts park the task.** After three attempts in one column ended unfinished
   (expired, released, failed) canopy stops offering it and opens an **escalation** gate with
   each attempt's last progress note (shown as **parked**).
@@ -2422,9 +2447,14 @@ far (mirrored ones: §AE7).
   shown when `ai.proposals` or `ai.work_queue` is on) → **Decisions** tab (`/reviews?tab=
   decisions`: waiting on me · all open · all) → a gate's page **`/reviews/gates/:id`**: the
   question (or why a person is asked), the plan / hand-off revision under review with the
-  revision before it, the PR evidence, the trail — and **the decision**: approve · request
+  revision before it, the PR evidence, **what canopy checked** (the evaluation that raised the
+  gate, split into what canopy **saw** — CI, the PR, its own records — and what a session
+  **stated** — verdicts, criteria, attestations — so a reviewer knows what to spot-check), the
+  trail — and **the decision**: approve · request
   changes · reject · answer (with the agent's suggested options) · retry with guidance · take it
-  over, each saying what it does; request changes / reject / retry need a note. Gates also show
+  over, each saying what it does; request changes / reject / retry need a note. Stage policy
+  adds three kinds (§AE6): **plan approval** and **hand-off approval** (a checkpoint's
+  conditions held) and **sign-off** (a decision column). Gates also show
   on board cards (a link), in the task panel, on `/me` and `/me/today`, and in the Agents view.
 - **API:** `GET /api/v1/gates?status=&mine=&project_id=&task_id=&kind=` ·
   `GET /api/v1/gates/{id}` (with the subject, previous revision, hand-off, reviews, trail) ·
@@ -2446,10 +2476,87 @@ far (mirrored ones: §AE7).
   works which column, what's **ready** by role and why the rest isn't, the sessions **working
   now** (heartbeat age, last progress note; a planner can **release** one back to the queue),
   what **waits on people**, what is **parked**, and how to run sessions (the plugin + an agent
-  token, §A11).
+  token, §A11). With `ai.stage_policy` on, the **pipeline** panel (§AE6) replaces the "who works
+  which column" card and the **agent-flow** cards (§AE8) follow it.
 - **API:** `GET /api/v1/projects/{id}/agents`.
 
-### AE6. Where it's enforced / wired
+### AE6. Stage policy — who works each column, what it requires, when a person looks
+- **UI:** project → **Execution → Agents** → **Pipeline**: each column with who works it (an
+  agent role, people — a **decision column** — or no one: a queue), what it **blocks** or
+  **warns** without, and when a person approves. **Edit** (people who may edit the columns at
+  the scope they come from: the project's planners for its own columns, the team's directors and
+  managers for the team's, admins for the workspace template) opens a drawer: who works it, the
+  entry checks as a checklist with an enforcement each (`off` · `warn` · `block`, applying to
+  agents or everyone), the **plan** / **hand-off** checkpoints and when they need a person, the
+  **decision** settings (who approves, not the requester, whether a PR approval or merge counts),
+  `max_rework` and the instructions sessions read in their brief. **Start from the agentic
+  delivery template** previews the Appendix A columns — Backlog → Ready → In Progress
+  (implementer) → In Review (reviewer) → QA (qa) → Sign-off (people) → Done, + Cancelled — and
+  where today's cards go, before saving them as the project's own (WIP enforcement `block`).
+- **API:** `GET|PUT /api/v1/projects/{id}/workflow/policy` · `GET|PUT /api/v1/teams/{id}/workflow/policy`
+  · `GET|PUT /api/v1/workflows/template/policy` (`{policies: {column: document | null}}` replaces
+  every policy at that scope; `{}` returns it to the built-in default; `422 policy_invalid` names
+  the column) · `POST /api/v1/projects/{id}/workflow/apply-template` ·
+  `POST /api/v1/teams/{id}/workflow/apply-template` (`{dry_run, move_tasks_to}`; the preview lists
+  the moves). Reads are open; every write is **human-only**. **MCP:** `get_stage_policy` (read).
+- **Checks** a column can require — each **observed** (canopy saw it) or **attested** (a session
+  stated it): predecessors done · no open blockers · spec approved · an artifact this round · the
+  plan approved (when it needed to be) · a gate approved · a PR linked / its checks passing / approved
+  by someone other than the requester / under a size · a review or QA verdict · acceptance
+  criteria met · the Definition of Done attested (§AE7) · a different session or person than the
+  implementer (claim-time). A person moving a card hits the checks that apply to **everyone**
+  (`block` refuses, with a planner override).
+- **When a person looks:** a **plan checkpoint** (required; a person approves when the work
+  touches a one-way-door decision, a high-criticality component or an unsettled decision, has no
+  approved spec, the plan's confidence is low, it is larger than the small-batch limits, or the
+  project is on **probation** — fewer than N agent tasks done; or a task tag), a **hand-off
+  checkpoint** on the same conditions, and **decision columns**: entering one opens a sign-off
+  gate for its approvers. Sign-off always comes before done; a PR approval or merge by someone
+  other than the requester counts (decision D3). Nothing is approved by a timeout.
+
+### AE7. Rules — working agreements and the Definition of Done
+- **UI:** project → **Governance → Rules**: the project's effective rules in two lists —
+  **Definition of Done** (attested at every hand-off) and **Guidance** (in the brief) — each
+  with an origin chip (workspace · team · project), a lock when lower scopes can't change it, what
+  it replaces, who and what it reaches (roles, task tags, components, paths), its source decision
+  or link, and a **stale** flag when that decision was superseded. **Add rule** (at the scopes you
+  may edit), **Edit** / **Delete**, and on an inherited, unlocked rule **Override here** (the same
+  key, your wording) or **Switch off here** (listed under *Switched off here* with **Turn back
+  on**). A rule the merge sets aside (a locked rule above holds its key) is shown dimmed. Team page
+  (`/teams/:id`) → **Rules** tab: the team's own rules beside the workspace's it inherits.
+- **API:** `GET /api/v1/rules?scope_level=&scope_id=` (one scope's rows) ·
+  `GET /api/v1/rules/effective?project_id=` (resolved, with `origin`, `overrides`, the merged
+  `enforcement`, `stale`, `can_edit`) · `GET /api/v1/rules/scopes?project_id=|team_id=` (the
+  scopes that reach it and whether you may edit each) · `POST /api/v1/rules` (`409 rule_exists`) ·
+  `PATCH|DELETE /api/v1/rules/{id}`. **Human-only**: the workspace's rules — an admin; a team's —
+  its directors and managers; a project's — planners who may edit it. **MCP:** `list_rules`
+  (read); the brief carries the rules that apply to the session's role and task.
+- **Resolution:** workspace, then team, then project; a rule with the same `key` lower down
+  replaces the one above (nearest wins) unless that one is **locked**; `disabled` switches an
+  inherited rule off; for Definition-of-Done items the **stricter** enforcement always wins (a
+  project can tighten a locked rule, never loosen it). An attestation's enforcement applies even
+  where the column's own `attestations_complete` check only warns. Code conventions belong in the
+  repository's `CLAUDE.md`/`AGENTS.md` (decision D9); hard constraints are entry checks.
+- **Hand-offs attest:** `submit_work(…, attestations=[{rule_key, status: done | n/a | not_done,
+  evidence}])`; a reviewer can dispute one (a `fail`).
+
+### AE8. Agent flow — how the system is doing (team-level)
+- **UI:** the Agents view's cards (with `ai.stage_policy` on): **Waiting on people** (open gates,
+  past their reminder, parked), **Time to decide** (median per gate kind), **First-pass
+  acceptance** (reviews and QA; plans and sign-offs), **Rework**, **Flow efficiency** (time under
+  a claim ÷ first claim to done), **Unassisted** (agent tasks done that needed no person but the
+  sign-off), and **gates as experiments** (a gate approved nearly every time, quickly, isn't
+  protecting anything — narrow it).
+- **API:** `GET /api/v1/projects|initiatives|teams/{id}/agent-flow?weeks=` (default 8) — queue by
+  role and age, human wait by gate kind (median, P85), first-pass rates, rework, claim outcomes,
+  flow efficiency, gate load, unassisted share, cost per task when sessions report usage.
+  **Team-level only, never per person**; `sufficient: false` (with a reason) under 5 finished
+  sessions instead of a rate from noise. **MCP:** `get_agent_flow`.
+- **Alerts** (§I): `work_unclaimed`, `rework_loop`, `review_saturated`, `merged_ahead_of_stage`,
+  `rule_stale`. The initiative digest (§R5) lists gates waiting past their reminder and parked
+  tasks.
+
+### AE9. Where it's enforced / wired
 - `app/services/work_service.py` is the **only writer** of a claim's state and of
   `Task.active_claim_id`; `app/services/gates.py` of a gate's status and decision
   (`tests/test_work_invariants.py`). Pure logic: `stage_policy.py` (pipeline + checks),
@@ -2460,15 +2567,20 @@ far (mirrored ones: §AE7).
   refresh publishes `work` events (§K); the demo seed runs agent work through the real
   services (§Z1). The plugin's hooks keep claims alive and stop a session ending with one held
   (§L21).
+- Stage policy: pure `stage_policy.py` (the policy document, checks, conditions, routing, the
+  template), stored per column by `policy_store.py` (`StagePolicy` rows, carried over on column
+  renames), resolved with the workflow by `policy_service.py`; the template is applied by
+  `policy_template.py` (the API and the demo seed share it). Rules: `models/policy.py`
+  (`DeliveryRule`) + `services/rules.py` (pure `merge`/`applies`). Agent flow: pure
+  `agent_flow.py` + `agent_flow_service.py`. `tests/test_stage_policy.py` walks the Appendix A
+  pipeline end to end (implement → review → QA → sign-off → done, with rework and attestations).
 
-### AE7. Not built yet (later phases of AGENT_EXECUTION.md §21)
-- **Stage policy** (`ai.stage_policy`): per-column policies and their editor, the plan and
-  hand-off **checkpoints**, **decision columns** (sign-off), bounded **rework**, reviewer / QA
-  roles with their runbooks, team and project **rules** with Definition-of-Done attestations,
-  `agent-flow` metrics and the remaining alerts. Today every project runs the built-in default.
+### AE10. Not built yet (later phases of AGENT_EXECUTION.md §21)
 - **Mirrored projects** (agents clear tracker-owned work without writing its status), outbound
   webhooks (`work.ready`, `gate.decided`), gate notifications by Slack/email, a reference SDK
   runner.
+- The learning loop: graduated-autonomy suggestions, retros seeded with gate/rework data, rule
+  suggestions from recurring review notes, a decision-to-code traceability ledger.
 
 ---
 
@@ -2672,6 +2784,13 @@ far (mirrored ones: §AE7).
   skill's orientation step covers that); **PostToolBatch** renews the claim at most once a minute
   (`heartbeat`) and relays a `stop`; **Stop** asks once to hand off, ask or release while a claim
   is held (`handoff_check`). Hooks raise the quality of hand-offs; the lease is the guarantee.
+- **Reviewer and QA roles** (§AE6): **`reviewing-changes`** — review a PR against the brief
+  (spec, approved plan, binding decisions and their fitness rules, the team's rules and the
+  Definition of Done), record findings by severity and a verdict with `submit_review`, never fix
+  what you find; **`verifying-changes`** — run each acceptance criterion against the change and
+  record what was done and seen as a `qa_report`. The **`change-reviewer`** and **`qa-verifier`**
+  subagents run them with no edit tools. Read-only tools for the policy around the work:
+  `get_stage_policy`, `list_rules`, `get_agent_flow`.
 - **Plugin options:** *Agent label* and *Agent runner* name the session on its claims
   (`CANOPY_AGENT_LABEL`, `CANOPY_AGENT_RUNNER`; `CANOPY_SESSION_REF` records a session id).
 
@@ -2760,7 +2879,11 @@ One-Page Checkout and the Payments migration — both with intake on, run throug
 work-queue services as Rahul's agent tokens: a task handed off into review with its plan and
 hand-off, a headless worker's open **question** ("which wallets ship at GA?") waiting past its
 reminder, a session **working** a task right now, a task **parked** after three sessions gave it
-back, and one delegated and ready — and
+back, and one delegated and ready; Payments then adopted the **agentic-delivery template**
+(§AE6), so its delegated cut-over task waits on its predecessors — **rules** at every scope
+(§AE7: workspace guidance and a locked Definition-of-Done item, a team rule per team, a Payments
+override of "small PRs", a blocking card-data attestation from its tokenization ADR, and a rule
+Search switched off) — and
 project state that makes the **alerts** digest fire (deadline miss, overdue milestone,
 over-allocation, overdue risk, open blocker, a gate waiting on a person, a parked task) and the
 flow board flag **aging** work.

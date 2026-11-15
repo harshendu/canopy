@@ -2229,3 +2229,166 @@ export interface IntakeResponse {
   agent_intake: AgentIntake;
   stopped: number;
 }
+
+// --- Stage policy, rules and agent-flow metrics (docs/AGENT_EXECUTION.md §9, §10, §19) -------
+
+export type Enforcement = "off" | "warn" | "block";
+
+export interface CheckDoc {
+  check: string;
+  params?: Record<string, unknown>;
+  enforcement: Enforcement;
+  applies_to?: "agents" | "everyone";
+}
+
+export interface DecisionDoc {
+  kind?: string;
+  when?: string | string[];
+  approvers?: string;
+  approver_engineer_ids?: number[];
+  exclude_requester?: boolean;
+  satisfied_by?: string[];
+  remind_after_hours?: number;
+  escalate_after_hours?: number;
+  on_approve?: string | null;
+  on_changes?: string | null;
+  on_reject?: string | null;
+}
+
+export interface CheckpointDoc {
+  required?: boolean;
+  approval_when?: string | string[];
+  decision?: DecisionDoc;
+}
+
+export interface StagePolicyDoc {
+  worked_by: string | null;
+  artifact?: "handoff" | "review" | "qa_report" | null;
+  instructions?: string;
+  pulls_from?: string[] | null;
+  enter?: { checks?: CheckDoc[] };
+  on_changes?: string | null;
+  decision?: DecisionDoc | null;
+  checkpoints?: Record<string, CheckpointDoc>;
+  lease_minutes?: number;
+  max_attempts?: number;
+  max_rework?: number;
+}
+
+export interface StageColumn {
+  status: string;
+  category: string;
+  position: number;
+  wip_limit: number | null;
+  worked_by: string | null;
+  hands_off: string | null;
+  source: string;
+  policy: StagePolicyDoc | null;
+}
+
+export interface PipelineRead {
+  scope: "project" | "team" | "template" | "default";
+  inherited: boolean;
+  workflow_id: number | null;
+  team_id: number | null;
+  configured: boolean;
+  wip_enforcement: string;
+  roles: string[];
+  columns: StageColumn[];
+  can_edit: boolean;
+}
+
+export interface TemplatePreview {
+  template: string;
+  columns: { name: string; category: string; worked_by: string | null; policy: StagePolicyDoc | null }[];
+  current_columns: string[];
+  moves: { from_status: string; to_status: string; tasks: number }[];
+  wip_enforcement: string;
+  applied: boolean;
+  pipeline: PipelineRead | null;
+}
+
+export type RuleScope = "workspace" | "team" | "project";
+
+export interface DeliveryRule {
+  id: number;
+  scope_level: RuleScope;
+  scope_id: number;
+  key: string;
+  title: string;
+  body: string;
+  kind: "guidance" | "attestation";
+  roles: string[];
+  selector: { tags?: string[]; components?: number[]; paths?: string[] };
+  enforcement: Enforcement;
+  locked: boolean;
+  disabled: boolean;
+  source_adr_id: number | null;
+  source_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A scope whose rules reach a project or team, and whether the caller may edit it. */
+export interface RuleScopeInfo {
+  scope_level: RuleScope;
+  scope_id: number;
+  name: string;
+  can_edit: boolean;
+}
+
+export interface RuleWrite {
+  scope_level?: RuleScope;
+  scope_id?: number;
+  key?: string;
+  title: string;
+  body: string;
+  kind: "guidance" | "attestation";
+  roles: string[];
+  selector: { tags: string[]; components: number[]; paths: string[] };
+  enforcement: Enforcement;
+  locked: boolean;
+  disabled?: boolean;
+  source_adr_id: number | null;
+  source_url: string | null;
+}
+
+export interface EffectiveRule {
+  rule: DeliveryRule;
+  origin: RuleScope;
+  overrides: RuleScope[];
+  enforcement: Enforcement;
+  stale: boolean;
+  stale_reason: string | null;
+  can_edit: boolean;
+}
+
+export interface AgentFlow {
+  scope: string;
+  scope_id: number;
+  weeks: number;
+  projects: number;
+  sufficient: boolean;
+  reason: string | null;
+  queue: {
+    ready_by_role: Record<string, number>;
+    oldest_ready_hours: number | null;
+    held_by_kind: Record<string, number>;
+    parked: number;
+  };
+  human_wait: {
+    by_kind: Record<string, { decided: number; median_hours: number | null; p85_hours: number | null }>;
+    open: number;
+    open_past_reminder: number;
+    open_past_escalation: number;
+  };
+  first_pass: { approvals: number | null; reviews: number | null };
+  rework: { tasks_returned_share: number | null; rounds_per_returned_task: number | null };
+  claims: { finished: number; by_outcome: Record<string, number>; attempts_per_task: number | null };
+  flow_efficiency: number | null;
+  gate_load: { opened: number; per_week: number; by_kind: Record<string, number>; top_reasons: { reason: string; count: number }[] };
+  gates_as_experiments: { kind: string; decided: number; approval_rate: number | null; median_hours: number | null }[];
+  unassisted_share: number | null;
+  agent_tasks_done: number;
+  cost_per_task_usd: number | null;
+}

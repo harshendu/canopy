@@ -298,6 +298,15 @@ async def test_the_appendix_a_pipeline_end_to_end(client: Any, db_session: Any) 
     await db_session.refresh(final)
     assert final.status == "Done"
 
+    # The whole run, measured at team level.
+    flow = (await client.get(f"{API}/projects/{w.project_id}/agent-flow",
+                             headers=w.arch)).json()
+    assert flow["sufficient"] is True and flow["agent_tasks_done"] == 1
+    assert flow["rework"]["tasks_returned_share"] == 1.0
+    assert flow["first_pass"]["reviews"] == 0.5  # review failed first time, QA passed
+    assert {"plan_approval", "escalation", "signoff"} <= set(flow["human_wait"]["by_kind"])
+    assert flow["unassisted_share"] == 0.0  # it needed a plan approval and an escalation
+
 
 # --------------------------------------------------------------------------- #
 # Rules
@@ -350,6 +359,20 @@ async def test_rules_inherit_lock_and_become_definition_of_done(
     assert effective["flags"]["origin"] == "workspace" and effective["flags"]["rule"]["locked"]
     assert effective["tests"]["enforcement"] == "block"
 
+    # Which scopes reach the project, and which the caller may add to: the architect plans the
+    # project but isn't an admin; an agent token edits none.
+    scopes = (await client.get(f"{API}/rules/scopes", params={"project_id": w.project_id},
+                               headers=w.arch)).json()
+    assert [(s["scope_level"], s["can_edit"]) for s in scopes] == [
+        ("workspace", False), ("project", True)]  # no team: the project has no pod
+    assert [s["can_edit"] for s in (await client.get(
+        f"{API}/rules/scopes", params={"project_id": w.project_id}, headers=adm)).json()] == [
+        True, True]
+    agent = await _mint(client, w.arch, label="reader")
+    assert not any(s["can_edit"] for s in (await client.get(
+        f"{API}/rules/scopes", params={"project_id": w.project_id}, headers=agent)).json())
+    assert (await client.get(f"{API}/rules/scopes", headers=w.arch)).status_code == 422
+
     # A rule from a superseded decision is stale.
     adr = (await db_session.execute(select(ArchitectureDecision))).scalar_one()
     await client.patch(f"{API}/rules/{effective['small-prs']['rule']['id']}",
@@ -399,3 +422,24 @@ async def test_rules_inherit_lock_and_become_definition_of_done(
                                              "evidence": "tests/test_vault.py"}]}},
         headers=impl)
     assert ok.status_code == 200 and ok.json()["moved_to"] == "In Review"
+
+
+@pytest.mark.asyncio
+async def test_a_first_policy_edit_keeps_the_default_stages(client: Any, db_session: Any) -> None:
+    w = await _world(client, db_session)
+    wf = (await client.get(f"{API}/projects/{w.project_id}/workflow", headers=w.arch)).json()
+    cols = [{"name": c["name"], "category": c["category"]} for c in wf["columns"]]
+    assert (await client.put(f"{API}/projects/{w.project_id}/workflow", json={"columns": cols},
+                             headers=w.arch)).status_code == 200
+    url = f"{API}/projects/{w.project_id}/workflow/policy"
+    read = (await client.get(url, headers=w.arch)).json()
+    assert read["configured"] is False and read["scope"] == "project"
+    # The UI sends every column's document with its edit, defaults included.
+    policies = {c["status"]: c["policy"] for c in read["columns"] if c["policy"]}
+    assert set(policies) == {"In Progress", "In Review"}
+    policies["In Review"]["enter"]["checks"].append({"check": "pr_checks", "enforcement": "warn"})
+    saved = (await client.put(url, json={"policies": policies}, headers=w.arch)).json()
+    assert saved["configured"] is True and saved["roles"] == ["implementer"]
+    review = next(c for c in saved["columns"] if c["status"] == "In Review")
+    assert {c["check"] for c in review["policy"]["enter"]["checks"]} == {
+        "artifact", "pr_linked", "pr_checks"}

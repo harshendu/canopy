@@ -14,10 +14,10 @@ const ALL_ON = () => true;
 const ALL_OFF = () => false;
 
 describe("PROJECT_GROUPS / TAB_GROUP", () => {
-  it("places every one of the 20 leaf views under exactly one group", () => {
+  it("places every one of the 21 leaf views under exactly one group", () => {
     const tabs = PROJECT_GROUPS.flatMap((g) => g.tabs);
-    expect(tabs).toHaveLength(20);
-    expect(new Set(tabs).size).toBe(20); // no duplicates
+    expect(tabs).toHaveLength(21);
+    expect(new Set(tabs).size).toBe(21); // no duplicates
     for (const tab of tabs) expect(TAB_GROUP[tab]).toBeTruthy();
   });
 
@@ -52,6 +52,14 @@ describe("resolveProjectTab", () => {
   it("opens the Agents view under Execution, behind the work-queue gate", () => {
     expect(resolveProjectTab("agents", ALL_ON)).toEqual({ group: "execution", tab: "agents" });
     expect(resolveProjectTab("agents", (f) => f !== "ai.work_queue")).toEqual({
+      group: "overview",
+      tab: null,
+    });
+  });
+
+  it("opens Rules under Governance, behind the stage-policy gate", () => {
+    expect(resolveProjectTab("rules", ALL_ON)).toEqual({ group: "governance", tab: "rules" });
+    expect(resolveProjectTab("rules", (f) => f !== "ai.stage_policy")).toEqual({
       group: "overview",
       tab: null,
     });

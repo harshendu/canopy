@@ -29,6 +29,7 @@ class PipelineRead(BaseModel):
     scope: str  # where the columns (and so the policies) come from: project|team|template|default
     inherited: bool
     workflow_id: int | None = None
+    team_id: int | None = None  # set when the columns are a team's (edit them there)
     configured: bool  # stored policies apply (False: the built-in default)
     wip_enforcement: str
     roles: list[str] = []
@@ -130,6 +131,15 @@ class RuleRead(BaseModel):
     source_url: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class RuleScopeRead(BaseModel):
+    """A scope whose rules apply to a project or team, and whether the caller may edit it."""
+
+    scope_level: str
+    scope_id: int
+    name: str
+    can_edit: bool = False
 
 
 class EffectiveRuleRead(BaseModel):
