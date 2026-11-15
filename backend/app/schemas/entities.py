@@ -102,6 +102,8 @@ class ProjectRead(BaseModel):
     # Work tracking: native (canopy owns status) | mirrored (an external tracker does).
     tracking_mode: str = "native"
     task_key_prefix: str | None = None
+    # Agent work (docs/AGENT_EXECUTION.md §6.1): off | on | paused.
+    agent_intake: str = "off"
 
 
 class HolidayCreate(BaseModel):
@@ -186,6 +188,9 @@ class TaskUpdate(BaseModel):
     # Sprint planning size. (Sprint *membership* is not a PATCH field: it is
     # `POST/DELETE /sprints/{id}/tasks`, which records the move.)
     story_points: float | None = None
+    # The decision this task implements (decision → work traceability). Delegation is not a
+    # PATCH field: it is `POST /tasks/{id}/delegation` (human-only).
+    implements_adr_id: int | None = None
 
 
 class TaskRead(BaseModel):
@@ -214,6 +219,13 @@ class TaskRead(BaseModel):
     deadline: date | None
     assignee_engineer_id: int | None
     spec_id: int | None = None
+    # Agent work (docs/AGENT_EXECUTION.md §6.1): set via POST /tasks/{id}/delegation.
+    delegation: str | None = None
+    delegated_at: datetime | None = None
+    active_claim_id: int | None = None
+    implements_adr_id: int | None = None
+    # A mirrored task canopy cleared to move: the status its tracker should show next (§17).
+    clearance_status: str | None = None
     tags: list[str] = []
     estimate_optimistic: int | None = None
     estimate_likely: int | None = None
@@ -255,6 +267,8 @@ class TaskStatusHistoryRead(BaseModel):
     changed_at: datetime
     author: str | None
     source: str = "sync"
+    actor_kind: str | None = None  # human | agent | system (None: reported by a tracker)
+    work_claim_id: int | None = None
 
 
 # --- Board moves + workflows (USER_FLOWS §C9) ---
@@ -268,6 +282,9 @@ class TaskMoveRequest(BaseModel):
     before_task_id: int | None = None
     position: Literal["top", "bottom"] = "bottom"
     expected_status: str | None = None
+    # A planner passing an `everyone` + `block` entry check on a delegated card says why
+    # (recorded as an `override` work event; docs/AGENT_EXECUTION.md §9.2).
+    override_reason: str | None = Field(default=None, max_length=500)
 
 
 class TaskMoveResponse(BaseModel):
@@ -663,6 +680,18 @@ class PullRequestRead(BaseModel):
     url: str | None
     author: str | None
     task_id: int | None = None
+    draft: bool = False
+    merged: bool = False
+    merged_at: datetime | None = None
+    merged_by: str | None = None
+    head_branch: str | None = None
+    head_sha: str | None = None
+    review_decision: str | None = None
+    approved_by: list[str] | None = None
+    checks_state: str | None = None
+    additions: int | None = None
+    deletions: int | None = None
+    changed_files: int | None = None
 
 
 # --- Jira ticket linking (link a Jira ticket → canopy project/initiative) ---
@@ -842,6 +871,24 @@ class WhatIfRequest(BaseModel):
 
 
 # --- Flow board (Kanban + WIP + aging) ---
+class BoardClaimRead(BaseModel):
+    id: int
+    role: str
+    label: str | None = None
+    since: datetime
+    heartbeat_age_s: int
+
+
+class BoardGateRead(BaseModel):
+    id: int
+    kind: str
+    origin: str = "agent"
+    # canopy itself stopped offering the task (attempts used up, a review loop not converging).
+    parked: bool = False
+    title: str
+    age_hours: float
+
+
 class BoardTaskRead(BaseModel):
     id: int
     name: str
@@ -868,6 +915,13 @@ class BoardTaskRead(BaseModel):
     sprint_id: int | None = None
     story_points: float | None = None
     duration: int | None = None  # working days — the estimate of teams sized in days
+    # Agent work (docs/AGENT_EXECUTION.md §16): delegated, the live claim, the open gate.
+    delegation: str | None = None
+    claim: BoardClaimRead | None = None
+    gate: BoardGateRead | None = None
+    parked: bool = False
+    # A mirrored card canopy cleared to move: the status its tracker should show next (§17).
+    awaiting_move: str | None = None
 
 
 class BoardLaneRead(BaseModel):
@@ -885,6 +939,8 @@ class BoardLaneRead(BaseModel):
     # Open cards in this column across the WIP scope (every project sharing these columns —
     # e.g. the team's), which can exceed `wip` when the board shows only part of the scope.
     scope_wip: int | None = None
+    # Who works this column: an agent role, "human" (a decision column), or None.
+    worked_by: str | None = None
 
 
 class BoardViewer(BaseModel):
@@ -1723,6 +1779,19 @@ class IngestPullRequest(BaseModel):
     author: str | None = None
     updated: str | None = None
     branch: str | None = None  # head branch — its issue key (e.g. "feat/SHOP-12-x") links a task
+    # Review / check / merge state as far as the source knows it (docs/AGENT_EXECUTION.md §11.3);
+    # omit what you don't know and the cached value is kept.
+    draft: bool | None = None
+    merged: bool | None = None
+    merged_at: str | None = None  # ISO timestamp
+    merged_by: str | None = None
+    head_sha: str | None = None
+    additions: int | None = None
+    deletions: int | None = None
+    changed_files: int | None = None
+    review_decision: Literal["approved", "changes_requested", "review_required"] | None = None
+    approved_by: list[str] | None = None  # logins whose approval covers the current head
+    checks_state: Literal["pending", "passing", "failing"] | None = None
 
 
 class IngestPullRequestsRequest(BaseModel):
@@ -1777,10 +1846,29 @@ class ExportToDriveResult(BaseModel):
 
 
 # --- Engineer workspace (/me) ---
+class MyGateRead(BaseModel):
+    """An open gate this person may decide — agent work waiting on them
+    (docs/AGENT_EXECUTION.md §9.4). The full shape is `GET /gates/{id}`."""
+
+    id: int
+    task_id: int
+    project_id: int
+    kind: str
+    origin: str
+    title: str
+    stage: str | None = None
+    task_key: str | None = None
+    task_name: str | None = None
+    project_key: str | None = None
+    age_hours: float = 0.0
+    parked: bool = False
+
+
 class MyTodayResponse(BaseModel):
     user: UserRead
     focus_tasks: list[TaskRead]  # assigned, open, critical or due soon
     decisions_to_push: list[ADRRead]  # owned proposed/under_discussion
+    gates: list[MyGateRead] = []  # agent work waiting on my decision (ai.work_queue)
 
 
 class MySprintRead(BaseModel):
@@ -1798,6 +1886,7 @@ class MyWorkspaceResponse(BaseModel):
     stakeholder_decisions: list[ADRRead]
     blockers: list[BlockerRead] = []  # open blockers on my tasks or raised by me
     my_sprints: list[MySprintRead] = []  # "My sprint": my tasks in active sprints
+    gates: list[MyGateRead] = []  # agent work waiting on my decision (ai.work_queue)
     # design docs in review this user may approve (USER_FLOWS §V8)
     docs_to_review: list["DocReferenceRead"] = []
 

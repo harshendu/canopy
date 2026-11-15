@@ -2,7 +2,7 @@
   "name": "canopy",
   "displayName": "Canopy Architecture Manager",
   "version": "0.2.0",
-  "description": "Manage software architecture, projects, milestones, teams, a Kanban board and sprints, work-tracker sync (Jira and other trackers — or none), and Gantt scheduling from Claude — with review-first change proposals: stage updates from any source (Slack, email, meetings, trackers, GitHub, Drive) for the architect to review and commit in the canopy UI.",
+  "description": "Manage software architecture, projects, milestones, teams, a Kanban board and sprints, work-tracker sync (Jira and other trackers \u2014 or none), and Gantt scheduling from Claude \u2014 with review-first change proposals: stage updates from any source (Slack, email, meetings, trackers, GitHub, Drive) for the architect to review and commit in the canopy UI.",
   "author": {
     "name": "Canopy"
   },
@@ -49,6 +49,18 @@
       "title": "Canopy account password (optional)",
       "description": "Password for the account email above (used to mint/refresh the JWT automatically). Leave blank when using a token.",
       "sensitive": true,
+      "default": ""
+    },
+    "agent_label": {
+      "type": "string",
+      "title": "Agent label (optional)",
+      "description": "How this machine's sessions name themselves on canopy work claims (shown on the board and a task's timeline), e.g. \"alex-laptop\" or \"ci-reviewer\". Leave blank to use the agent token's label.",
+      "default": ""
+    },
+    "agent_runner": {
+      "type": "string",
+      "title": "Agent runner (optional)",
+      "description": "How sessions here are started, recorded on claims: interactive | loop | headless | cloud | sdk | action. Leave blank if unsure.",
       "default": ""
     }
   }

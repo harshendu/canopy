@@ -119,6 +119,29 @@ class PullRequest(TimestampMixin, table=True):
     # or branch — any tracker's key, or a native canopy key). Lets the UI surface a task's code
     # changes alongside its tracker item and design docs.
     task_id: int | None = Field(default=None, foreign_key="task.id", index=True)
+    # Review and check state at the PR's current head (docs/AGENT_EXECUTION.md §11.3), kept fresh
+    # by the `pull_request`, `pull_request_review`, `check_suite` / `check_run` and `status`
+    # webhooks and by MCP / file ingest. Stage checks and gates read these; a webhook never moves a
+    # status by itself. Interpreting them is `app/services/pr_signals.py` (pure).
+    draft: bool = False
+    merged: bool = False
+    merged_at: datetime | None = None
+    merged_by: str | None = None
+    head_branch: str | None = None
+    head_sha: str | None = None
+    # approved | changes_requested | review_required — None while no review has been seen.
+    review_decision: str | None = None
+    # The latest review per reviewer: [{login, state, commit_id, submitted_at, body}].
+    reviews: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Logins whose latest review approves the current head (a stale approval does not count).
+    approved_by: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Each check seen at the current head, e.g. {"suite:github-actions": "success"}; reset when
+    # the head moves. `checks_state` is their roll-up: pending | passing | failing (None = none).
+    checks: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    checks_state: str | None = None
+    additions: int | None = None
+    deletions: int | None = None
+    changed_files: int | None = None
 
 
 class TrackerBinding(TimestampMixin, table=True):

@@ -32,6 +32,7 @@ from app.models.architecture import (
     DriftEvent,
     DriftScan,
     DriftSuppression,
+    TaskComponentLink,
 )
 from app.models.base import (
     DocLinkEntity,
@@ -41,9 +42,12 @@ from app.models.base import (
     RiskScope,
 )
 from app.models.draft import DraftPlan, DraftTask
+from app.models.gate import Gate
 from app.models.integration import ExternalRef, PullRequest, TrackerBinding
 from app.models.leadership import LeadershipNote
+from app.models.notify import OutboundWebhook, OutboxMessage
 from app.models.outcome import Outcome
+from app.models.policy import DeliveryRule, StagePolicy
 from app.models.project import (
     Baseline,
     Blocker,
@@ -69,6 +73,7 @@ from app.models.scenario import (
 from app.models.spec import Spec, SpecCriterion
 from app.models.sprint import TaskSprintHistory
 from app.models.team import Allocation
+from app.models.work import TaskArtifact, WorkClaim, WorkEvent
 from app.models.workflow import Workflow, WorkflowStatus
 from app.services import design_docs
 
@@ -101,7 +106,15 @@ async def delete_task_cascade(session: AsyncSession, task_id: int) -> None:
     await session.execute(
         update(Allocation).where(col(Allocation.task_id) == task_id).values(task_id=None)
     )
-    # Rows that only exist because of this task → delete.
+    # Rows that only exist because of this task → delete. Agent work first: a gate references
+    # the claim that asked and the artifact it judges; an artifact references its claim.
+    await session.execute(delete(Gate).where(col(Gate.task_id) == task_id))
+    await session.execute(delete(TaskArtifact).where(col(TaskArtifact.task_id) == task_id))
+    await session.execute(delete(WorkClaim).where(col(WorkClaim.task_id) == task_id))
+    await session.execute(delete(WorkEvent).where(col(WorkEvent.task_id) == task_id))
+    await session.execute(
+        delete(TaskComponentLink).where(col(TaskComponentLink.task_id) == task_id)
+    )
     await session.execute(
         delete(Dependency).where(
             or_(col(Dependency.predecessor_id) == task_id, col(Dependency.successor_id) == task_id)
@@ -293,9 +306,44 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
         delete(ScenarioMilestone).where(col(ScenarioMilestone.project_id) == pid),
         delete(ScenarioTask).where(col(ScenarioTask.project_id) == pid),
         delete(ScenarioProject).where(col(ScenarioProject.project_id) == pid),
-        # the project's own board workflow (override), columns first
+        # the project's own board workflow (override): its stage policies and columns first
+        delete(StagePolicy).where(
+            col(StagePolicy.owner_type) == "workflow", col(StagePolicy.owner_id).in_(workflow_ids)
+        ),
+        # a mirrored project's policies belong to its tracker bindings (deleted below)
+        delete(StagePolicy).where(
+            col(StagePolicy.owner_type) == "binding",
+            col(StagePolicy.owner_id).in_(
+                select(col(TrackerBinding.id)).where(
+                    col(TrackerBinding.target_type) == "project",
+                    col(TrackerBinding.target_id) == pid,
+                )
+            ),
+        ),
+        delete(DeliveryRule).where(
+            col(DeliveryRule.scope_level) == "project", col(DeliveryRule.scope_id) == pid
+        ),
+        # outbound notifications: the project's webhooks and whatever it queued
+        delete(OutboundWebhook).where(
+            col(OutboundWebhook.scope_level) == "project", col(OutboundWebhook.scope_id) == pid
+        ),
+        delete(OutboxMessage).where(col(OutboxMessage.project_id) == pid),
         delete(WorkflowStatus).where(col(WorkflowStatus.workflow_id).in_(workflow_ids)),
         delete(Workflow).where(col(Workflow.project_id) == pid),
+        # agent work: gates (→ claims, artifacts) → artifacts (→ claims) → claims, the event
+        # log, and the task ↔ component links
+        delete(Gate).where(or_(col(Gate.project_id) == pid, col(Gate.task_id).in_(task_ids))),
+        delete(TaskArtifact).where(col(TaskArtifact.task_id).in_(task_ids)),
+        delete(WorkClaim).where(col(WorkClaim.task_id).in_(task_ids)),
+        delete(WorkEvent).where(
+            or_(col(WorkEvent.project_id) == pid, col(WorkEvent.task_id).in_(task_ids))
+        ),
+        delete(TaskComponentLink).where(
+            or_(
+                col(TaskComponentLink.task_id).in_(task_ids),
+                col(TaskComponentLink.component_id).in_(comp_ids),
+            )
+        ),
         # task-derived rows
         delete(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids)),
         delete(TaskSprintHistory).where(col(TaskSprintHistory.task_id).in_(task_ids)),

@@ -383,6 +383,26 @@ async def initiative_rollup(
     )
 
 
+async def _agent_work_waiting(session: SessionDep, project_ids: list[int]) -> tuple[int, int]:
+    """(open gates past their reminder, parked tasks) across the projects — for the digest's
+    exception list; (0, 0) with `ai.work_queue` off."""
+    from app.models.base import GateKind, GateStatus, utcnow
+    from app.models.gate import Gate
+    from app.services.features import feature_enabled
+
+    if not project_ids or not await feature_enabled(session, "ai.work_queue"):
+        return 0, 0
+    now = utcnow()
+    gates = (await session.execute(
+        select(Gate).where(col(Gate.project_id).in_(project_ids),
+                           Gate.status == GateStatus.open.value)
+    )).scalars().all()
+    parked = [g for g in gates if g.kind == GateKind.escalation.value and g.origin == "system"]
+    waiting = [g for g in gates if g not in parked and g.remind_at is not None
+               and g.remind_at <= now]
+    return len(waiting), len(parked)
+
+
 @router.get("/{initiative_id}/digest", response_model=InitiativeDigest)
 async def initiative_digest(
     session: SessionDep, user: CurrentUser, initiative_id: int
@@ -432,6 +452,9 @@ async def initiative_digest(
         if (p.health in (ProjectHealth.at_risk, ProjectHealth.off_track))
         or p.risk_level in ("high", "critical")
     ]
+    gates_waiting, parked_tasks = await _agent_work_waiting(
+        session, [p.id for p in rollup.projects]
+    )
     inputs = digest_service.DigestInputs(
         name=rollup.initiative.name,
         generated_on=date.today(),
@@ -449,6 +472,8 @@ async def initiative_digest(
         open_blockers=open_blockers,
         at_risk_projects=at_risk,
         outcomes=[f"{o.statement} ({o.status})" for o in outcomes],
+        gates_waiting=gates_waiting,
+        parked_tasks=parked_tasks,
         doc_attention=await doc_graph.doc_attention_messages(
             session, DocScope.initiative, initiative_id
         ),

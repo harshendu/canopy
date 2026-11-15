@@ -15,10 +15,12 @@ from app.models.architecture import (
     DriftEvent,
     DriftScan,
     DriftSuppression,
+    TaskComponentLink,
 )
 from app.models.doc import DocKindDef, DocLink, DocReference, DocRevision
 from app.models.draft import DraftPlan, DraftTask
 from app.models.feature import FeatureFlag
+from app.models.gate import Gate
 from app.models.integration import (
     Connection,
     EngineerIdentity,
@@ -29,8 +31,10 @@ from app.models.integration import (
     UserConnection,
 )
 from app.models.leadership import InitiativeLead, LeadershipNote
+from app.models.notify import OutboundWebhook, OutboxMessage
 from app.models.org import Pod, Team, TeamMember
 from app.models.outcome import Outcome
+from app.models.policy import DeliveryRule, StagePolicy
 from app.models.project import (
     Baseline,
     Blocker,
@@ -60,6 +64,7 @@ from app.models.spec import Spec, SpecCriterion
 from app.models.sprint import Sprint, TaskSprintHistory
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
+from app.models.work import TaskArtifact, WorkClaim, WorkEvent
 from app.models.workflow import Workflow, WorkflowStatus
 
 __all__ = [
@@ -77,6 +82,7 @@ __all__ = [
     "ComponentCodeBinding",
     "ComponentLink",
     "Connection",
+    "DeliveryRule",
     "Dependency",
     "DocKindDef",
     "DocLink",
@@ -92,12 +98,15 @@ __all__ = [
     "EngineerIdentity",
     "ExternalRef",
     "FeatureFlag",
+    "Gate",
     "Holiday",
     "Initiative",
     "InitiativeLead",
     "IntegrationSetting",
     "LeadershipNote",
     "Milestone",
+    "OutboundWebhook",
+    "OutboxMessage",
     "Outcome",
     "Pod",
     "Project",
@@ -120,7 +129,10 @@ __all__ = [
     "Spec",
     "SpecCriterion",
     "Sprint",
+    "StagePolicy",
     "Task",
+    "TaskArtifact",
+    "TaskComponentLink",
     "TaskSprintHistory",
     "TaskStatusHistory",
     "Team",
@@ -128,6 +140,8 @@ __all__ = [
     "TrackerBinding",
     "User",
     "UserConnection",
+    "WorkClaim",
+    "WorkEvent",
     "Workflow",
     "WorkflowStatus",
 ]

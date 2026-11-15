@@ -67,6 +67,11 @@ function card(id: number, overrides: Partial<Card> = {}): Card {
     sprint_id: null,
     story_points: null,
     duration: null,
+    delegation: null,
+    claim: null,
+    gate: null,
+    parked: false,
+    awaiting_move: null,
     ...overrides,
   };
 }
@@ -85,6 +90,7 @@ function lane(status: string, category: Lane["category"], tasks: Card[], extra: 
     scope_wip: null,
     over_limit: false,
     in_workflow: true,
+    worked_by: null,
     ...extra,
   };
 }

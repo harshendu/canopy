@@ -550,6 +550,19 @@ describe("reviewing with Claude", () => {
   });
 });
 
+describe("rule proposals", () => {
+  it("names, titles and groups a proposed rule", () => {
+    const rule = item({
+      entity_type: "rule",
+      payload: { key: "migration-tests", title: "Schema changes come with a migration test", kind: "attestation", enforcement: "warn" },
+    });
+    expect(itemKindLabel(rule)).toBe("Propose rule");
+    expect(itemTitle(rule)).toBe("Schema changes come with a migration test");
+    expect(groupItems([rule]).map((g) => g.group.label)).toEqual(["Rules"]);
+    expect(displayValue("rule", "kind", "attestation", ctx)).toBe("Definition of Done item");
+  });
+});
+
 describe("doc links", () => {
   it("reads as the doc and the work it serves", async () => {
     const { buildContext, itemFacts, itemKindLabel, itemTitle, visibleFacts, groupItems } =

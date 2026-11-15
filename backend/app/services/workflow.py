@@ -204,6 +204,8 @@ class WorkflowView:
     wip_enforcement: str
     columns: list[flow.ColumnDef] = field(default_factory=list)
     inherited: bool = False
+    # A tracker view's binding (scope "tracker"): its stage policies are the binding's.
+    binding_id: int | None = None
 
     def column(self, name: str | None) -> flow.ColumnDef | None:
         if name is None:
@@ -246,6 +248,27 @@ async def _find(
         else Workflow.project_id == project_id
     )
     return (await session.execute(stmt.order_by(col(Workflow.id)))).scalars().first()
+
+
+async def projects_using_scope(
+    session: AsyncSession, *, team_id: int | None, project_id: int | None
+) -> list[Project]:
+    """The projects whose board uses the workflow defined at this scope."""
+    return await _projects_using(session, team_id=team_id, project_id=project_id)
+
+
+async def current_view(
+    session: AsyncSession, *, team_id: int | None, project_id: int | None
+) -> WorkflowView:
+    """What the tasks at this scope see right now (its own workflow, else the inherited one)."""
+    return await _current_view(session, team_id=team_id, project_id=project_id)
+
+
+async def own_workflow(
+    session: AsyncSession, *, team_id: int | None, project_id: int | None
+) -> Workflow | None:
+    """The workflow defined at exactly this scope (None when it inherits)."""
+    return await _find(session, team_id=team_id, project_id=project_id)
 
 
 async def _view_of(session: AsyncSession, workflow: Workflow, *, inherited: bool) -> WorkflowView:
@@ -325,6 +348,7 @@ async def tracker_view(session: AsyncSession, project: Project) -> WorkflowView 
             for i, c in enumerate(sorted(columns, key=lambda c: c.position))
         ],
         inherited=False,
+        binding_id=binding.row.id,
     )
 
 
@@ -555,6 +579,15 @@ async def save_workflow(
             )
         )
 
+    # Stage policies follow their columns: kept across a rename, dropped with a removed column.
+    from app.services import policy_store
+
+    await policy_store.carry_over(
+        session, workflow.id,
+        renames={old: column.name for old, column in renames.items()},
+        removed=[c.name for c in removed],
+    )
+
     for task in tasks:
         key = (task.status or "").casefold()
         if key in renames:
@@ -673,10 +706,14 @@ def record_transition(
     source: StatusSource,
     author: str | None = None,
     at: datetime | None = None,
+    actor_kind: str | None = None,
+    work_claim_id: int | None = None,
 ) -> TaskStatusHistory | None:
     """Set a task's status and category, reconcile its progress, and append a history row when
     the status actually changed. Returns the new row (None when nothing changed). The task must
-    have an id (flush first). The ONLY writer of `Task.status` — see the module docstring."""
+    have an id (flush first). The ONLY writer of `Task.status` — see the module docstring.
+    `actor_kind` / `work_claim_id` attribute a canopy move to a person, an agent or canopy
+    itself, and to the work claim it was made under (docs/AGENT_EXECUTION.md §11.2)."""
     previous = task.status
     _set_status(task, to_status, category)
     if previous == to_status:
@@ -690,6 +727,8 @@ def record_transition(
         changed_at=at or utcnow(),
         author=author,
         source=source.value,
+        actor_kind=actor_kind,
+        work_claim_id=work_claim_id,
     )
     session.add(row)
     return row
@@ -898,6 +937,8 @@ async def move_task(
     expected_status: str | None = None,
     author: str | None = None,
     native_enabled: bool = True,
+    actor_kind: str | None = None,
+    work_claim_id: int | None = None,
 ) -> MoveOutcome:
     """Move a card: change its status (canopy-owned tasks only) and/or its place in the
     column. Raises TrackingError (stale | status_externally_owned | native_tracking_disabled |
@@ -978,6 +1019,8 @@ async def move_task(
             category=column.category,
             source=StatusSource.canopy,
             author=author,
+            actor_kind=actor_kind,
+            work_claim_id=work_claim_id,
         )
 
     if changing or after_task_id is not None or before_task_id is not None or to_status is None:

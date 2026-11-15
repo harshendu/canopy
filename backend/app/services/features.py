@@ -175,6 +175,13 @@ FEATURE_CATALOG: tuple[FeatureDef, ...] = (
         "integrations",
     ),
     FeatureDef(
+        "integrations.outbound", "Outbound notifications",
+        "Signed webhooks and Slack messages when agent work is ready or a decision waits on a "
+        "person, email to the people who may decide, and approved plans posted to mirrored "
+        "tickets.",
+        "integrations",
+    ),
+    FeatureDef(
         "reporting",
         "Reporting",
         "Point-in-time export snapshots of a project/initiative/portfolio.",
@@ -195,6 +202,18 @@ FEATURE_CATALOG: tuple[FeatureDef, ...] = (
     FeatureDef(
         "ai.proposals", "Change proposals (review queue)",
         "Agent-staged canopy changes a human reviews, edits down, and applies from the UI.",
+        "ai",
+    ),
+    FeatureDef(
+        "ai.work_queue", "Agent work queue",
+        "Delegate tasks to agents: intake, claims, briefs, plans and hand-offs, the questions "
+        "agents ask and their Decisions inbox, the Agents view.",
+        "ai",
+    ),
+    FeatureDef(
+        "ai.stage_policy", "Stage policy & rules",
+        "Per-column agent policy: entry checks, plan and hand-off checkpoints, decision "
+        "columns and the gates they raise, team and project rules.",
         "ai",
     ),
 )

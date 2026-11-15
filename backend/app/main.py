@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.api.v1 import api_router
+from app.core import events
 from app.core.config import settings
 from app.core.db import async_session_factory, get_session
 from app.core.logging import configure_logging
@@ -61,7 +62,11 @@ async def _seed_superuser() -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ensure_secure_secret_key()
     await _seed_superuser()
-    yield
+    await events.start()  # live-refresh fan-out from other processes (EVENTS_BACKEND=redis)
+    try:
+        yield
+    finally:
+        await events.stop()
 
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)

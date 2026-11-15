@@ -121,6 +121,12 @@ mutation CanopyUpdate($id: String!, $input: IssueUpdateInput!) {
 }
 """
 
+COMMENT_MUTATION = """
+mutation CanopyComment($input: CommentCreateInput!) {
+  commentCreate(input: $input) { success }
+}
+"""
+
 
 class LinearError(RuntimeError):
     """Linear answered with GraphQL errors."""
@@ -159,6 +165,7 @@ class LinearTracker(WorkTracker):
         update_items=True,
         estimates=True,
         oauth=True,
+        comments=True,
     )
     config_schema: ClassVar[type[BaseModel]] = LinearConnectionConfig
     scope_schema: ClassVar[type[BaseModel]] = LinearScope
@@ -458,6 +465,11 @@ class LinearTracker(WorkTracker):
             return
         async with await self.open_client() as client:
             await self._gql(client, UPDATE_MUTATION, {"id": ref.external_id, "input": payload})
+
+    async def add_comment(self, scope: Scope, ref: ItemRef, body: str) -> None:
+        async with await self.open_client() as client:
+            await self._gql(client, COMMENT_MUTATION,
+                            {"input": {"issueId": ref.external_id, "body": body}})
 
     # --------------------------------------------------------------------- #
     # Webhooks

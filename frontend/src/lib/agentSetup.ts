@@ -40,6 +40,44 @@ export function expiryPhrase(
   return `Expires ${formatDate(info.expires_at)} · ${rel}`;
 }
 
+/** The built-in agent roles a token can be scoped to (docs/AGENT_EXECUTION.md §4); empty = any. */
+export const AGENT_ROLE_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Any role" },
+  { value: "implementer", label: "Implementer" },
+  { value: "reviewer", label: "Reviewer" },
+  { value: "qa", label: "QA" },
+];
+
+/** "Any role · all projects" / "Reviewer · 2 projects" — what a token is narrowed to. Pure. */
+export function scopeSummary(
+  info: Pick<AgentTokenInfo, "roles" | "project_ids">,
+  projectKeys: Record<number, string> = {},
+): string {
+  const roles = info.roles ?? [];
+  const projects = info.project_ids ?? [];
+  const roleText = roles.length
+    ? roles.map((r) => r.charAt(0).toUpperCase() + r.slice(1)).join(", ")
+    : "Any role";
+  let projectText = "all projects";
+  if (projects.length === 1) projectText = projectKeys[projects[0]] ?? "1 project";
+  else if (projects.length > 1) projectText = `${projects.length} projects`;
+  return `${roleText} · ${projectText}`;
+}
+
+/** "Never used" / "Used just now" / "Used 3 h ago" / "Used 2 days ago". Pure. */
+export function lastUsedPhrase(lastUsed: string | null | undefined, now: number): string {
+  if (!lastUsed) return "Never used";
+  const ms = now - Date.parse(lastUsed.endsWith("Z") ? lastUsed : `${lastUsed}Z`);
+  if (!Number.isFinite(ms) || ms < 0) return "Used just now";
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 2) return "Used just now";
+  if (minutes < 60) return `Used ${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Used ${hours} h ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "Used 1 day ago" : `Used ${days} days ago`;
+}
+
 const STATUS_CHIP: Record<AgentTokenInfo["status"], string> = {
   active: "border-canopy-500/30 bg-canopy-50 text-canopy-700",
   expired: "border-slate-200 bg-slate-100 text-slate-500",

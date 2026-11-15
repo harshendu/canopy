@@ -40,6 +40,39 @@ def test_generate_project_retro_handles_empty_project():
     assert "No milestones marked complete" in body
 
 
+def test_agent_work_section_reads_the_agent_flow():
+    from app.services.retro import agent_work_lines
+
+    flow = {
+        "sufficient": True, "claims": {"finished": 12}, "agent_tasks_done": 5,
+        "unassisted_share": 0.6,
+        "human_wait": {"by_kind": {"plan_approval": {"median_hours": 0.4},
+                                   "signoff": {"median_hours": 72}}},
+        "first_pass": {"reviews": 0.75, "approvals": 0.9},
+        "rework": {"tasks_returned_share": 0.25}, "queue": {"parked": 1},
+        "cost_per_task_usd": 2.4,
+        "gates_as_experiments": [
+            {"kind": "plan_approval", "decided": 9, "approval_rate": 1.0, "median_hours": 0.4},
+            {"kind": "signoff", "decided": 5, "approval_rate": 0.6, "median_hours": 72},
+        ],
+    }
+    lines = agent_work_lines(flow, uncleared_moves=2)
+    text = "\n".join(lines)
+    assert "12 agent session(s) finished" in text and "60% needed no person" in text
+    assert "plan approvals 0.4 h" in text and "sign-offs 3 d" in text
+    assert "reviews 75%" in text and "25% of worked tasks went back" in text
+    assert "Parked: 1" in text and "clearance: 2" in text and "$2.4" in text
+    # Only the near-always-approved gate is flagged as a candidate to relax.
+    relax = [line for line in lines if "candidate to relax" in line]
+    assert len(relax) == 1 and relax[0].startswith("Plan approvals")
+    body = generate_project_retro(RetroInputs(project_name="P", generated_on=date(2026, 1, 1),
+                                              agent_work=lines))
+    assert "## Agent work" in body and "- 12 agent session(s) finished" in body
+    assert agent_work_lines({"claims": {"finished": 0}, "human_wait": {"by_kind": {}}}) == []
+    assert "## Agent work" not in generate_project_retro(
+        RetroInputs(project_name="P", generated_on=date(2026, 1, 1)))
+
+
 # --- API ---------------------------------------------------------------------
 
 

@@ -20,17 +20,21 @@ from app.api.v1 import (
     exports,
     features,
     gantt,
+    gates,
     initiatives,
     leadership,
     me,
     meta,
     milestones,
+    outbound,
     outcomes,
+    policies,
     projects,
     proposals,
     retros,
     risk,
     risk_register,
+    rules,
     scenarios,
     specs,
     sprints,
@@ -39,6 +43,7 @@ from app.api.v1 import (
     teams,
     tracker_links,
     tracking,
+    work,
     workflows,
 )
 
@@ -112,6 +117,24 @@ api_router.include_router(
     prefix="/proposals",
     tags=["proposals"],
     dependencies=[FeatureGate("ai.proposals")],
+)
+# The agent work queue and its gates (docs/AGENT_EXECUTION.md). Paths span /work, /gates and
+# task/project sub-resources, so these routers carry no prefix.
+api_router.include_router(work.router, tags=["work"], dependencies=[FeatureGate("ai.work_queue")])
+api_router.include_router(
+    gates.router, tags=["gates"], dependencies=[FeatureGate("ai.work_queue")]
+)
+# Stage policy + delivery rules (docs/AGENT_EXECUTION.md §9, §10): the policies of a workflow's
+# columns (and the agentic-delivery template), and team / project working agreements.
+api_router.include_router(
+    policies.router, tags=["policies"], dependencies=[FeatureGate("ai.stage_policy")]
+)
+api_router.include_router(
+    rules.router, tags=["rules"], dependencies=[FeatureGate("ai.stage_policy")]
+)
+# Outbound webhooks + gate notifications (docs/AGENT_EXECUTION.md §15, Phase 3).
+api_router.include_router(
+    outbound.router, tags=["outbound"], dependencies=[FeatureGate("integrations.outbound")]
 )
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])

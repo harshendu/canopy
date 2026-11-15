@@ -137,6 +137,82 @@ jobs:
           alembic upgrade head
           alembic check
 
+  claim-race:
+    # The work queue's compare-and-swap claim (docs/AGENT_EXECUTION.md §6.3) must hold under real
+    # concurrency on every production database — SQLite can't show a deadlock or a lost update —
+    # and live-refresh events must cross processes over a real Redis.
+    name: Concurrency (claim race on PostgreSQL, MySQL, MariaDB; events over Redis)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: canopy
+          POSTGRES_PASSWORD: canopy
+          POSTGRES_DB: canopy
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U canopy"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: canopy
+          MYSQL_USER: canopy
+          MYSQL_PASSWORD: canopy
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: canopy
+          MARIADB_USER: canopy
+          MARIADB_PASSWORD: canopy
+        ports: ["3307:3306"]
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: pip install -e ".[dev,mysql]"
+      # `CANOPY_TEST_DATABASE_URL` points the suite's engine at a real server (tests/conftest.py).
+      - name: PostgreSQL 16
+        env:
+          CANOPY_TEST_DATABASE_URL: postgresql+asyncpg://canopy:canopy@127.0.0.1:5432/canopy
+        run: pytest -q tests/test_claim_race.py
+      - name: MySQL 8.4
+        env:
+          CANOPY_TEST_DATABASE_URL: mysql+aiomysql://canopy:canopy@127.0.0.1:3306/canopy
+        run: pytest -q tests/test_claim_race.py
+      - name: MariaDB 11.4
+        env:
+          CANOPY_TEST_DATABASE_URL: mysql+aiomysql://canopy:canopy@127.0.0.1:3307/canopy
+        run: pytest -q tests/test_claim_race.py
+      - name: Live-refresh events over Redis
+        env:
+          CANOPY_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+        run: pytest -q tests/test_events.py
+
   frontend:
     name: Frontend lint, test, build
     runs-on: ubuntu-latest
@@ -176,6 +252,12 @@ jobs:
           cache: pip
           cache-dependency-path: plugin/mcp_server/requirements.txt
       - run: pip install -r requirements.txt
+      # The tools aren't type-checked like the backend, so at least catch undefined names and
+      # syntax errors (the pyflakes rules) — with the backend's pinned ruff.
+      - name: ruff (pyflakes rules)
+        run: |
+          pip install "ruff==0.17.0"
+          ruff check --isolated --select F,E9 .
       # Run from stdin so the working directory (mcp_server/) is on sys.path for `import server`.
       - name: Import the server and list its tools
         run: |
@@ -195,6 +277,15 @@ jobs:
           retired = {"trigger_jira_sync", "link_jira_ticket", "list_jira_links", "resync_jira_link",
                      "unlink_jira_ticket", "ingest_jira_issues", "push_draft_to_jira"}
           assert not names & retired, f"retired tool names still registered: {sorted(names & retired)}"
+          # The agent work queue's verbs, and every tool the plugin's hooks call on this server.
+          import json, pathlib
+          work = {"find_work", "claim_work", "get_work_brief", "report_progress", "submit_plan",
+                  "ask_human", "submit_work", "submit_review", "release_work", "wait_for_gate"}
+          assert work <= names, f"work-queue tools missing: {sorted(work - names)}"
+          hooks = json.loads(pathlib.Path("../hooks/hooks.json").read_text())["hooks"]
+          called = {h["tool"] for groups in hooks.values() for g in groups for h in g["hooks"]
+                    if h.get("type") == "mcp_tool"}
+          assert called and called <= names, f"hooks call missing tools: {sorted(called - names)}"
           PY
       - name: Refuse to serve beyond loopback without an auth token
         run: |
@@ -204,3 +295,34 @@ jobs:
           set -e
           cat refusal.txt
           test "$code" -eq 1 && grep -q CANOPY_MCP_AUTH_TOKEN refusal.txt
+      - name: Per-caller mode serves beyond loopback but needs each caller's own token
+        run: |
+          CANOPY_MCP_TRANSPORT=http CANOPY_MCP_HOST=0.0.0.0 CANOPY_MCP_PORT=8790 \
+            CANOPY_MCP_AUTH_MODE=per_caller CANOPY_API_BASE_URL=http://127.0.0.1:9 \
+            python server.py > per_caller.log 2>&1 &
+          pid=$!
+          for _ in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8790/mcp/ && break; sleep 1; done
+          anonymous=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/mcp/)
+          forged=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Authorization: Bearer forged' \
+            http://127.0.0.1:8790/mcp/)
+          kill "$pid" || true
+          cat per_caller.log
+          test "$anonymous" = "401" && test "$forged" = "401"
+
+  runner:
+    name: Reference SDK runner unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runners/sdk
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # The unit tests fake canopy, git and the session, so the Agent SDK isn't needed here.
+      - run: pip install "httpx>=0.28.1" pytest "ruff==0.17.0"
+      - run: ruff check --isolated --select F,E9,B,I --line-length 100 .
+      - run: python -m pytest -q

@@ -5,6 +5,8 @@ import {
   cloneSnippet,
   daysUntil,
   expiryPhrase,
+  lastUsedPhrase,
+  scopeSummary,
   mcpJsonSnippet,
   mcpServerDisplayPath,
   repoDirName,
@@ -27,6 +29,26 @@ describe("agentSetup", () => {
     expect(daysUntil(new Date(NOW + 7 * DAY).toISOString(), NOW)).toBe(7);
     expect(daysUntil(new Date(NOW - 1 * DAY).toISOString(), NOW)).toBe(-1);
     expect(daysUntil("not-a-date", NOW)).toBe(0);
+  });
+
+  it("scopeSummary names the roles and the project scope", () => {
+    expect(scopeSummary({ roles: [], project_ids: [] })).toBe("Any role · all projects");
+    expect(scopeSummary({ roles: ["reviewer"], project_ids: [4] }, { 4: "PAY" })).toBe(
+      "Reviewer · PAY",
+    );
+    expect(scopeSummary({ roles: ["implementer", "qa"], project_ids: [1, 2] })).toBe(
+      "Implementer, Qa · 2 projects",
+    );
+  });
+
+  it("lastUsedPhrase is relative and handles never-used tokens", () => {
+    expect(lastUsedPhrase(null, NOW)).toBe("Never used");
+    expect(lastUsedPhrase(new Date(NOW - 30_000).toISOString(), NOW)).toBe("Used just now");
+    expect(lastUsedPhrase(new Date(NOW - 15 * 60_000).toISOString(), NOW)).toBe(
+      "Used 15 min ago",
+    );
+    expect(lastUsedPhrase(new Date(NOW - 5 * 3600_000).toISOString(), NOW)).toBe("Used 5 h ago");
+    expect(lastUsedPhrase(new Date(NOW - 2 * DAY).toISOString(), NOW)).toBe("Used 2 days ago");
   });
 
   it("expiryPhrase reflects status", () => {

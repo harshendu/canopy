@@ -22,6 +22,7 @@ from app.schemas.entities import (
     BlockerRead,
     DocReferenceRead,
     EngineerRead,
+    MyGateRead,
     MySprintRead,
     MyTodayResponse,
     MyWorkspaceResponse,
@@ -31,6 +32,32 @@ from app.services import design_docs
 from app.services.features import feature_enabled
 
 router = APIRouter()
+
+
+async def my_gates(session: SessionDep, user: CurrentUser) -> list[MyGateRead]:
+    """Open gates this person may decide, oldest first (empty with `ai.work_queue` off)."""
+    if not await feature_enabled(session, "ai.work_queue"):
+        return []
+    from app.models.base import GateKind, utcnow
+    from app.models.project import Project
+    from app.services import gates as gate_service
+
+    now = utcnow()
+    out: list[MyGateRead] = []
+    for gate in await gate_service.gates_for(session, user):
+        if gate.id is None:
+            continue
+        task = await session.get(Task, gate.task_id)
+        project = await session.get(Project, gate.project_id)
+        out.append(MyGateRead(
+            id=gate.id, task_id=gate.task_id, project_id=gate.project_id, kind=gate.kind,
+            origin=gate.origin, title=gate.title, stage=gate.stage,
+            task_key=task.key if task else None, task_name=task.name if task else None,
+            project_key=project.key if project else None,
+            age_hours=round(max(0.0, (now - gate.created_at).total_seconds()) / 3600, 1),
+            parked=gate.kind == GateKind.escalation.value and gate.origin == "system",
+        ))
+    return out
 
 
 @router.get("/workspace", response_model=MyWorkspaceResponse)
@@ -154,6 +181,7 @@ async def my_workspace(session: SessionDep, user: CurrentUser) -> MyWorkspaceRes
         stakeholder_decisions=stakeholder,
         blockers=blockers,
         my_sprints=my_sprints,
+        gates=await my_gates(session, user),
         docs_to_review=docs_to_review,
     )
 
@@ -204,5 +232,6 @@ async def my_today(session: SessionDep, user: CurrentUser) -> MyTodayResponse:
         ]
 
     return MyTodayResponse(
-        user=UserRead.model_validate(user), focus_tasks=focus, decisions_to_push=decisions
+        user=UserRead.model_validate(user), focus_tasks=focus, decisions_to_push=decisions,
+        gates=await my_gates(session, user),
     )

@@ -1,0 +1,4 @@
+# The reference runner (docs/AGENT_RUNNERS.md). The stdio MCP mode also needs the plugin's MCP
+# server dependencies: pip install -r ../../plugin/mcp_server/requirements.txt
+claude-agent-sdk>=0.2,<1
+httpx>=0.28.1

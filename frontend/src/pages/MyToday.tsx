@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { MyToday as Today, MyWorkspace, Proposal } from "../api/types";
 import { STATUS_LABELS } from "../lib/decisions";
+import { gateLabel, waitedPhrase } from "../lib/execution";
 import { featureOn, useFeatures } from "../lib/useFeatures";
 import { PageHeader } from "../components/PageHeader";
 import { PreviewLink } from "../components/PreviewLink";
@@ -58,6 +59,31 @@ export default function MyToday() {
           </span>
           staged change {reviewCount === 1 ? "proposal" : "proposals"} await your review
         </Link>
+      )}
+
+      {(data.gates ?? []).length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <h2 className="mb-2 flex items-center gap-2 font-semibold text-amber-900">
+            <span className="rounded-full bg-amber-500 px-1.5 text-xs font-semibold text-white">
+              {(data.gates ?? []).length}
+            </span>
+            Agent work waiting on your decision
+          </h2>
+          <ul className="space-y-1 text-sm">
+            {(data.gates ?? []).map((g) => (
+              <li key={g.id}>
+                <Link to={`/reviews/gates/${g.id}`} className="text-amber-950 hover:underline">
+                  <span className="mr-1 rounded bg-white/70 px-1 text-xs text-amber-800">
+                    {gateLabel(g)}
+                  </span>
+                  {g.task_key ? `${g.task_key} · ` : ""}
+                  {g.title}
+                </Link>
+                <span className="ml-1 text-xs text-amber-700">waiting {waitedPhrase(g.age_hours)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {blockers.length > 0 && (

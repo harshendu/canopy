@@ -65,6 +65,14 @@ class ADRComponentLink(TimestampMixin, table=True):
     component_id: int = Field(foreign_key="architecturecomponent.id", primary_key=True)
 
 
+class TaskComponentLink(TimestampMixin, table=True):
+    """M:N link between tasks and the architecture components they touch — how the work brief
+    finds the decisions that govern a task before any code exists (docs/AGENT_EXECUTION.md §7)."""
+
+    task_id: int = Field(foreign_key="task.id", primary_key=True)
+    component_id: int = Field(foreign_key="architecturecomponent.id", primary_key=True)
+
+
 class ADRStakeholder(TimestampMixin, table=True):
     """An engineer who must review an ADR (their latest comment carries their decision)."""
 

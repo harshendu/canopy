@@ -13,17 +13,28 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 from sqlmodel import SQLModel
 
 import app.models
 from app.core.db import get_session
 from app.main import app
 
-test_engine = create_async_engine(
-    "sqlite+aiosqlite://",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
+# The suite runs on in-memory SQLite. `CANOPY_TEST_DATABASE_URL` points the tests' engine at a
+# real PostgreSQL or MySQL/MariaDB database instead (CI runs the claim-race test that way —
+# `tests/test_claim_race.py`); every test creates and drops the whole schema there, so give it
+# a throwaway database.
+TEST_DATABASE_URL = os.environ.get("CANOPY_TEST_DATABASE_URL") or "sqlite+aiosqlite://"
+IS_SQLITE = TEST_DATABASE_URL.startswith("sqlite")
+
+test_engine = (
+    create_async_engine(
+        TEST_DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    if IS_SQLITE
+    else create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
 )
 TestSession = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 

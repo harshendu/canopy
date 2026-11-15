@@ -25,6 +25,7 @@ from app.connectors.tracker import tracker_enabled
 from app.core.crypto import encrypt_token
 from app.core.security import hash_password
 from app.models.activity import ActivityEvent
+from app.models.agent_token import AgentTokenRecord
 from app.models.architecture import (
     ADRComment,
     ADRComponentLink,
@@ -40,9 +41,12 @@ from app.models.architecture import (
 from app.models.base import (
     ADRCommentKind,
     ADRStatus,
+    AgentIntake,
+    ArtifactKind,
     BlockerCategory,
     BlockerSeverity,
     CriterionStatus,
+    Delegation,
     DeliveryMethod,
     DocLinkEntity,
     DocLinkHealth,
@@ -52,6 +56,7 @@ from app.models.base import (
     DocSource,
     DocStage,
     DocVisibility,
+    GateKind,
     LeadershipNoteKind,
     LeadershipNoteStatus,
     LeadershipScope,
@@ -70,6 +75,7 @@ from app.models.base import (
     RiskGrade,
     RiskScope,
     RiskStatus,
+    RuleScope,
     SpecStatus,
     SprintState,
     StatusCategory,
@@ -81,6 +87,7 @@ from app.models.base import (
 )
 from app.models.doc import DocLink, DocReference, DocRevision
 from app.models.draft import DraftPlan, DraftTask
+from app.models.gate import Gate
 from app.models.integration import (
     Connection,
     ExternalRef,
@@ -88,8 +95,10 @@ from app.models.integration import (
     TrackerBinding,
 )
 from app.models.leadership import InitiativeLead, LeadershipNote
+from app.models.notify import OutboundWebhook
 from app.models.org import Pod, Team, TeamMember
 from app.models.outcome import Outcome
+from app.models.policy import DeliveryRule, StagePolicy
 from app.models.project import (
     Baseline,
     Blocker,
@@ -119,9 +128,18 @@ from app.models.spec import Spec, SpecCriterion
 from app.models.sprint import Sprint
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
-from app.services import doc_kinds, sprint_service, tracker_links, tracker_sync, workflow
+from app.models.work import WorkClaim
+from app.services import (
+    doc_kinds,
+    sprint_service,
+    tracker_links,
+    tracker_sync,
+    work_service,
+    workflow,
+)
 from app.services import proposals as proposal_svc
 from app.services import sprints as sprint_metrics
+from app.services.access import project_can_edit
 from app.services.doc_urls import classify_doc_url
 from app.services.org import team_project_ids
 from app.services.planner import reschedule_project
@@ -542,7 +560,11 @@ async def _build_one_project(session: AsyncSession, refs: _Refs, spec: ProjectSp
 
     comps = await _build_project_arch(session, refs, spec, pid)
     adrs = await _build_project_adrs(session, refs, spec, pid, comps)
-    await _build_project_drift(session, spec, pid, comps)
+    for phase in spec.phases:  # decision → work traceability (the ledger follows these)
+        for ts in phase.tasks:
+            if ts.implements and ts.implements in adrs:
+                refs.tasks[spec.key][ts.name].implements_adr_id = adrs[ts.implements].id
+    await _build_project_drift(session, spec, pid, comps, adrs)
     specs = await _build_project_specs(session, refs, spec, pid, adrs)
     await _build_project_risk(session, refs, spec, pid)
     await _build_project_outcomes(session, refs, spec, pid)
@@ -641,14 +663,24 @@ async def _build_project_adrs(
 
 
 async def _build_project_drift(
-    session: AsyncSession, spec: ProjectSpec, pid: int, comps: dict[str, ArchitectureComponent]
+    session: AsyncSession, spec: ProjectSpec, pid: int, comps: dict[str, ArchitectureComponent],
+    adrs: dict[str, ArchitectureDecision],
 ) -> None:
     if not spec.drift:
         return
     for n, d in enumerate(spec.drift):
         ids = [_req(comps[c].id) for c in d.components if c in comps]
+        rule_key = f"{spec.key.lower()}:{d.kind}:{n}"
+        if d.adr in adrs:  # the drift scan's own keys, which the traceability ledger reads
+            if d.kind == "unimplemented_adr":
+                rule_key = f"adr_unimplemented:{adrs[d.adr].number}"
+            elif d.kind == "fitness_violation":
+                rule = (await session.execute(select(ADRFitnessFunction).where(
+                    ADRFitnessFunction.adr_id == adrs[d.adr].id))).scalars().first()
+                if rule is not None:
+                    rule_key = f"fitness:{rule.id}"
         await _add(session, DriftEvent(
-            project_id=pid, kind=d.kind, rule_key=f"{spec.key.lower()}:{d.kind}:{n}",
+            project_id=pid, kind=d.kind, rule_key=rule_key,
             summary=d.summary, detail=d.detail, suspected_cause=d.suspected_cause,
             affected_component_ids=ids, status=d.status))
     await _add(session, DriftScan(project_id=pid, finding_count=len(spec.drift)))
@@ -931,7 +963,7 @@ async def _build_connections(session: AsyncSession, refs: _Refs) -> None:
     for pr in refs.ds.pull_requests:
         pr_task = refs.tasks[refs.ds.flagship_key].get(pr.task_name)
         await _add(session, PullRequest(
-            repo=repo, number=pr.number, title=pr.title, state=pr.state,
+            repo=repo, number=pr.number, title=pr.title, state=pr.state, merged=pr.merged,
             url=f"https://github.com/{repo}/pull/{pr.number}", author=pr.author,
             task_id=pr_task.id if pr_task is not None else None))
 
@@ -1221,6 +1253,175 @@ async def _build_proposals(session: AsyncSession, refs: _Refs) -> None:
         await _build_one_proposal(session, refs, spec)
 
 
+async def _agent_caller(
+    session: AsyncSession, owner: User, label: str, tokens: dict[str, AgentTokenRecord]
+) -> work_service.Caller:
+    """The agent session `label` runs as: a token the owner issued (one per label)."""
+    token = tokens.get(label)
+    if token is None:
+        token = await _add(session, AgentTokenRecord(
+            user_id=_req(owner.id), jti=f"demo-agent-{label}", label=label,
+            expires_at=utcnow() + timedelta(days=30), max_active_claims=5))
+        tokens[label] = token
+    return await work_service.caller_for(session, owner, token, is_agent=True)
+
+
+async def _build_one_agent_work(
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec, work: catalog.AgentWorkSpec,
+    person: work_service.Caller, tokens: dict[str, AgentTokenRecord],
+) -> None:
+    task = refs.tasks.get(spec.key, {}).get(work.task)
+    project = refs.projects.get(spec.key)
+    if task is None or task.id is None or project is None:
+        return
+    await work_service.set_delegation(session, task, person, Delegation.agent.value)
+    if work.components:
+        names = (await session.execute(
+            select(ArchitectureComponent).where(ArchitectureComponent.project_id == project.id)
+        )).scalars().all()
+        ids = [c.id for c in names if c.name in work.components and c.id is not None]
+        await work_service.set_components(session, task, ids, person)
+    if work.state == "ready":
+        return
+    agent = await _agent_caller(session, person.user, work.agent, tokens)
+    info = work_service.AgentInfo(label=work.agent, runner=work.runner)
+    if work.state == "parked":
+        for note in work.attempt_notes:
+            claim = await work_service.claim_work(session, agent, "implementer",
+                                                  task_id=task.id, agent=info)
+            if claim is None:
+                return
+            await work_service.release_work(session, claim, agent, reason="could not finish",
+                                            note=note)
+        return
+    claim = await work_service.claim_work(session, agent, "implementer", task_id=task.id,
+                                          agent=info)
+    if claim is None:
+        return
+    await work_service.submit_plan(session, claim, agent, body=work.plan, data={
+        "approach": work.plan, "affected_paths": list(work.affected_paths),
+        "steps": [{"content": step, "status": "pending"} for step in work.steps],
+        "confidence": "medium",
+    })
+    if work.state == "working":
+        steps = [{"content": step, "status": "completed" if i < 2 else "pending"}
+                 for i, step in enumerate(work.steps)]
+        await work_service.heartbeat(session, claim, agent, note=work.note, steps=steps)
+    elif work.state == "question":
+        gate = await work_service.ask_human(
+            session, claim, agent, kind=GateKind.question,
+            title=f"Question on {task.key or task.name}", prompt=work.question or "",
+            options=[{"value": o, "label": o} for o in work.options], allow_text=True)
+        # It has waited a while: past its reminder, so the inbox and the alerts show it.
+        waited = timedelta(hours=5)
+        gate.created_at -= waited
+        if gate.remind_at is not None:
+            gate.remind_at -= waited
+        if gate.escalate_at is not None:
+            gate.escalate_at -= waited
+    elif work.state == "handed_off":
+        await work_service.submit_work(
+            session, claim, agent, kind=ArtifactKind.handoff, body=work.note or "",
+            data={"summary": work.note or "", "verification": [
+                {"command": "pytest -q services/checkout", "result": "passed"}]})
+
+
+async def _build_agent_work(session: AsyncSession, refs: _Refs) -> None:
+    """Delegate the dataset's agent work and run it through the work queue (as the dataset's
+    agent owner, who must be able to plan the project), then set each project's intake."""
+    owner = refs.users.get(refs.ds.agent_owner_email or "")
+    if owner is None:
+        return
+    person = await work_service.caller_for(session, owner, None, is_agent=False)
+    tokens: dict[str, AgentTokenRecord] = {}
+    for spec in refs.ds.projects:
+        project = refs.projects.get(spec.key)
+        if project is None or (not spec.agent_work and spec.agent_intake == "off"):
+            continue
+        if not await project_can_edit(session, owner, project):
+            continue
+        await work_service.set_intake(session, project, person, AgentIntake.on.value)
+        for work in spec.agent_work:
+            await _build_one_agent_work(session, refs, spec, work, person, tokens)
+        if spec.agent_intake != AgentIntake.on.value:
+            await work_service.set_intake(session, project, person, spec.agent_intake)
+        await session.flush()
+
+
+async def _build_stage_policies(session: AsyncSession, refs: _Refs) -> None:
+    """Projects that adopted the agentic-delivery template (Appendix A): its columns and
+    policies become the project's own, through the same service the policy API uses — applied
+    after the agent work, like a team adopting it mid-flight."""
+    from app.services import policy_template
+
+    owner = refs.users.get(refs.ds.agent_owner_email or "")
+    if owner is None:
+        return
+    for spec in refs.ds.projects:
+        project = refs.projects.get(spec.key)
+        if spec.stage_policy != "agentic-delivery" or project is None or project.id is None:
+            continue
+        if not await project_can_edit(session, owner, project):
+            continue
+        await policy_template.apply_template(
+            session, owner, actor=owner.full_name or owner.email, team_id=None,
+            project_id=project.id)
+        await session.flush()
+
+
+def _rule_scope(refs: _Refs, scope: str) -> tuple[RuleScope, int] | None:
+    if scope == RuleScope.workspace.value:
+        return RuleScope.workspace, 0
+    level, _, key = scope.partition(":")
+    if level == RuleScope.team.value:
+        team = refs.teams.get(key)
+        return (RuleScope.team, team.id) if team is not None and team.id is not None else None
+    if level == RuleScope.project.value:
+        project = refs.projects.get(key)
+        return ((RuleScope.project, project.id)
+                if project is not None and project.id is not None else None)
+    return None
+
+
+async def _build_rules(session: AsyncSession, refs: _Refs) -> None:
+    """Working agreements and the Definition of Done at each scope (§10)."""
+    owner = refs.users.get(refs.ds.agent_owner_email or "")
+    for spec in refs.ds.rules:
+        where = _rule_scope(refs, spec.scope)
+        if where is None:
+            continue
+        level, scope_id = where
+        adr_id: int | None = None
+        if spec.source_adr is not None and level == RuleScope.project:
+            adr_id = (await session.execute(
+                select(ArchitectureDecision.id).where(
+                    ArchitectureDecision.project_id == scope_id,
+                    ArchitectureDecision.title == spec.source_adr)
+            )).scalars().first()
+        await _add(session, DeliveryRule(
+            scope_level=level.value, scope_id=scope_id, key=spec.key, title=spec.title,
+            body=spec.body, kind=spec.kind, roles=list(spec.roles),
+            selector={"tags": list(spec.tags), "components": [], "paths": list(spec.paths)},
+            enforcement=spec.enforcement, locked=spec.locked, disabled=spec.disabled,
+            source_adr_id=adr_id, source_url=spec.source_url,
+            created_by_user_id=owner.id if owner is not None else None))
+
+
+async def _build_webhooks(session: AsyncSession, refs: _Refs) -> None:
+    """Example outbound webhooks (§AE10), switched off — the Notifications pages show the
+    setup without sending anything to placeholder URLs."""
+    owner = refs.users.get(refs.ds.agent_owner_email or "")
+    for spec in refs.ds.webhooks:
+        where = _rule_scope(refs, spec.scope)
+        if where is None:
+            continue
+        level, scope_id = where
+        await _add(session, OutboundWebhook(
+            scope_level=level.value, scope_id=scope_id, name=spec.name, url=spec.url,
+            format=spec.format, events=list(spec.events), enabled=spec.enabled,
+            created_by_user_id=owner.id if owner is not None else None))
+
+
 async def load_seed_data(
     session: AsyncSession, keep_user_ids: set[int], dataset: Dataset | None = None
 ) -> dict[str, int]:
@@ -1241,6 +1442,10 @@ async def load_seed_data(
     await _build_scenarios(session, refs)
     await _build_leadership_notes(session, refs)
     await _build_proposals(session, refs)
+    await _build_rules(session, refs)
+    await _build_agent_work(session, refs)
+    await _build_stage_policies(session, refs)
+    await _build_webhooks(session, refs)
     await session.commit()
     return await seed_summary(session)
 
@@ -1269,5 +1474,7 @@ async def seed_summary(session: AsyncSession) -> dict[str, int]:
         "draft_plans": DraftPlan, "connections": Connection, "scenarios": Scenario,
         "activity_events": ActivityEvent, "status_history": TaskStatusHistory,
         "documents": DocReference, "doc_links": DocLink, "proposals": Proposal,
+        "work_claims": WorkClaim, "gates": Gate, "stage_policies": StagePolicy,
+        "rules": DeliveryRule, "webhooks": OutboundWebhook,
     }
     return {name: await _count(session, model) for name, model in models.items()}

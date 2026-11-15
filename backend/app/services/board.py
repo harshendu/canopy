@@ -14,12 +14,29 @@ from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from app.models.base import CANOPY_OWNER, StatusCategory, TaskType
+from app.models.base import (
+    CANOPY_OWNER,
+    ClaimState,
+    GateKind,
+    GateStatus,
+    StatusCategory,
+    TaskType,
+    utcnow,
+)
+from app.models.gate import Gate
 from app.models.org import Team
 from app.models.project import Blocker, Project, Task, TaskStatusHistory
 from app.models.sprint import Sprint
-from app.schemas.entities import BoardLaneRead, BoardResponse, BoardTaskRead, BoardViewer
-from app.services import flow
+from app.models.work import WorkClaim
+from app.schemas.entities import (
+    BoardClaimRead,
+    BoardGateRead,
+    BoardLaneRead,
+    BoardResponse,
+    BoardTaskRead,
+    BoardViewer,
+)
+from app.services import flow, policy_service, work_service
 from app.services.links import external_urls
 from app.services.org import team_project_ids
 from app.services.sprint_service import (
@@ -29,6 +46,7 @@ from app.services.sprint_service import (
     team_delivery,
     team_sprints,
 )
+from app.services.stage_policy import Pipeline
 from app.services.workflow import (
     category_of_task,
     history_point,
@@ -121,6 +139,7 @@ async def build_board_response(
     sprint_id: int | None = None,
     delivery_method: str = "kanban",
     scope_counts: dict[str, int] | None = None,
+    pipeline: Pipeline | None = None,
 ) -> BoardResponse:
     """`scope_counts`: open cards per status across the WIP scope (`wip_counts`) — a column's
     limit counts the whole scope, which can be wider than this board (a team's other projects,
@@ -148,6 +167,7 @@ async def build_board_response(
     mirrored_ids = [t.id for t in leaves if t.id is not None and t.status_owner != CANOPY_OWNER]
     urls = await external_urls(session, mirrored_ids)
     by_id = {t.id: t for t in leaves}
+    claims, gates = await agent_badges(session, ids)
 
     lanes: list[BoardLaneRead] = []
     for lane in board.lanes:
@@ -178,6 +198,11 @@ async def build_board_response(
                     sprint_id=t.sprint_id,
                     story_points=t.story_points,
                     duration=t.duration,
+                    delegation=t.delegation,
+                    claim=claims.get(bt.id),
+                    gate=gates.get(bt.id),
+                    parked=bt.id in gates and gates[bt.id].parked,
+                    awaiting_move=work_service.awaiting_move(t),
                 )
             )
         scope_wip = (
@@ -203,6 +228,11 @@ async def build_board_response(
                 over_limit=over_limit,
                 in_workflow=lane.in_workflow,
                 scope_wip=scope_wip,
+                worked_by=(
+                    stage.worked_by
+                    if pipeline is not None and (stage := pipeline.stage(lane.status)) is not None
+                    else None
+                ),
             )
         )
     return BoardResponse(
@@ -217,6 +247,51 @@ async def build_board_response(
         sprint_id=sprint_id,
         delivery_method=delivery_method,
     )
+
+
+async def agent_badges(
+    session: AsyncSession, task_ids: list[int]
+) -> tuple[dict[int, BoardClaimRead], dict[int, BoardGateRead]]:
+    """The live claim and the open gate (oldest first) of each card, for the board's badges."""
+    if not task_ids:
+        return {}, {}
+    now = utcnow()
+    claims: dict[int, BoardClaimRead] = {}
+    for claim in (
+        await session.execute(
+            select(WorkClaim).where(
+                col(WorkClaim.task_id).in_(task_ids),
+                col(WorkClaim.state) == ClaimState.active.value,
+            )
+        )
+    ).scalars().all():
+        assert claim.id is not None
+        claims[claim.task_id] = BoardClaimRead(
+            id=claim.id,
+            role=claim.role,
+            label=claim.agent_label,
+            since=claim.claimed_at,
+            heartbeat_age_s=max(0, int((now - claim.heartbeat_at).total_seconds())),
+        )
+    gates: dict[int, BoardGateRead] = {}
+    for gate in (
+        await session.execute(
+            select(Gate)
+            .where(col(Gate.task_id).in_(task_ids), col(Gate.status) == GateStatus.open.value)
+            .order_by(col(Gate.created_at))
+        )
+    ).scalars().all():
+        if gate.task_id in gates or gate.id is None:
+            continue
+        gates[gate.task_id] = BoardGateRead(
+            id=gate.id,
+            kind=gate.kind,
+            origin=gate.origin,
+            parked=gate.kind == GateKind.escalation.value and gate.origin == "system",
+            title=gate.title,
+            age_hours=round(max(0.0, (now - gate.created_at).total_seconds()) / 3600, 1),
+        )
+    return claims, gates
 
 
 async def filter_by_sprint(
@@ -278,6 +353,7 @@ async def project_board(
         scope_counts=await wip_counts(
             session, await wip_scope_project_ids(session, project, workflow)
         ),
+        pipeline=await policy_service.resolve_pipeline(session, project),
     )
 
 

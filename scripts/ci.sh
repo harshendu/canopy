@@ -21,6 +21,11 @@ echo "▶ backend: mypy"
 echo "▶ backend: pytest"
 ( cd "$REPO_ROOT/backend" && "$PY" -m pytest -q )
 
+# The reference SDK runner's unit tests (they fake canopy, git and the session; the backend venv
+# has httpx and pytest).
+echo "▶ runner: pytest"
+( cd "$REPO_ROOT/runners/sdk" && "$PY" -m pytest -q -p no:cacheprovider )
+
 # 3. Frontend: lint (eslint), unit tests (vitest), typecheck + production build.
 echo "▶ frontend: lint"
 ( cd "$REPO_ROOT/frontend" && npm run lint )

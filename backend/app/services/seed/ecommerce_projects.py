@@ -14,6 +14,7 @@ from __future__ import annotations
 from app.services.seed.catalog import (
     ADRCommentSpec,
     ADRSpec,
+    AgentWorkSpec,
     BindingSpec,
     BlockerSpec,
     ComponentSpec,
@@ -73,7 +74,8 @@ _ONEPAGE = ProjectSpec(
         )),
         PhaseSpec("Build", (
             TaskSpec("Checkout session service", 8, "Done", 27, "Rahul Verma", ("backend",),
-                     (6, 8, 12)),
+                     (6, 8, 12),
+                     implements="Server-side checkout session as the source of truth"),
             TaskSpec("Address & delivery step", 7, "Done", 17, "Leo Martins", ("frontend",),
                      (5, 7, 10)),
             TaskSpec("Guest checkout", 6, "In Review", 5, "Leo Martins",
@@ -157,11 +159,14 @@ _ONEPAGE = ProjectSpec(
                 created_days_ago=12, decide_by_weeks=-1),  # overdue in the queue
     ),
     drift=(
-        DriftSpec("unexpected_dependency", "web-checkout reads orders-db directly",
+        # The link is declared (see component_links), so the scan reports it as a broken
+        # fitness rule of the session ADR, not an undeclared dependency.
+        DriftSpec("fitness_violation", "web-checkout reads orders-db directly",
                   ("web-checkout", "orders-db"),
                   "Violates the server-side checkout session ADR — the UI must go through the "
                   "checkout API.",
-                  "PR #405 (order-status shortcut on the confirmation page)"),
+                  "PR #405 (order-status shortcut on the confirmation page)",
+                  adr="Server-side checkout session as the source of truth"),
     ),
     specs=(
         SpecSpec("One-page checkout",
@@ -305,6 +310,44 @@ _ONEPAGE = ProjectSpec(
     deploy_weeks=9,
     pod="Checkout & Payments",
     owner="Rahul Verma",
+    agent_intake="on",
+    agent_work=(
+        # Handed off into review by an engineer's own session.
+        AgentWorkSpec(
+            "Order review & place order", "handed_off", agent="rahul-laptop",
+            runner="interactive", components=("checkout-api", "web-checkout"),
+            plan="Add a review step rendered from the server-side checkout session, and a "
+                 "place-order endpoint that turns the session into an order exactly once.",
+            steps=("Review panel rendered from the session",
+                   "POST /checkout/{id}/place with a per-session idempotency key",
+                   "Order confirmation page and email", "Contract tests against the session"),
+            affected_paths=("services/checkout/orders.py", "web/checkout/review/"),
+            note="Review step and an idempotent place-order endpoint; a double click places "
+                 "one order. Contract tests pass.",
+        ),
+        # A headless worker stopped to ask: the spec doesn't say which wallets.
+        AgentWorkSpec(
+            "Digital wallet buttons", "question", agent="checkout-ci",
+            components=("web-checkout", "payment-gateway"),
+            plan="Render wallet buttons from the provider's SDK above the card form and hide "
+                 "them where the device can't pay.",
+            steps=("Load the provider SDK lazily", "Buttons above the card form",
+                   "Hide on unsupported devices", "Visual and accessibility tests"),
+            affected_paths=("web/checkout/payment/",),
+            question="The spec says \"digital wallets\" but not which ones. The provider "
+                     "supports Apple Pay, Google Pay and PayPal; PayPal needs its own merchant "
+                     "agreement. Which should ship at GA?",
+            options=("Apple Pay and Google Pay", "Apple Pay only",
+                     "All three, PayPal behind a flag"),
+        ),
+        # Delegated, waiting for a session (this project keeps the default pipeline, which
+        # only warns about unfinished predecessors).
+        AgentWorkSpec("A/B test vs legacy checkout", "ready", components=("web-checkout",)),
+        # A Jira-owned ticket delegated to agents (mirrored work advances by clearance, §17):
+        # held back by its open blocker — the payments team's tokenization API.
+        AgentWorkSpec("Integrate tokenized payments", "ready",
+                      components=("payment-gateway", "checkout-api")),
+    ),
 )
 
 _PAYMENTS = ProjectSpec(
@@ -330,7 +373,8 @@ _PAYMENTS = ProjectSpec(
             TaskSpec("Ledger & idempotency keys", 8, "Done", 23, "Priya Shah", ("backend",),
                      (6, 8, 12)),
             TaskSpec("Card tokenization API", 12, "In Progress", 22, "Priya Shah",
-                     ("backend", "payments"), (8, 12, 18)),
+                     ("backend", "payments"), (8, 12, 18),
+                     implements="Tokenize cards through the provider vault"),
             TaskSpec("3-D Secure challenge flow", 8, "In Progress", 6, "Gabriel Silva",
                      ("backend", "payments"), (5, 8, 12)),
             TaskSpec("Refunds & partial captures", 6, "To Do", 0, "Gabriel Silva",
@@ -472,6 +516,36 @@ _PAYMENTS = ProjectSpec(
     deploy_weeks=6,
     pod="Checkout & Payments",
     owner="Priya Shah",
+    agent_intake="on",
+    stage_policy="agentic-delivery",
+    agent_work=(
+        # A session is working on it right now.
+        AgentWorkSpec(
+            "Payment webhooks & retries", "working", agent="payments-ci",
+            components=("payments-service",),
+            plan="Verify provider webhook signatures, store each event once by its id, and "
+                 "retry failed handlers with backoff into a dead-letter queue.",
+            steps=("Signature verification", "Event store keyed by provider event id",
+                   "Retry with backoff and a dead-letter queue", "Replay tool for support"),
+            affected_paths=("services/payments/webhooks/",),
+            note="Signature checks and the event store are done; writing the retry tests.",
+        ),
+        # Three sessions gave it back: canopy parked it for a person.
+        AgentWorkSpec(
+            "Refunds & partial captures", "parked", agent="payments-ci",
+            components=("payments-service", "payments-ledger"),
+            attempt_notes=(
+                "The sandbox rejects partial captures on 3-D Secure payments; couldn't "
+                "reproduce production behaviour.",
+                "Refund amounts don't reconcile with the ledger when a capture was partial — "
+                "unclear which side is right.",
+                "Same ledger mismatch; it needs a decision on how partial refunds are booked.",
+            ),
+        ),
+        # Delegated; the agentic-delivery template's In Progress column blocks until its
+        # predecessors are done, so it waits on them.
+        AgentWorkSpec("Dual-run reconciliation", "ready", components=("payments-ledger",)),
+    ),
 )
 
 # =========================================================================== #
@@ -492,7 +566,8 @@ _SEARCH = ProjectSpec(
         )),
         PhaseSpec("Build", (
             TaskSpec("Catalog change-event indexer", 10, "Done", 40, "Tobias Klein",
-                     ("backend",), (8, 10, 15)),
+                     ("backend",), (8, 10, 15),
+                     implements="Search index fed by catalog change events"),
             TaskSpec("Typo tolerance & synonyms", 8, "Done", 29, "Tobias Klein",
                      ("backend", "relevance"), (6, 8, 12)),
             TaskSpec("Faceted filters", 8, "In Review", 21, "Diego Ramos",
@@ -709,7 +784,8 @@ _RECS = ProjectSpec(
         DriftSpec("unimplemented_adr",
                   "Consent check is accepted but recs-api does not call the consent service",
                   ("recs-api", "consent-service"),
-                  "An accepted decision with no matching dependency in the code."),
+                  "An accepted decision with no matching dependency in the code.",
+                  adr="Respect consent for personalization"),
     ),
     specs=(
         SpecSpec("Consent-aware recommendations",
@@ -766,7 +842,8 @@ _INVENTORY = ProjectSpec(
         )),
         PhaseSpec("Build", (
             TaskSpec("Stock event stream", 12, "Done", 46, "Yara Haddad",
-                     ("backend", "events"), (10, 12, 16)),
+                     ("backend", "events"), (10, 12, 16),
+                     implements="Inventory as an event stream"),
             TaskSpec("Warehouse adapter", 10, "Done", 32, "Yara Haddad", ("backend",)),
             TaskSpec("Reservation service", 10, "In Review", 4, "Yara Haddad",
                      ("backend",), (8, 10, 14)),
@@ -1316,7 +1393,8 @@ _PEAKSCALE = ProjectSpec(
         )),
         PhaseSpec("Harden", (
             TaskSpec("Checkout waiting room", 12, "In Progress", 18, "Jakub Novak",
-                     ("infra", "checkout"), (8, 12, 18)),  # aging
+                     ("infra", "checkout"), (8, 12, 18),  # aging
+                     implements="Queue shoppers instead of failing under overload"),
             TaskSpec("Autoscaling policies", 8, "To Do", 0, "Sam Adeyemi", ("infra",)),
             TaskSpec("Load test at 5x", 5, "To Do", 0, "Fatou Ndiaye", ("qa", "load")),
             TaskSpec("Peak runbooks & on-call rota", 5, "To Do", 0, "Hana Sato",

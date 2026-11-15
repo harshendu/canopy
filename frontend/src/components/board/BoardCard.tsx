@@ -1,8 +1,16 @@
 import type { PointerEvent, ReactNode, TouchEvent } from "react";
+import { Link } from "react-router-dom";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { CANOPY_OWNER, cardLabel, isClosedCategory, trackerName, type Card } from "../../lib/board";
+import {
+  claimLooksStale,
+  gateLabel,
+  heartbeatPhrase,
+  isParked,
+  waitedPhrase,
+} from "../../lib/execution";
 import { initials } from "../GanttChart";
 import { Icon } from "../icons";
 
@@ -109,6 +117,7 @@ export function BoardCardView({
                 critical
               </span>
             )}
+            <AgentBadges card={card} overlay={overlay} />
           </div>
 
           {onOpen && !overlay ? (
@@ -206,6 +215,70 @@ export function BoardCardView({
       </div>
     </div>
   );
+}
+
+/** Agent work on a card (docs/AGENT_EXECUTION.md §16): parked, a gate waiting on a person (a
+ *  link to decide it), the session working it, or simply delegated. */
+function AgentBadges({ card, overlay }: { card: Card; overlay: boolean }) {
+  if (card.awaiting_move && !card.gate && !card.claim) {
+    return (
+      <span
+        title={`canopy cleared this ticket to move to ${card.awaiting_move} — move it in ${trackerName(
+          card.status_owner,
+        )} (canopy never changes a tracker's status)`}
+        className="rounded bg-sky-100 px-1 font-medium text-sky-800"
+      >
+        → {card.awaiting_move}
+      </span>
+    );
+  }
+  if (card.gate) {
+    const parked = card.parked || isParked(card.gate);
+    const text = `${parked ? "parked" : gateLabel(card.gate).toLowerCase()} · ${waitedPhrase(
+      card.gate.age_hours,
+    )}`;
+    const tone = parked ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800";
+    const title = `${card.gate.title} — waiting on a person`;
+    return overlay ? (
+      <span className={`rounded px-1 font-medium ${tone}`}>{text}</span>
+    ) : (
+      <Link
+        to={`/reviews/gates/${card.gate.id}`}
+        {...keepOutOfDrag}
+        title={title}
+        className={`rounded px-1 font-medium hover:underline ${tone}`}
+      >
+        {text}
+      </Link>
+    );
+  }
+  if (card.claim) {
+    const stale = claimLooksStale(card.claim.heartbeat_age_s);
+    return (
+      <span
+        title={`${card.claim.label ?? "An agent session"} is working on it as ${
+          card.claim.role
+        } — last checked in ${heartbeatPhrase(card.claim.heartbeat_age_s)}`}
+        className={`inline-flex items-center gap-0.5 rounded px-1 font-medium ${
+          stale ? "bg-amber-50 text-amber-700" : "bg-violet-100 text-violet-700"
+        }`}
+      >
+        <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${stale ? "bg-amber-500" : "bg-violet-500"}`} />
+        {card.claim.role}
+      </span>
+    );
+  }
+  if (card.delegation === "agent") {
+    return (
+      <span
+        title="Delegated to agents — offered to agent sessions while the project's intake is on"
+        className="rounded border border-violet-200 px-1 text-violet-600"
+      >
+        agent
+      </span>
+    );
+  }
+  return null;
 }
 
 /** A card on the board: sortable within its column and draggable across columns. The whole

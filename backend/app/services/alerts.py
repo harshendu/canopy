@@ -7,7 +7,7 @@ rows into these lightweight dataclasses; delivery (Slack/email) is a future hook
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 
@@ -67,6 +67,59 @@ class AlertSprintTask:
 
 
 @dataclass
+class AlertGate:
+    """An open gate — agent work waiting on a person (docs/AGENT_EXECUTION.md §9.4, §19)."""
+
+    id: int
+    task_id: int
+    task_name: str
+    kind: str
+    title: str
+    age_hours: float
+    parked: bool = False  # canopy stopped offering the task (attempts used up, rework loop)
+    remind_after_hours: float | None = None
+    escalate_after_hours: float | None = None
+
+
+@dataclass
+class AlertClaim:
+    """An active work claim — a session working a task (docs/AGENT_EXECUTION.md §6.3, §19)."""
+
+    id: int
+    task_id: int
+    task_name: str
+    role: str
+    lease_minutes: int
+    heartbeat_age_minutes: float
+    active_hours: float
+
+
+@dataclass
+class AgentWorkFacts:
+    """The rest of the agent-work alert inputs (docs/AGENT_EXECUTION.md §19)."""
+
+    # (task id, name, role, hours ready) for work nobody has claimed
+    unclaimed: list[tuple[int, str, str, float]] = field(default_factory=list)
+    unclaimed_hours: float = 24
+    # (task id, name, stage, rounds so far, max rework) for review loops
+    rework: list[tuple[int, str, str, int, int]] = field(default_factory=list)
+    # (column, open cards, WIP limit, ready tasks waiting upstream)
+    saturated: list[tuple[str, int, int, int]] = field(default_factory=list)
+    # (task id, name, skipped stages) for PRs merged while the task was upstream (recent)
+    merged_ahead: list[tuple[int, str, list[str]]] = field(default_factory=list)
+    # (rule key, title, why) for rules whose source decision moved on
+    stale_rules: list[tuple[str, str, str]] = field(default_factory=list)
+    # Mirrored projects (§17): (task id, name, from, to, tracker) for tickets the tracker moved
+    # without canopy clearing it (recent) …
+    uncleared_moves: list[tuple[int, str, str | None, str | None, str]] = field(
+        default_factory=list
+    )
+    # … and (task id, ticket, to status, tracker, hours) for clearances the tracker hasn't shown
+    clearances_waiting: list[tuple[int, str, str, str, float]] = field(default_factory=list)
+    clearance_hours: float = 24
+
+
+@dataclass
 class AlertDocFlag:
     """A design-doc attention flag (computed in `app/services/doc_health.py`) — changed after
     approval, a basis link behind the doc, a gate close to its date, a shared doc made private,
@@ -99,9 +152,16 @@ def compute_alerts(
     blockers: list[AlertBlocker] | None = None,
     register_risks: list[AlertRiskItem] | None = None,
     sprint_tasks: list[AlertSprintTask] | None = None,
+    gates: list[AlertGate] | None = None,
+    claims: list[AlertClaim] | None = None,
+    claim_overrun_hours: float = 8,
+    agent_work: AgentWorkFacts | None = None,
     doc_flags: list[AlertDocFlag] | None = None,
 ) -> list[Alert]:
     alerts: list[Alert] = []
+    alerts.extend(agent_work_alerts(gates or [], claims or [], claim_overrun_hours))
+    if agent_work is not None:
+        alerts.extend(agent_flow_alerts(agent_work))
 
     for doc_flag in doc_flags or []:
         alerts.append(
@@ -211,4 +271,134 @@ def compute_alerts(
                 )
             )
 
+    return alerts
+
+
+def agent_work_alerts(
+    gates: list[AlertGate], claims: list[AlertClaim], claim_overrun_hours: float = 8
+) -> list[Alert]:
+    """Agent work that needs a person (§19): a parked task, a gate waiting past its reminder
+    (warning) or escalation threshold (error), a session that stopped checking in, a claim
+    that has run for too long."""
+    alerts: list[Alert] = []
+    for gate in gates:
+        if gate.parked:
+            alerts.append(
+                Alert(
+                    kind="task_parked",
+                    severity="error",
+                    message=(
+                        f"'{gate.task_name}' is parked — {gate.title}. Retry it with guidance, "
+                        "take it over, or cancel it."
+                    ),
+                    entity_type="task",
+                    entity_id=gate.task_id,
+                )
+            )
+            continue
+        past_escalation = (
+            gate.escalate_after_hours is not None and gate.age_hours >= gate.escalate_after_hours
+        )
+        past_reminder = (
+            gate.remind_after_hours is not None and gate.age_hours >= gate.remind_after_hours
+        )
+        if past_escalation or past_reminder:
+            alerts.append(
+                Alert(
+                    kind="gate_waiting",
+                    severity="error" if past_escalation else "warning",
+                    message=(
+                        f"'{gate.task_name}' has waited {gate.age_hours:.0f} h for a person "
+                        f"({gate.kind.replace('_', ' ')}): {gate.title}"
+                    ),
+                    entity_type="gate",
+                    entity_id=gate.id,
+                )
+            )
+    for claim in claims:
+        if claim.heartbeat_age_minutes > claim.lease_minutes / 2:
+            alerts.append(
+                Alert(
+                    kind="claim_stale",
+                    severity="warning",
+                    message=(
+                        f"The {claim.role} session on '{claim.task_name}' last checked in "
+                        f"{claim.heartbeat_age_minutes:.0f} min ago (lease {claim.lease_minutes} "
+                        "min) — it may have stopped"
+                    ),
+                    entity_type="task",
+                    entity_id=claim.task_id,
+                )
+            )
+        if claim.active_hours > claim_overrun_hours:
+            alerts.append(
+                Alert(
+                    kind="claim_overrun",
+                    severity="warning",
+                    message=(
+                        f"The {claim.role} session on '{claim.task_name}' has held it for "
+                        f"{claim.active_hours:.0f} h — check it is still making progress"
+                    ),
+                    entity_type="task",
+                    entity_id=claim.task_id,
+                )
+            )
+    return alerts
+
+
+def agent_flow_alerts(facts: AgentWorkFacts) -> list[Alert]:
+    """Where the agent work queue is stuck (§19): ready work nobody claims, review loops about
+    to hit their cap, a review or decision column full while work waits upstream, PRs merged
+    ahead of their stages, and rules whose source decision moved on."""
+    alerts: list[Alert] = []
+    for task_id, name, role, hours in facts.unclaimed:
+        if hours > facts.unclaimed_hours:
+            alerts.append(Alert(
+                kind="work_unclaimed", severity="warning",
+                message=(f"'{name}' has been ready for {role} for {hours:.0f} h — is anything "
+                         f"running {role} sessions?"),
+                entity_type="task", entity_id=task_id,
+            ))
+    for task_id, name, stage, rounds, cap in facts.rework:
+        alerts.append(Alert(
+            kind="rework_loop", severity="warning",
+            message=(f"'{name}' has gone back to {stage} {rounds} times — one more and canopy "
+                     f"escalates it (cap {cap})"),
+            entity_type="task", entity_id=task_id,
+        ))
+    for column, cards, limit, waiting in facts.saturated:
+        alerts.append(Alert(
+            kind="review_saturated", severity="warning",
+            message=(f"{column} is full ({cards}/{limit}) while {waiting} task(s) wait "
+                     "upstream — review capacity is the bottleneck"),
+        ))
+    for task_id, name, skipped in facts.merged_ahead:
+        stages = ", ".join(skipped)
+        message = (
+            f"'{name}' was merged before its {stages} stage{'s' if len(skipped) > 1 else ''} ran"
+            if skipped else f"'{name}' was merged ahead of its stages"
+        )
+        alerts.append(Alert(kind="merged_ahead_of_stage", severity="warning", message=message,
+                            entity_type="task", entity_id=task_id))
+    for key, title, why in facts.stale_rules:
+        alerts.append(Alert(
+            kind="rule_stale", severity="warning",
+            message=f"Rule '{title}' ({key}) follows a decision that moved on: {why}",
+            entity_type="rule",
+        ))
+    for task_id, name, before, after, tracker in facts.uncleared_moves:
+        alerts.append(Alert(
+            kind="moved_without_clearance", severity="warning",
+            message=(f"'{name}' moved from {before or '(no status)'} to {after or '(no status)'} "
+                     f"in {tracker} without canopy clearing it — its agent work stopped"),
+            entity_type="task", entity_id=task_id,
+        ))
+    for task_id, ticket, to_status, tracker, hours in facts.clearances_waiting:
+        if hours > facts.clearance_hours:
+            alerts.append(Alert(
+                kind="clearance_waiting", severity="warning",
+                message=(f"canopy cleared {ticket} to move to {to_status} {hours:.0f} h ago, but "
+                         f"{tracker} still doesn't show it — move it there"),
+                entity_type="task", entity_id=task_id,
+            ))
     return alerts

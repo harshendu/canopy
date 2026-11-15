@@ -16,7 +16,9 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 
 > **Looking ahead:** a critique of these flows and a proposed revision/extension live in
 > [`PROPOSED_FLOWS.md`](./PROPOSED_FLOWS.md); the delivery philosophy behind those proposals is in
-> [`EXECUTION_PHILOSOPHY.md`](./EXECUTION_PHILOSOPHY.md). This file remains the source of truth for
+> [`EXECUTION_PHILOSOPHY.md`](./EXECUTION_PHILOSOPHY.md). The design for agent sessions that pull
+> delegated tasks from canopy and move them through gated stages is in
+> [`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md). This file remains the source of truth for
 > what is *built*; those are the source of intent for what *should change*.
 
 ## Actors
@@ -197,7 +199,17 @@ forbidden from **one-way-door / external-write** actions; **two-way-door** actio
   and `get_current_user` rejects it once revoked. **List/revoke:** `GET /auth/agent-tokens` (your
   tokens + expiry + status) and `DELETE /auth/agent-tokens/{id}` (revoke, `HumanOnly`). UI: the
   **Agent Setup** tab (§A11).
-- **What an agent token is blocked from (403):** accepting a decision that is **not explicitly
+- **Scope (narrowing):** a token can be minted for given agent **roles** (`roles`, e.g.
+  `["reviewer"]`) and **projects** (`project_ids`), with a limit on how many tasks it may hold at
+  once (`max_active_claims`, default 1, max 10) — empty lists mean "whatever the issuer may do",
+  so existing tokens are unchanged. The work queue enforces them (§AE): a claim for a role the
+  token lacks is `403 role_not_allowed`, other projects' tasks are never offered, and a token at
+  its limit gets back the claim it holds. `GET /auth/session` reports an agent token's
+  scope (`agent_token`), and each token records **when it was last used** (`last_used_at`,
+  refreshed at most once a minute) — shown on the Agent Setup list.
+- **What an agent token is blocked from (403):** delegating a task, switching a project's agent
+  intake, taking work back, and deciding or reassigning a gate (§AE — and `409 use_work_claim`
+  on moving a delegated card); accepting a decision that is **not explicitly
   two-way** (`PATCH /architecture/adrs/{id}` → `accepted` unless `reversibility=two_way` — an
   *unclassified* decision fails closed too, §G2); **finalising a draft plan**
   (`POST /draft-plans/{id}/finalize`, §C10 — real work, and an external write when the project
@@ -309,8 +321,11 @@ entire install — e.g. run canopy as "plan + Jira sync + Gantt only" by disabli
 - **Catalog (two levels, defaults all-on):** `planning` (whatif · baselines · scenarios ·
   draft_plans) · `tracking` (board · burndown · forecast · alerts · blockers · delivery ·
   capacity) · `architecture` (drift) · `portfolio` (initiatives · outcomes) · `governance` (risk ·
-  retros · specs · docs) · `integrations` (webhooks) · `reporting` (exports) · `ai`
-  (agent_tokens · proposals).
+  retros · specs · docs) · `integrations` (webhooks · **outbound** — notifications and push
+  starts, §AE10) · `reporting` (exports) · `ai`
+  (agent_tokens · proposals · **work_queue** — the agent work queue, its Decisions inbox and the
+  Agents view, §AE · **stage_policy** — per-column stage policy, rules and the agent-flow
+  measures, §AE6–§AE8).
   **Core flows are not gateable** (auth, projects, tasks/deps/milestones, Gantt + CPM replan, team,
   /me, activity, live events). A feature is effectively on iff its toggle **and** its group's are on.
 - **API:** `GET /api/v1/features` (any authenticated user — the effective map every client reads),
@@ -331,9 +346,11 @@ signed-in user mint a bounded agent token (§A6), see their live tokens, revoke 
 exact steps to connect — as a full plugin or a bare MCP server.
 - **Actor:** any authenticated user (the token carries only the issuer's own permissions).
 - **UI:** `/agent-setup` (sidebar **Agent Setup**, shown to everyone). Three parts: (1) a
-  **generate** form (name + 7/14/30-day expiry) that reveals the secret **once** in a copy block
-  with a "copy it now" warning; (2) a **token list** — label, status chip (active/expired/revoked),
-  expiry phrase, and a two-click **Revoke**; (3) **Connect Claude Code** with a *Full plugin* /
+  **generate** form (name + 7/14/30-day expiry + an optional **agent role** and **project**
+  scope — one token per runner, scoped to the role it runs, is the recommended practice) that
+  reveals the secret **once** in a copy block with a "copy it now" warning; (2) a **token list** —
+  label, status chip (active/expired/revoked), its scope ("Reviewer · PAYMENTS"), expiry phrase,
+  when it was last used, and a two-click **Revoke**; (3) **Connect Claude Code** with a *Full plugin* /
   *MCP only* toggle whose copy-paste snippets auto-fill the just-minted token. When the
   `ai.agent_tokens` gate is off, the generate form is replaced by an explainer but list/revoke stay.
 - **API:** `POST /auth/agent-token` (mint, `ai.agent_tokens`-gated), `GET /auth/agent-tokens`
@@ -358,8 +375,9 @@ exact steps to connect — as a full plugin or a bare MCP server.
   false "Copied" (was BUG-13).
 - **Cross-link:** pairs with **Connectors** (§J1) — Agent Setup connects *Claude*, Connectors connect
   *data sources*; each links to the other.
-- **Not built:** per-token last-used tracking, and a shared-server (HTTP transport) token flow —
-  the tab is scoped to a per-user stdio token.
+- **Not built:** a guided shared-server (HTTP transport) setup on this tab — the snippets are for a
+  per-user stdio server; a shared HTTP server in per-caller mode (§L1) takes the same token as an
+  `Authorization: Bearer` header.
 
 ---
 
@@ -463,7 +481,9 @@ message}`.
   37signals/Cagan: green is silent, surface exceptions). Reuses the **rollup** (§R3) + **forecast**
   (§C8) and adds **open blockers** (across the initiative's projects) + **outcomes** (§Y). Returns
   a `headline`, an `attention` exception list (behind target, P85 past target, elevated risk/drift,
-  open blockers, decisions awaiting, at-risk sub-projects), the status numbers, the outcomes, and a
+  open blockers, decisions awaiting, at-risk sub-projects, and — with `ai.work_queue` on — agent
+  decisions waiting on a person past their reminder and parked agent tasks), the status numbers,
+  the outcomes, and a
   ready-to-send **`markdown`** rendering. Pure synthesis in `app/services/digest.py`.
 - **UI:** the initiative cockpit (§R3) now renders the digest at the top — the headline + the
   `attention` list — with a **Copy digest** action that copies the `markdown` rendering to the
@@ -529,19 +549,20 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
 
 ### B3. Open a project (the cockpit)
 - **UI:** `/projects/:id` — a **two-level workspace** (the pure nav model is `lib/projectNav.ts`).
-  The default landing is the **Overview** (§B3a); the 17 detail views are grouped into **six
+  The default landing is the **Overview** (§B3a); the detail views are grouped into **six
   top-level workspaces** that mirror the backend feature domains, each with a secondary sub-nav:
   - **Overview** — at-a-glance health + "needs attention" (§B3a)
   - **Schedule** *(planning)* — **Gantt** · **Dependencies** · **Roadmap** (the add-task /
     dependency forms live under Gantt, §C1/§C2)
-  - **Execution** *(tracking)* — **Board** · **Capacity** · **Delivery** (§X) · **Burndown** ·
-    **Activity**
+  - **Execution** *(tracking)* — **Board** · **Agents** (§AE5, gate `ai.work_queue`) ·
+    **Capacity** · **Delivery** (§X) · **Burndown** · **Activity**
   - **Architecture** *(architecture)* — **Decisions** · **Architecture** (map) · **Drift**
   - **Governance** *(governance)* — **Risk score** (§Q1, the computed dashboard) · **Risk
-    register** (§Q3a, the human RAID ledger — a separate sub-view) · **Specs** (§W) · **Docs**
-    (§V) · **Retros**
+    register** (§Q3a, the human RAID ledger — a separate sub-view) · **Specs** (§W) · **Rules**
+    (§AE7, gate `ai.stage_policy`) · **Docs** (§V) · **Retros**
   - **Integrations** — **Tracking** (§C12, core — so the workspace always shows) · **Draft
-    plans** (§C10) · **Tracker links** (§J9)
+    plans** (§C10) · **Tracker links** (§J9) · **Notifications** (§AE10, gate
+    `integrations.outbound`)
 
   A whole workspace disappears when *every* one of its features is gated off (§A10); a group that
   still has a core child (Schedule, Execution) always shows. The header has an **Export ▾** menu
@@ -633,7 +654,8 @@ and the notes still open — plus an `attention` list. Gate: `portfolio.leadersh
   pull requests. A **Design docs** section lists the docs filed under the task or linked to it
   (provider · format · review status · relation), with **Link a doc** for contributors on
   their own tasks (§V7); personal docs show only to their owner. Doc CRUD lives on the project
-  **Docs** tab (§V).
+  **Docs** tab (§V). With `ai.work_queue` on, an **Agent work** section delegates the task to
+  agents or takes it back, and shows why it is or isn't moving (§AE2).
 - **API:** `PATCH /api/v1/tasks/{id}` (`tags`, `estimate_optimistic`/`estimate_likely`/
   `estimate_pessimistic`; `TaskRead` returns computed `pert_mean` + `estimate_spread`) ·
   `GET/POST /api/v1/tasks/{id}/blockers` · `GET/POST /api/v1/risks?scope_level=task&scope_id=…` ·
@@ -786,7 +808,11 @@ tracker sent its statuses, where the columns come from — differs.
   shows as an extra column after its category's columns; Cancelled starts collapsed). Cards are
   **ranked** within a column; each shows its key, name, **age in status** (amber "aging" beyond
   the team's **cycle-time P85**), blocked / critical-path flags, deadline, tags, the owner's
-  initials chip and, for a mirrored card, a lock + its tracker with a link out. Column headers
+  initials chip and, for a mirrored card, a lock + its tracker with a link out. A card
+  **delegated to agents** carries a badge (§AE): `agent` while it waits, the **role** of the
+  session working it (amber when that session stopped checking in), or the **gate** holding it
+  for a person (`question · 5 h`, red `parked`) — a link to decide it. A column worked by an agent
+  role names the role in its header. Column headers
   show WIP vs the limit (red when over) — counted over the **WIP scope**: every project
   sharing these columns (the team's projects on the team's or template's columns; just this
   project when it has its own override or its tracker's statuses), so a project's board shows
@@ -796,8 +822,10 @@ tracker sent its statuses, where the columns come from — differs.
   columns**. A mirrored project says so above the board.
 - **API:** `GET /api/v1/projects/{id}/board` — lanes (`status`, `category`, `position`, `wip`
   (cards on this board), `scope_wip` (open cards across the WIP scope), `wip_limit`,
-  `over_limit` (against `scope_wip`), `in_workflow`) with cards (`key`, `status_owner`, `movable`,
-  `external_url`, `rank`, `blocked`, `is_critical`, `deadline`, `tags`, `age_days`, `aging`), plus
+  `over_limit` (against `scope_wip`), `in_workflow`, `worked_by`) with cards (`key`,
+  `status_owner`, `movable`, `external_url`, `rank`, `blocked`, `is_critical`, `deadline`,
+  `tags`, `age_days`, `aging`, and agent work: `delegation`, `claim` {role, label, since,
+  heartbeat_age_s}, `gate` {kind, origin, parked, title, age_hours}, `parked`), plus
   `mode`, `wip_enforcement`, `cycle_time_p85_days`, `aging_count` and a `viewer` block (may plan?
   which engineer? is native tracking on?) · **MCP:** `get_board`. Pure logic in
   `app/services/flow.py` (columns, WIP, P85, aging, ranks); assembly in `app/services/board.py`.
@@ -820,7 +848,8 @@ tracker sent its statuses, where the columns come from — differs.
   position: top|bottom, expected_status?}` · **MCP:** `move_task`. Omitting `to_status` only
   reorders (allowed for mirrored cards too — rank is canopy's). Every status change goes through
   the one write path (`workflow.record_transition`): it stamps the category, appends a
-  `TaskStatusHistory` row (author = the mover, `source = canopy`) and reconciles progress
+  `TaskStatusHistory` row (author = the mover, `source = canopy`, and `actor_kind` — `human`
+  for a person's own session, `agent` for an agent token acting for them) and reconciles progress
   (entering done → 100%; leaving done → 0; other manual progress kept).
 - **Who:** a planner moves any card in projects they may edit (§R6); anyone else who contributes
   — an **engineer**, or a planner outside the project — moves their own cards, or **pulls** an
@@ -829,6 +858,13 @@ tracker sent its statuses, where the columns come from — differs.
   and `engineer_id` — null for a viewer). An agent
   token acts as its issuer — a move is a two-way door; a status an agent merely *inferred* goes
   through a proposal (§AA).
+- **Delegated cards** (§AE, with `ai.work_queue` on): an **agent token** changing a delegated
+  card's status gets `409 use_work_claim` — the queue moves it (claim, then hand off). A
+  **person** may move one — the board follows reality: the target column's entry checks come
+  back as `warnings` (a check marked for everyone that blocks refuses the move, `409
+  checks_failed`, unless a planner passes `override_reason`, recorded as an `override` event),
+  the running claim ends (its session is told to stop) and gates holding the card in its old
+  column close.
 - **Refusals:** `409 status_externally_owned` (a mirrored task — the body names the `provider`
   and the item's `url`), `409 wip_limit_reached` (enforcement `block` and the column is full;
   `warn` succeeds with `warnings: ["wip_limit_exceeded"]`), `409 stale` (`expected_status` no
@@ -846,6 +882,10 @@ tracker sent its statuses, where the columns come from — differs.
   where they go → `move_tasks_to`), the WIP enforcement, **Save** (`PUT
   /projects/{id}/workflow`) and **Use team/workspace columns** (`DELETE`, when the project has
   its own). Server validation messages (e.g. a missing done column) show inline.
+- **Columns carry their stage policies** (§AE6): renaming a column keeps its policy, removing
+  one drops it, and going back to the team/workspace columns deletes the project's policies.
+  Once a workflow has policies, changing its columns is **human-only** (`403 human_only` for an
+  agent token) — an agent can't loosen its own guardrails by editing the board.
 - Built with `@dnd-kit` (lazy-loaded with the board); pure helpers (optimistic move, `canMove`,
   swimlanes, filters, drop placement, editor validation) in `frontend/src/lib/board.ts` /
   `lib/workflow.ts`, unit-tested with Vitest.
@@ -1291,8 +1331,40 @@ review it, alternatives, reversibility, and a discussion thread.
 - **API:** `GET/POST /api/v1/architecture/adrs/{id}/fitness`, `DELETE /api/v1/architecture/fitness/{id}`
   (components must be in the ADR's project) · **MCP:** `add_adr_fitness`. The ADR detail
   (`GET .../adrs/{id}`) includes `fitness_functions`.
-- **Not built:** `Task.implements_adr_id` (decision→task traceability) and a full **traceability
-  ledger** joining decision → tasks → PRs → fitness status (v2 §T) — the next slice.
+- **Traceability:** whether a decision is honored, from its rules and the work behind it, is the
+  ledger (§G8).
+
+### G8. Traceability ledger — what implemented a decision, and is it still honored **[new — v2 §T]**
+- **What:** each decision joined to the work that **implements** it (`Task.implements_adr_id`)
+  or **touches what it governs** (tasks tied to its components — a session's plan resolves the
+  components its paths touch, §AE3), the **pull requests** behind that work, the **reviews** that
+  checked the work against it (a review whose `checked` list names it, e.g. `ADR-0001`), its
+  **fitness rules** (§G7) and the **open drift** on what it governs (§N). A **verdict** is computed
+  from those facts, never stored — the first that holds, worst first: **violated** (a fitness rule
+  is broken in the code), **unimplemented** (the scan finds no code implementing it), **at risk**
+  (open drift on its components, or the reviews that checked it failed), **in progress** (its
+  implementing work is still open), **no linked work**, **not binding yet** (not accepted),
+  **honored**, **retired** (superseded, deprecated or rejected).
+- **UI:** project → **Architecture → Decisions** → the **Traceability ledger** panel: one row per
+  decision, worst first, with the reason and the counts (tasks done, PRs merged, rules broken,
+  reviews that checked it, open drift); a row opens the decision. Expand a decision →
+  **Traceability**: the verdict and why, what it governs, the tasks that implement it and those
+  that touch what it governs, their PRs (merged / open / closed, checks), the reviews that checked
+  it, each fitness rule (**Broken** / **No open violation**) and the open drift. Planners **link**
+  the task that implements it, or **unlink** one.
+- **API:** `GET /api/v1/architecture/adrs/{id}/traceability` (one decision, with its facts) ·
+  `GET /api/v1/architecture/traceability?project_id=` (the ledger) · the link is
+  `PATCH /api/v1/tasks/{id}` `{implements_adr_id}` — a decision of the task's own project
+  (`422 adr_not_in_project`; `null` unlinks). Reads are open. **MCP:**
+  `get_decision_traceability(adr_id | project_id)` (read), `link_task_to_decision`.
+- **Honest limits:** canopy doesn't read code — *violated* and *unimplemented* come from the drift
+  scan's findings (§N, run by the Drift Sentinel), so a stale scan means a stale verdict; a
+  decision's components decide what work it governs, so a decision without components traces only
+  the tasks linked to it. Decision latency (how long decisions take) is not on the ledger.
+- **Where:** pure `app/services/traceability.py` (facts → verdict, ledger row) +
+  `traceability_service.py` (loads the facts; the ledger reads the project's plans and open drift
+  once); `tests/test_traceability.py`. The demo links implementing tasks and seeds drift with the
+  scan's own keys, so the decisions show each verdict (`tests/test_demo_seed.py`).
 
 ---
 
@@ -1312,7 +1384,20 @@ review it, alternatives, reversibility, and a discussion thread.
 - **UI:** the old standalone **Alerts** tab is **gone** — alerts now live as the *lagging-indicator*
   section inside the **Risk** tab (§Q). Same content: deadline misses (error), overdue milestones /
   over-allocations / **open blockers** / **`sprint_overrun`** — an open task in an active sprint
-  whose computed end falls after the sprint ends (§C11) (warning), unscheduled work (info).
+  whose computed end falls after the sprint ends (§C11) (warning), unscheduled work (info) —
+  and, with `ai.work_queue` on, agent work that needs a person (§AE): **`task_parked`** (error —
+  sessions used up their attempts), **`gate_waiting`** (warning past the gate's reminder, error
+  past its escalation threshold), **`claim_stale`** (warning — the session hasn't checked in for
+  half its lease) and **`claim_overrun`** (warning — held longer than `WORK_CLAIM_OVERRUN_HOURS`).
+  With `ai.stage_policy` also on, where the flow is stuck (§AE8): **`work_unclaimed`** (ready for
+  a role longer than `WORK_UNCLAIMED_HOURS` — nothing is running that role's sessions),
+  **`rework_loop`** (a task has gone back for rework as often as its column allows — one more
+  escalates it), **`review_saturated`** (a review/QA/decision column is at its WIP limit while
+  work waits upstream), **`merged_ahead_of_stage`** (a PR merged before its review/QA/sign-off
+  ran, last 14 days) and **`rule_stale`** (a rule follows a decision that was superseded or
+  deprecated, §AE7). On mirrored projects (§AE9): **`moved_without_clearance`** (a ticket moved in
+  its tracker without canopy clearing it) and **`clearance_waiting`** (a cleared move the tracker
+  still doesn't show after `WORK_CLEARANCE_HOURS`).
   **Design-doc alerts** (§V8) for the docs that bear on the project: `doc_changed_since_approval`
   and `doc_behind_pin` / `doc_gate_open` (warning), `doc_restricted` (a shared Claude doc made
   private) and `doc_broken` (error) — `entity_type: "doc"`; on the project **Overview** they drill
@@ -1454,6 +1539,13 @@ component map + ADRs and maintains the queue.
   baseline), open drift (§N), ADR churn (superseded/total), and the **design docs that changed
   after approval** (approved vs current version, §V9). It's editable markdown; engineers
   **comment**; planners can **close** it.
+- **Agent work** (with `ai.work_queue` on, once sessions have worked the project): the seed adds
+  an **Agent work** section from the last 8 weeks of the project's agent flow (§AE8) — sessions
+  finished and agent-worked tasks done (with the share that needed no person but the sign-off),
+  the median time people took to decide per gate kind, first-pass acceptance, rework, parked
+  tasks, tracker moves made without canopy's clearance (§AE9), cost per task when sessions report
+  it, and the gates approved nearly every time — candidates to relax through graduated autonomy
+  (§AE6). Team-level numbers only, never per person.
 - **Follow-ups:** from a retro, mint a **task** or **propose an ADR** (linked to the retro's
   affected components) — turning lessons into tracked work.
 - **API:** `GET/POST /api/v1/projects/{id}/retrospectives`, `GET/PATCH
@@ -1655,7 +1747,10 @@ and (issues) replans on new tasks; ingest does **not** advance the connection wa
   re-ingest updates, never duplicates; assignees map to Engineers exactly like the direct sync
   (§J3 — the same engine). This is also how a tracker canopy can't read itself
   (`direct_read: false`) is kept in sync.
-- **PRs → cache:** `POST .../ingest/pull-requests` · **MCP:** `ingest_github_pull_requests`.
+- **PRs → cache:** `POST .../ingest/pull-requests` · **MCP:** `ingest_github_pull_requests`. An
+  item may also carry what the source knows of its review / check / merge state (`draft`,
+  `merged`, `merged_at`, `merged_by`, `head_sha`, `additions` / `deletions` / `changed_files`,
+  `review_decision`, `approved_by`, `checks_state` — §J6); omitted fields keep the cached value.
 - **Draft push write-back (writes=`mcp`):** when finalising can't write to the tracker by policy,
   Claude creates the items itself then `POST /api/v1/draft-plans/{id}/record-push`
   (`{results:[{draft_task_id, provider?, external_id, external_key}]}` — `provider` defaults to
@@ -1717,6 +1812,20 @@ items, GitHub→PRs); invalid rows are reported and skipped (a bad row never abo
 - **API:** `GET /api/v1/connectors/github/{id}/file?path=`, `.../github/{id}/pulls`,
   `.../github/cached-prs`; `GET /api/v1/connectors/gdrive/{id}/docs`, `.../gdrive/{id}/docs/{file_id}`
   · **MCP:** `read_repo_file`, `list_open_prs`, `read_design_doc`.
+- **Review and check state:** the cache also keeps what stage checks and gates need
+  ([`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md) §11.3): `draft`, `merged` / `merged_at` /
+  `merged_by`, the head branch and **`head_sha`**, size (`additions` / `deletions` /
+  `changed_files`), the **latest review per reviewer** and from it `approved_by` (approvals of the
+  *current head* — a stale approval doesn't count) and `review_decision` (`changes_requested`
+  while any reviewer's latest review requests changes, else `approved` / `review_required`), and
+  every check seen at the head rolled up as `checks_state` (`failing` / `pending` / `passing`; a
+  neutral or skipped check is neither). Fed by the `pull_request`, `pull_request_review`,
+  `check_suite`, `check_run` and `status` webhooks (pure roll-ups in `app/services/pr_signals.py`)
+  and by MCP / file ingest; a new head resets the checks. Nothing here moves a task's status —
+  except for **delegated** work (§AE): a GitHub approval from someone other than the person whose
+  agent did the work, or the merge, may satisfy a gate that accepts that evidence, and a PR
+  merged while its delegated, canopy-owned task is still upstream moves the task to done (a
+  `merged_ahead_of_stage` event records the stages it skipped).
 - **PR↔task link:** a cached `PullRequest` carries an optional `task_id` (the task it
   implements), set on ingest/webhook from the first issue key in its **title or head branch**
   (e.g. `feat/shop-12-checkout` → `SHOP-12`): a native canopy key (`Task.key`) or the key of any
@@ -1781,10 +1890,16 @@ items, GitHub→PRs); invalid rows are reported and skipped (a bad row never abo
 
 ## K. Real-time live refresh
 - **Flow:** while logged in, the frontend opens a Server-Sent Events stream
-  (`GET /api/v1/events/stream?token=`). Web-process actions (replan, baseline) publish change events;
-  the client invalidates its caches so views refresh without a manual reload.
-- **Limitation:** single backend process only — events from the arq worker (e.g. webhook-driven
-  syncs) don't propagate here yet (Redis pub/sub is the multi-process upgrade).
+  (`GET /api/v1/events/stream?token=`). Actions publish small change events (replan, baseline,
+  board moves, proposals, sprints, tracking, agent work — `work` events for claims, gates and
+  hand-offs); the client invalidates its caches so views refresh without a manual reload.
+- **Across processes (`EVENTS_BACKEND`):** `memory` (the default for a bare `uvicorn`) delivers
+  within one process; `redis` (what the compose files set) also publishes each event on the Redis
+  channel `canopy:events`, and every API process listens and fans the other processes' events
+  out to its own streams — so changes made by the **arq worker** (tracker syncs, webhook
+  processing, the claim reaper) and by other API processes reach open pages at once. A Redis
+  outage degrades to in-process delivery (logged) and never fails the action. The Decisions
+  inbox, the Agents view and the Reviews badge also refetch every 30 seconds as a backstop.
 
 ---
 
@@ -2223,8 +2338,8 @@ document graph (§V) or `source_url`; the governing decision links via `adr_id`.
   its problem + acceptance criteria (with a readiness bar and contributor-writable verdicts) +
   implementing tasks. Built.
 - **No status transition gating** (unlike ADRs §G2) and **no DraftPlan→Spec FK** (link a draft
-  plan's `source` to the spec, then link the synced tasks). **No `Task.implements_adr_id`** yet
-  (decision→task traceability is roadmap gap #5).
+  plan's `source` to the spec, then link the synced tasks). Decision→task traceability is the
+  ledger (§G8, `Task.implements_adr_id`).
 
 ---
 
@@ -2332,7 +2447,9 @@ the page is open**, watching it update live (§AA5).
   `doc_reference.create` (through the design-doc register-or-link path, with `visibility` — a
   private Claude doc is refused, §V6), `doc_link.create` (link a tracked doc — `doc_id`, or a
   `doc_ref` staged here — to work in scope — `entity_id`, or an `entity_ref` of the right kind
-  — with a relation, §V9). Payloads are **whitelisted per
+  — with a relation, §V9), `rule.create` (a **project** delivery rule, §AE7 — with
+  `ai.stage_policy` on and a key new to the project; how a session turns a recurring review note
+  into a rule a person accepts). Payloads are **whitelisted per
   entity/action** and validated through the same schemas as the REST API — no
   mass-assignment; a create item may declare a `ref` handle that later items point at
   (`parent_ref`, `predecessor_ref`, `task_ref`, …), so one proposal can stage "create
@@ -2359,8 +2476,9 @@ the page is open**, watching it update live (§AA5).
   `get_proposal`.
 
 ### AA2. Review & commit (human, in the UI)
-- **Queue — `/reviews`** (sidebar, with an **open-count badge**): one scannable row per
-  proposal — status, scope chip, title, the author's rationale (two lines), who staged it and
+- **Queue — `/reviews`** (sidebar, with an **open-count badge**; with `ai.work_queue` on it has
+  two tabs, **Changes** — this queue — and **Decisions**, agent work waiting on a person, §AE4):
+  one scannable row per proposal — status, scope chip, title, the author's rationale (two lines), who staged it and
   when, the revision if it has been revised, a **shape chip** row (`+N` creates / `~N`
   updates / `✓N` resolves, from `action_counts`) and, when relevant, an amber
   **"⚠ N need attention"** flag (`attention_count`: items that errored or **drifted since
@@ -2534,6 +2652,351 @@ pentest out a week"*, *"drop the vendor risk"*, *"add a go/no-go review after th
 
 ---
 
+## AE. Agent work queue — delegated execution **[new]**
+
+A person **delegates** a task to agents; a Claude session **claims** it, reads its **brief** (the
+task, its spec, the decisions that govern it, earlier attempts), records a **plan**, does the
+work and **hands off**. canopy is the state machine and the keeper of the rules: it checks each
+hand-off against the next column and moves the card — or holds the task for a person (a
+**gate**: a question, an escalation, a parked task) and shows it in the Reviews inbox. Design:
+[`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md). Feature gate **`ai.work_queue`**; nothing changes
+in a project until a planner switches its **intake** on. With **`ai.stage_policy`** on, each
+column's **stage policy** says which role works it, what it requires to enter and when a person
+looks (§AE6); **rules** carry the team's working agreements and Definition of Done (§AE7); and
+the **agent-flow** measures show how it is going (§AE8). On a **mirrored** project canopy
+clears moves instead of making them (§AE9); **notifications** tell runners and people when to act
+(§AE10); **runners** are how sessions start (§AE11).
+
+### AE1. Delegate a task · switch the project's intake
+- **UI:** task panel (§C1a) → **Agent work** → **Delegate to agents** (it answers with advice
+  when the task is a poor candidate: no description, no spec or criteria, larger than
+  `WORK_SMALL_BATCH_DAYS`, no component, or a tag people usually keep —
+  `WORK_KEEP_FOR_PEOPLE_TAGS`) / **Take it back**. Project → **Execution → Agents** → **Agent
+  intake: On · Paused · Off**.
+- **API:** `POST /api/v1/tasks/{id}/delegation` `{delegation: "agent" | null}` →
+  `{task, hints}` · `POST /api/v1/tasks/{id}/take-over` · `POST /api/v1/projects/{id}/agent-intake`
+  `{state: off|on|paused}` → `{agent_intake, stopped}`. All **human-only** (an agent token gets
+  403 — it may stage a proposal instead, §AA); delegation and take-over: a planner who may edit
+  the project or the task's assignee; intake: the project's planners. **MCP:** none (deliberate).
+- **Notes:** the assignee stays **accountable**; an unassigned task is assigned to the claiming
+  session's issuer. **Off is the kill switch**: running claims end and their sessions are told to
+  stop at their next call; paused offers nothing new. Taking a task back (or undelegating) ends
+  its claim and closes its open gates. Summary tasks can't be delegated (`422 not_a_leaf`);
+  mirrored tasks can, and advance by clearance (§AE9).
+
+### AE2. What is ready, and why the rest isn't
+- **The built-in default pipeline** (columns with no stage policy stored, §AE6): the workflow's first
+  in-progress column is worked by the **implementer** role and pulls from the last to-do column
+  before it; the column after it requires a **hand-off** from agents (`block`) and warns when no
+  PR is linked. A team that configured nothing gets exactly this.
+- **Readiness** is computed, never stored. A delegated task is not offered when intake is off or
+  paused, it is closed, not in an agent column, already claimed, held by an open gate, blocked,
+  waiting on its dependencies, its column's checks or WIP limit (`block`) refuse it, it is
+  **parked**, outside the active sprint (sprint teams), the token's role or project scope
+  excludes it, it is someone else's (an engineer's token), or nobody would be accountable.
+- **API:** `GET /api/v1/work/queue?role=&project_id=&team_id=&repo=` (ready tasks, best first —
+  work already in the stage before work to pull — plus counts by reason) ·
+  `GET /api/v1/tasks/{id}/execution` (the task's readiness per role, claims, artifacts, gates,
+  events, exit contract) · `GET /api/v1/tasks/{id}/advance-check?to_status=` (the same policy
+  evaluation a hand-off gets, as a dry run) · **MCP:** `find_work`, `get_task_execution`,
+  `check_advance`.
+
+### AE3. Claim → brief → plan → hand off (a session's side)
+- **MCP (the worker verbs):** `claim_work(role, task_id?, project_id?, team_id?, repo?,
+  wait_s?)` returns the **claim and the brief** in one call (nothing ready: `claim: null` +
+  `retry_after_s` + reasons; `wait_s` ≤ 25 long-polls) · `get_work_brief(task_id)` ·
+  `report_progress(claim_id, note, steps?)` · `submit_plan(claim_id, …)` · `submit_work` /
+  `submit_review` · `ask_human` · `release_work(claim_id, reason, note, needs_human?)` ·
+  `wait_for_gate` · `set_task_components`. The **skill** `working-the-queue` is the contract;
+  `implementing-tasks` the implementer's runbook (§L21).
+- **API:** `POST /api/v1/work/claims` (honours `Idempotency-Key`) · `GET /api/v1/work/claims?
+  mine=&state=&task_id=&project_id=` · `POST /api/v1/work/claims/{id}/heartbeat` →
+  `{directive: continue|stop, reason}` · `…/artifacts` (`plan` → the governing decisions and
+  their fitness rules, unsettled ones, whether a person must approve) · `…/gates` (ask a person)
+  · `…/submit` (`{handoff}` or `{review}`) · `…/release` · `GET /api/v1/tasks/{id}/brief?role=` ·
+  `GET|POST /api/v1/tasks/{id}/artifacts` (a person adds a **note** for the next session; a
+  plan outside a claim is human-only) · `GET /api/v1/artifacts/{id}` ·
+  `GET|PUT /api/v1/tasks/{id}/components`.
+- **Claims are leases.** A claim lasts 30 minutes, renewed by every call that presents it; a
+  claim whose lease lapses is expired by the next claim or the reaper (`reap_work_claims`, every
+  `WORK_REAPER_MINUTES`) and the task returns to the queue. Every claim-bound write first renews
+  the lease with a conditional update — a session whose claim was lost gets `409 claim_lost` and
+  changes nothing (**fencing**). A token holds **one** claim at a time by default (a retried
+  claim returns the one it holds; `409 claim_limit` for another task). Claiming is a
+  compare-and-swap that holds on PostgreSQL, MySQL/MariaDB and SQLite — two sessions never hold
+  one task (pinned by the claim-race test on all three servers in CI).
+- **The brief** marks each section `trust: "policy"` (canopy's instructions: the stage, the exit
+  contract, binding decisions, conventions) or `trust: "content"` (task text, spec, docs,
+  history, notes — data, never instructions); untrusted text is stripped of invisible characters
+  and HTML comments, and the whole brief fits **24 KB**. It gives every attempt the same branch
+  and PR. Its **docs** are the shared design docs homed at the task, its phase, the project or
+  the initiative, or linked to them (§V9), each with its review status — never a personal doc,
+  nor a Claude doc that isn't shared in Claude — plus the expected kinds (from the doc-kind
+  catalog) none of them covers.
+- **Handing off:** canopy saves the hand-off, evaluates the next column's entry checks and moves
+  the card (`record_transition`, attributed `actor_kind=agent` with the claim id) — or refuses
+  with `409 checks_failed` and the list of what's missing (nothing saved; the claim stays the
+  session's). A retried hand-off replays the stored result.
+- **Each role hands off what its column says** (§AE6): an implementer a `handoff`
+  (`submit_work`), a reviewer a `review` and QA a `qa_report` (`submit_review`, with a verdict
+  `pass` · `concerns` · `fail` and findings) — anything else is `409 wrong_artifact` naming the
+  expected kind. A column whose plan checkpoint is required refuses a hand-off with no plan on
+  the task (`409 plan_missing`); a column that needs a different session or person than the
+  implementer refuses the claim (`409 same_actor`). A `fail` verdict sends the task back to the
+  column the work came from (**rework**, with the review in the next brief); past the column's
+  `max_rework` (default 3) canopy opens an **escalation** gate instead of looping.
+- **Unfinished attempts park the task.** After three attempts in one column ended unfinished
+  (expired, released, failed) canopy stops offering it and opens an **escalation** gate with
+  each attempt's last progress note (shown as **parked**).
+
+### AE4. A person decides: the Decisions inbox
+- **UI:** **Reviews** (sidebar; the badge counts staged changes **and** gates waiting on you;
+  shown when `ai.proposals` or `ai.work_queue` is on) → **Decisions** tab (`/reviews?tab=
+  decisions`: waiting on me · all open · all) → a gate's page **`/reviews/gates/:id`**: the
+  question (or why a person is asked), the plan / hand-off revision under review with the
+  revision before it, the PR evidence, **what canopy checked** (the evaluation that raised the
+  gate, split into what canopy **saw** — CI, the PR, its own records — and what a session
+  **stated** — verdicts, criteria, attestations — so a reviewer knows what to spot-check), the
+  trail — and **the decision**: approve · request
+  changes · reject · answer (with the agent's suggested options) · retry with guidance · take it
+  over, each saying what it does; request changes / reject / retry need a note. Stage policy
+  adds three kinds (§AE6): **plan approval** and **hand-off approval** (a checkpoint's
+  conditions held) and **sign-off** (a decision column). Gates also show
+  on board cards (a link), in the task panel, on `/me` and `/me/today`, and in the Agents view.
+- **API:** `GET /api/v1/gates?status=&mine=&project_id=&task_id=&kind=` ·
+  `GET /api/v1/gates/{id}` (with the subject, previous revision, hand-off, reviews, trail) ·
+  `POST /api/v1/gates/{id}/decide` `{decision, note?, option?, subject_revision}` (**human-only**)
+  · `POST /api/v1/gates/{id}/reassign` `{approver_engineer_ids}` (planners, human-only) ·
+  `POST /api/v1/gates/{id}/cancel` (whoever asked — their agent session included — or a planner)
+  · `GET /api/v1/gates/{id}/wait?timeout_s=` (≤ 25 s) · **MCP:** `list_gates`, `get_gate`,
+  `wait_for_gate` — there is **no tool to decide** (deliberate).
+- **Rules:** who may decide follows the gate's approver rule (a question: the assignee or the
+  project's planners), widened over time by **escalation** (the project owner, then the
+  initiative's owners, then the team's directors); the person whose token produced the work
+  can't approve it when no one else could too; a decision names the revision reviewed (`409
+  stale_subject` if the work changed meanwhile); **nothing is approved by a timeout**. A
+  decision routes the task: an answer or a retry offers it again with the answer in the next
+  brief (a retry also resets the attempt count); take over undelegates it; reject cancels it.
+
+### AE5. The Agents view (project)
+- **UI:** project → **Execution → Agents**: the intake switch (the kill switch; planners), who
+  works which column, what's **ready** by role and why the rest isn't, the sessions **working
+  now** (heartbeat age, last progress note; a planner can **release** one back to the queue),
+  what **waits on people**, what is **parked**, and how to run sessions (the plugin + an agent
+  token, §A11). With `ai.stage_policy` on, the **pipeline** panel (§AE6) replaces the "who works
+  which column" card, and the **agent-flow** cards (§AE8) and the **Graduated autonomy** card
+  (§AE6) follow it.
+- **API:** `GET /api/v1/projects/{id}/agents`.
+
+### AE6. Stage policy — who works each column, what it requires, when a person looks
+- **UI:** project → **Execution → Agents** → **Pipeline**: each column with who works it (an
+  agent role, people — a **decision column** — or no one: a queue), what it **blocks** or
+  **warns** without, and when a person approves. **Edit** (people who may edit the columns at
+  the scope they come from: the project's planners for its own columns, the team's directors and
+  managers for the team's, admins for the workspace template) opens a drawer: who works it, the
+  entry checks as a checklist with an enforcement each (`off` · `warn` · `block`, applying to
+  agents or everyone), the **plan** / **hand-off** checkpoints and when they need a person, the
+  **decision** settings (who approves, not the requester, whether a PR approval or merge counts),
+  `max_rework` and the instructions sessions read in their brief. **Start from the agentic
+  delivery template** previews the Appendix A columns — Backlog → Ready → In Progress
+  (implementer) → In Review (reviewer) → QA (qa) → Sign-off (people) → Done, + Cancelled — and
+  where today's cards go, before saving them as the project's own (WIP enforcement `block`).
+- **API:** `GET|PUT /api/v1/projects/{id}/workflow/policy` · `GET|PUT /api/v1/teams/{id}/workflow/policy`
+  · `GET|PUT /api/v1/workflows/template/policy` (`{policies: {column: document | null}}` replaces
+  every policy at that scope; `{}` returns it to the built-in default; `422 policy_invalid` names
+  the column) · `POST /api/v1/projects/{id}/workflow/apply-template` ·
+  `POST /api/v1/teams/{id}/workflow/apply-template` (`{dry_run, move_tasks_to}`; the preview lists
+  the moves). Reads are open; every write is **human-only**. **MCP:** `get_stage_policy` (read).
+- **Checks** a column can require — each **observed** (canopy saw it) or **attested** (a session
+  stated it): predecessors done · no open blockers · spec approved · an artifact this round · the
+  plan approved (when it needed to be) · a gate approved · a PR linked / its checks passing / approved
+  by someone other than the requester / under a size · a review or QA verdict · acceptance
+  criteria met · the Definition of Done attested (§AE7) · a different session or person than the
+  implementer (claim-time). A person moving a card hits the checks that apply to **everyone**
+  (`block` refuses, with a planner override).
+- **When a person looks:** a **plan checkpoint** (required; a person approves when the work
+  touches a one-way-door decision, a high-criticality component or an unsettled decision, has no
+  approved spec, the plan's confidence is low, it is larger than the small-batch limits, or the
+  project is on **probation** — fewer than N agent tasks done; or a task tag), a **hand-off
+  checkpoint** on the same conditions, and **decision columns**: entering one opens a sign-off
+  gate for its approvers. Sign-off always comes before done; a PR approval or merge by someone
+  other than the requester counts (decision D3). Nothing is approved by a timeout.
+- **Graduated autonomy — pre-approved change classes:** a plan or hand-off checkpoint can list
+  change classes (`tag:<tag>`, by task tag) whose work no longer waits for a person there. The
+  **safety floor** is never pre-approved: work touching a one-way-door decision, a
+  high-criticality component or an unsettled decision, or a low-confidence plan, still asks, and
+  so does a condition naming another tag (*always ask for `security` work* holds for a task
+  tagged both `docs` and `security`); the other conditions (`always`, larger than the small-batch
+  limits, no approved spec, probation, the class's own tag) are waived for a pre-approved class,
+  and each waiver is recorded (a `pre_approved` work event). The
+  Agents view's **Graduated autonomy** card shows what is pre-approved at the implementer's
+  column, the evidence per class over 12 weeks (plans approved as written, median decision time,
+  first-pass reviews, rework, parking) and what it suggests: **pre-approve** a class after ≥ 8
+  decided checkpoints approved as written ≥ 95% of the time, none sent back, ≥ 5 first reviews
+  passing ≥ 85% and nothing parked (never for `WORK_KEEP_FOR_PEOPLE_TAGS` — security, incident,
+  compliance by default); **stop pre-approving** one whose work parked, came back for rework
+  twice, or whose first reviews passed under 70%. A person applies a suggestion or removes a class
+  — nothing changes on its own. **API:** `GET /api/v1/projects/{id}/autonomy?weeks=` ·
+  `POST /api/v1/projects/{id}/autonomy` `{checkpoint: plan|handoff, change_class, action:
+  add|remove}` (**human-only**, people who may edit the columns' policies; `409 no_checkpoint`
+  when no agent column has that checkpoint). **MCP:** `get_autonomy_suggestions` (read).
+
+### AE7. Rules — working agreements and the Definition of Done
+- **UI:** project → **Governance → Rules**: the project's effective rules in two lists —
+  **Definition of Done** (attested at every hand-off) and **Guidance** (in the brief) — each
+  with an origin chip (workspace · team · project), a lock when lower scopes can't change it, what
+  it replaces, who and what it reaches (roles, task tags, components, paths), its source decision
+  or link, and a **stale** flag when that decision was superseded. **Add rule** (at the scopes you
+  may edit), **Edit** / **Delete**, and on an inherited, unlocked rule **Override here** (the same
+  key, your wording) or **Switch off here** (listed under *Switched off here* with **Turn back
+  on**). A rule the merge sets aside (a locked rule above holds its key) is shown dimmed. Team page
+  (`/teams/:id`) → **Rules** tab: the team's own rules beside the workspace's it inherits.
+- **API:** `GET /api/v1/rules?scope_level=&scope_id=` (one scope's rows) ·
+  `GET /api/v1/rules/effective?project_id=` (resolved, with `origin`, `overrides`, the merged
+  `enforcement`, `stale`, `can_edit`) · `GET /api/v1/rules/scopes?project_id=|team_id=` (the
+  scopes that reach it and whether you may edit each) · `POST /api/v1/rules` (`409 rule_exists`) ·
+  `PATCH|DELETE /api/v1/rules/{id}`. **Human-only**: the workspace's rules — an admin; a team's —
+  its directors and managers; a project's — planners who may edit it. **MCP:** `list_rules`
+  (read); the brief carries the rules that apply to the session's role and task.
+- **Resolution:** workspace, then team, then project; a rule with the same `key` lower down
+  replaces the one above (nearest wins) unless that one is **locked**; `disabled` switches an
+  inherited rule off; for Definition-of-Done items the **stricter** enforcement always wins (a
+  project can tighten a locked rule, never loosen it). An attestation's enforcement applies even
+  where the column's own `attestations_complete` check only warns. Code conventions belong in the
+  repository's `CLAUDE.md`/`AGENTS.md` (decision D9); hard constraints are entry checks.
+- **Hand-offs attest:** `submit_work(…, attestations=[{rule_key, status: done | n/a | not_done,
+  evidence}])`; a reviewer can dispute one (a `fail`).
+- **Suggested rules — when the same note keeps coming back:** canopy groups people's
+  request-changes / reject notes on gates and reviewers' findings on failed or concerned reviews
+  by the words they share; a theme seen ≥ 3 times across ≥ 2 tasks that no rule already says is a
+  **suggestion** (how often, on which tasks, examples — shown as evidence, never as
+  instructions). A session drafts a short rule from one and stages it as a `rule` proposal item
+  (§AA1); a person accepts it in **Reviews** — rules stay human-written
+  (AGENT_EXECUTION.md §10).
+  **API:** `GET /api/v1/projects/{id}/rule-suggestions?weeks=` (default 12) · **MCP:**
+  `suggest_rules`, then `propose_changes` (skill `reviewing-changes`).
+
+### AE8. Agent flow — how the system is doing (team-level)
+- **UI:** the Agents view's cards (with `ai.stage_policy` on): **Waiting on people** (open gates,
+  past their reminder, parked), **Time to decide** (median per gate kind), **First-pass
+  acceptance** (reviews and QA; plans and sign-offs), **Rework**, **Flow efficiency** (time under
+  a claim ÷ first claim to done), **Unassisted** (agent tasks done that needed no person but the
+  sign-off), and **gates as experiments** (a gate approved nearly every time, quickly, isn't
+  protecting anything — narrow it).
+- **API:** `GET /api/v1/projects|initiatives|teams/{id}/agent-flow?weeks=` (default 8) — queue by
+  role and age, human wait by gate kind (median, P85), first-pass rates, rework, claim outcomes,
+  flow efficiency, gate load, unassisted share, cost per task when sessions report usage.
+  **Team-level only, never per person**; `sufficient: false` (with a reason) under 5 finished
+  sessions instead of a rate from noise. **MCP:** `get_agent_flow`.
+- **Alerts** (§I): `work_unclaimed`, `rework_loop`, `review_saturated`, `merged_ahead_of_stage`,
+  `rule_stale`. The initiative digest (§R5) lists gates waiting past their reminder and parked
+  tasks.
+
+### AE9. Mirrored projects — canopy clears, the tracker moves
+A mirrored ticket's status belongs to its tracker and canopy never writes it (P11). Everything
+else works as on a native project — delegation, briefs, plans, rules, gates — except how work
+advances.
+- **Policies attach to the tracker's statuses** (stored on the tracker binding): the Agents
+  view's pipeline panel edits them like a native project's (`PUT /projects/{id}/workflow/policy`
+  on a tracker-scoped workflow); the agentic-delivery template doesn't apply (`409
+  workflow_externally_owned` — its columns aren't the tracker's).
+- **Claiming and handing off clear moves instead of making them.** A claim that pulls a ticket
+  into the agent's column, a hand-off, a person's approval or request for changes all answer with
+  `tracker_transition: {key, to_status}` (`cleared_to` on a hand-off) — the session makes that
+  move with its own tracker tools, or the tracker's automation does. canopy sees it on the next
+  sync or webhook. Until it does, nothing is offered to anyone (`awaiting_tracker_move`).
+- **A move canopy didn't clear** (someone moved the ticket in the tracker) is recorded as
+  `moved_without_clearance`: the running claim ends, gates holding it in its old column close,
+  and an alert fires (§I). A clearance the tracker still doesn't show after
+  `WORK_CLEARANCE_HOURS` raises `clearance_waiting`.
+- **The approved plan goes onto the ticket**: when a person approves a plan in canopy, it is
+  posted as a comment on the mirrored ticket (trackers with the `comments` capability — Jira,
+  Linear), content only. With tracker writes routed through Claude (`write_strategy=mcp`), the
+  decision carries `response_data.tracker_comment {key, body}` for the session to post instead.
+- **UI:** a cleared card shows `→ <status>` on the board; the task panel and the gate page say
+  "Move SHOP-12 to In Review in Jira". **API:** `tracker_transition` on `POST /work/claims`, `…/submit`,
+  gate reads and `GET /tasks/{id}/execution`; `awaiting_move` on board cards.
+
+### AE10. Notifications — push starts for runners, decisions for people
+- **UI:** project → **Integrations → Notifications**, the team page's **Notifications** tab, and
+  **Admin → Integrations** (the workspace's): webhooks with their scope, format (JSON, signed —
+  or a Slack message), the events they hear, their health (last delivery, failures), **Send a
+  test**, the delivery log, switch on/off, edit, delete. Only people who may edit a webhook see
+  its full URL (a Slack URL is a credential) — the workspace's: admins; a team's: its directors
+  and managers; a project's: its planners. Human-only.
+- **Events:** `work.ready` (delegated work became ready for a role — the task key and the role
+  only, so a forged call can start a session but never hand it work), `gate.opened`,
+  `gate.reminder`, `gate.escalated`, `gate.decided`. JSON deliveries carry
+  `X-Canopy-Signature: sha256=<HMAC of the body>` when the webhook has a secret, plus
+  `X-Canopy-Event` and `X-Canopy-Delivery`. Notifications use canopy's wording and a link back,
+  never text an agent wrote.
+- **Email** to the people who may decide a gate (opened, reminder, escalation) when
+  `NOTIFY_EMAIL_GATES` and `SMTP_*` are set.
+- **Delivery:** a transactional outbox — the change that causes a notification queues it in its
+  own transaction; the worker's `deliver_outbox` (kicked after the change, and every minute)
+  sends it, retrying after 1, 5, 30, 120 and 480 minutes; a 4xx or a destination that resolves to
+  a private address fails at once (https only, no internal hosts —
+  `OUTBOUND_WEBHOOKS_ALLOW_PRIVATE` is for local development). Each readiness is announced once.
+- **API:** `GET|POST /api/v1/outbound-webhooks` (`?project_id=` / `?team_id=` for what reaches
+  them) · `PATCH|DELETE /api/v1/outbound-webhooks/{id}` · `POST …/{id}/test` · `GET …/{id}/deliveries`
+  · `GET /api/v1/outbound-webhooks/catalog` · `GET /api/v1/outbound-webhooks/scopes`. Feature gate
+  **`integrations.outbound`**. **MCP:** none (people configure where notifications go).
+
+### AE11. Runners — where the sessions come from
+canopy offers work; something you run starts sessions ([`AGENT_RUNNERS.md`](./AGENT_RUNNERS.md)
+has a recipe for each): an engineer's own session, `/loop`, a headless `claude -p` job on cron or
+CI, a scheduled cloud session, a reviewer started by pull-request events, a push start from a
+`work.ready` webhook, and the **reference SDK daemon** in [`runners/sdk/`](../runners/sdk/README.md)
+— one slot per agent token, one isolated Claude Agent SDK session per claim in its own git
+worktree, a heartbeat for the claim, `max_turns` and `max_budget_usd` per session, and a release
+with a note when a session stops without handing off.
+- **API for runners:** `POST /api/v1/work/claims/{id}/release` takes the session's `usage`;
+  `POST /api/v1/work/claims/{id}/usage` reports it after the session ended the claim itself (the
+  claim's own token, within a day). The Agents view's cost per completed task reads it.
+
+### AE12. Where it's enforced / wired
+- `app/services/work_service.py` is the **only writer** of a claim's state and of
+  `Task.active_claim_id`; `app/services/gates.py` of a gate's status and decision
+  (`tests/test_work_invariants.py`). Pure logic: `stage_policy.py` (pipeline + checks),
+  `work_queue.py` (readiness, leases), `work_brief.py` (the brief); data in `models/work.py`
+  (`WorkClaim`, `TaskArtifact`, `WorkEvent` — the audit trail) and `models/gate.py`.
+- The GitHub webhook and PR ingest feed gates (§J6); board moves by a person end claims
+  (§C9.3); alerts (§I); cascades cover every new table (`tests/test_cascade_delete.py`); live
+  refresh publishes `work` events (§K); the demo seed runs agent work through the real
+  services (§Z1). The plugin's hooks keep claims alive and stop a session ending with one held
+  (§L21).
+- Stage policy: pure `stage_policy.py` (the policy document, checks, conditions, routing, the
+  template), stored per column by `policy_store.py` (`StagePolicy` rows, carried over on column
+  renames), resolved with the workflow by `policy_service.py`; the template is applied by
+  `policy_template.py` (the API and the demo seed share it). Rules: `models/policy.py`
+  (`DeliveryRule`) + `services/rules.py` (pure `merge`/`applies`). Agent flow: pure
+  `agent_flow.py` + `agent_flow_service.py`. `tests/test_stage_policy.py` walks the Appendix A
+  pipeline end to end (implement → review → QA → sign-off → done, with rework and attestations).
+- Mirrored projects: `work_service.py` is the only writer of `Task.clearance_status` /
+  `clearance_at` (`tests/test_work_invariants.py`); the inbound sync calls
+  `work_service.on_tracker_move` after `record_transition`; `tests/test_work_mirrored.py` walks
+  claim → clear → tracker move → hand-off → review, an uncleared move and a gate approval.
+  Notifications: `models/notify.py` (`OutboundWebhook`, `OutboxMessage`) + `services/notify.py`
+  (queueing, SSRF guard, delivery) + `api/v1/outbound.py`; `tests/test_outbound.py`. The runner's
+  tests fake canopy, git and the session (`runners/sdk/test_canopy_runner.py`).
+- The learning loop: pre-approval is decided in pure `stage_policy.py`
+  (`PRE_APPROVAL_FLOOR`, `checkpoint_outcome`) through `gates.checkpoint_decision`; the evidence and
+  suggestions are pure `autonomy.py` + `autonomy_service.py`; the retro's agent-work lines are pure
+  `retro.agent_work_lines`; rule themes are pure `rule_suggestions.py`, and `rule` proposal items
+  apply through `proposals.py`. `tests/test_work_policy.py` (floor, suggestions, themes),
+  `tests/test_stage_policy.py` (pre-approved classes through the API; recurring notes → a rule
+  proposal → applied), `tests/test_retro.py`.
+
+### AE13. Not built yet
+- Graduated autonomy tunes one column per project (the implementer's, else the first agent column
+  with a checkpoint), by task tag only; there is no class by path or component yet, and no
+  pre-approval at team or workspace scope.
+- Rule suggestions group notes by shared words (no semantic matching), and a staged rule is a
+  project rule — a team or workspace rule is still written by hand (§AE7).
+- Per-person notification preferences (email is an install-wide switch today).
+
+---
+
 ## L. Claude plugin (agentic flows)
 
 ### L1. Install & configure the plugin
@@ -2551,7 +3014,11 @@ pentest out a week"*, *"drop the vendor risk"*, *"add a go/no-go review after th
   **streamable HTTP** (`CANOPY_MCP_TRANSPORT=http` + `CANOPY_MCP_HOST`/`PORT`/`PATH`, default path
   `/mcp`; **SSE remains as a legacy option**) and point the session at
   `https://<host>/mcp` with `"type": "http"`. `CANOPY_MCP_AUTH_TOKEN` is required to bind beyond
-  loopback (the server refuses to start without it) — clients send `Authorization: Bearer <token>`. Backend
+  loopback (the server refuses to start without it) — clients send `Authorization: Bearer <token>`.
+  **Per-caller mode** (`CANOPY_MCP_AUTH_MODE=per_caller`): each client sends **its own** canopy
+  agent token instead; the server validates it with the API (`GET /auth/session`, re-checked at
+  least once a minute so a revoked token stops working) and uses it for that request's calls, so
+  every session acts as itself with its own scope (§A6) and the server holds no canopy credential. Backend
   connection and transport are all read from **environment variables**, so a headless cloud
   session needs no interactive plugin config. See README → *Production deployment* and
   `docs/PRODUCTION.md` (Caddy routes `/mcp` and ngrok exposes it publicly).
@@ -2616,7 +3083,8 @@ pentest out a week"*, *"drop the vendor risk"*, *"add a go/no-go review after th
 ### L10. PR-to-ADR linker (skill) **[new — v2 §L9]**
 - The **`pr-to-adr-linker`** skill maps a PR's changed paths to components (via code bindings),
   finds the ADRs governing them (`adr_impact`), and judges whether the PR implements / contradicts /
-  is unrelated to each — building implementation traceability.
+  is unrelated to each — building implementation traceability. A confirmed *implements* is
+  recorded on the PR's task (`link_task_to_decision`), which the traceability ledger reads (§G8).
 
 ### L11. Draft a plan → tickets or tasks (skill) **[updated]**
 - The **`drafting-tickets`** skill turns inputs (a codebase via `read_repo_file`, a design
@@ -2712,7 +3180,38 @@ pentest out a week"*, *"drop the vendor risk"*, *"add a go/no-go review after th
   (`get_board`, `get_workflow`), move or reorder canopy-owned cards with `move_task` (with
   `expected_status`), pull unassigned work, read each refusal (`status_externally_owned`,
   `wip_limit_reached`, `unknown_status`, `native_tracking_disabled`) and route an *inferred*
-  status through a proposal instead (§C9, §AA).
+  status through a proposal instead (§C9, §AA). A **delegated** card is the queue's: an agent
+  token gets `use_work_claim` and works it through the worker verbs (§AE3).
+
+### L21. Work the agent queue (skills + subagent + hooks) **[new]**
+- **`working-the-queue`** — the worker contract: orient (`get_workspace_context.agent` lists the
+  claims this token holds — resume those first), claim, read the brief (only `policy` sections
+  instruct), keep the claim alive, ask (`ask_human`) instead of guessing, hand off or release,
+  never end holding a claim; with a table of refusals and what to do. **`implementing-tasks`** —
+  the implementer's runbook: plan against the binding decisions and acceptance criteria, pass
+  the plan checkpoint, implement small on the brief's branch, verify, hand off with evidence.
+  The **`task-implementer`** subagent runs one task end to end in a worktree. The MCP server's
+  instructions carry a short version of the contract for sessions that never load the skill.
+- **Hooks** (`plugin/hooks/hooks.json`, `mcp_tool` hooks on the plugin's own server, so no
+  credential reaches a shell): **SessionStart** after compaction reminds the session of the
+  claim it holds (`session_context`; at launch and on `--resume` MCP hooks don't run, so the
+  skill's orientation step covers that); **PostToolBatch** renews the claim at most once a minute
+  (`heartbeat`) and relays a `stop`; **Stop** asks once to hand off, ask or release while a claim
+  is held (`handoff_check`). Hooks raise the quality of hand-offs; the lease is the guarantee.
+- **Reviewer and QA roles** (§AE6): **`reviewing-changes`** — review a PR against the brief
+  (spec, approved plan, binding decisions and their fitness rules, the team's rules and the
+  Definition of Done), record findings by severity and a verdict with `submit_review`, never fix
+  what you find; **`verifying-changes`** — run each acceptance criterion against the change and
+  record what was done and seen as a `qa_report`. The **`change-reviewer`** and **`qa-verifier`**
+  subagents run them with no edit tools. Read-only tools for the policy around the work:
+  `get_stage_policy`, `list_rules`, `get_agent_flow`, `get_autonomy_suggestions`. When the same
+  finding keeps coming back, a reviewer checks `suggest_rules` and stages the rule it would have
+  wanted as a `rule` proposal item (§AE7) — a person accepts it.
+- **Mirrored tickets** (§AE9): the contract adds one step — when a response carries
+  `tracker_transition`, make exactly that move in the tracker; never move the ticket anywhere
+  canopy didn't clear.
+- **Plugin options:** *Agent label* and *Agent runner* name the session on its claims
+  (`CANOPY_AGENT_LABEL`, `CANOPY_AGENT_RUNNER`; `CANOPY_SESSION_REF` records a session id).
 
 ---
 
@@ -2729,9 +3228,10 @@ team member via `Engineer.user_id` (§A5).
 - **API:** `GET /api/v1/me/workspace` · **MCP:** `my_workspace`. The response also includes
   **`blockers`** — open impediments on your tasks or raised by you (§D0), with flag/resolve in the UI
   — and **`my_sprints`** ("My sprint"): each active sprint you have work in, with just your tasks
-  (§C11). **`docs_to_review`** — design docs in review that you approve (a planner on their
-  home, §V8) — renders as **Design docs to approve** (Approve in place); **My docs** lists your
-  personal docs (§V6).
+  (§C11); **`gates`** — agent work waiting on a decision you may make (§AE4; empty with
+  `ai.work_queue` off); and **`docs_to_review`** — design docs in review that you approve (a
+  planner on their home, §V8) — rendered as **Design docs to approve** (Approve in place).
+  **My docs** lists your personal docs (§V6).
 - **Note:** if no engineer is linked to the account, the page prompts to have an admin link one on
   the Team page; tasks/decisions are empty until then.
 
@@ -2740,7 +3240,8 @@ team member via `Engineer.user_id` (§A5).
   daily signals: an **"N staged changes await your review"** banner (→ `/reviews`, gated on
   `ai.proposals`), your **open blockers** (from the `/me/workspace` payload, with resolve),
   assigned open tasks that are **critical or due within 7 days**, and the decisions to push (owned
-  ADRs in `proposed`/`under_discussion`).
+  ADRs in `proposed`/`under_discussion`) — plus **agent work waiting on your decision** (each
+  gate links to its decision page, §AE4; `gates` in the `/me/today` payload).
 - **API:** `GET /api/v1/me/today` + `GET /api/v1/me/workspace` (blockers) +
   `GET /api/v1/proposals?status=open` (review count) — the last two composed client-side.
 - **Not built (v2 §M):** PRs awaiting the user's review (needs GitHub PR-metrics, §J6) and
@@ -2794,9 +3295,21 @@ Compare/Capacity/Gantt/Milestones tabs all show a real delta), two **open change
 in the review queue (§AA — one that reshapes the Payments schedule with edits, a new phase,
 dependencies and knock-on shifts past the code-freeze deadline; one for Tracking that only
 touches registers and a milestone — staged through the same validation as `propose_changes`,
-so both preview and apply cleanly), three demo **connections**, and
+so both preview and apply cleanly), three demo **connections**, **agent work** (§AE) on
+One-Page Checkout and the Payments migration — both with intake on, run through the real
+work-queue services as Rahul's agent tokens: a task handed off into review with its plan and
+hand-off, a headless worker's open **question** ("which wallets ship at GA?") waiting past its
+reminder, a session **working** a task right now, a task **parked** after three sessions gave it
+back, and one delegated and ready; Payments then adopted the **agentic-delivery template**
+(§AE6), so its delegated cut-over task waits on its predecessors; on the Jira-mirrored flagship a
+Jira-owned ticket is delegated too, held back by its open blocker (§AE9); two example
+**webhooks**, switched off (§AE10) — **rules** at every scope
+(§AE7: workspace guidance and a locked Definition-of-Done item, a team rule per team, a Payments
+override of "small PRs", a blocking card-data attestation from its tokenization ADR, and a rule
+Search switched off) — and
 project state that makes the **alerts** digest fire (deadline miss, overdue milestone,
-over-allocation, overdue risk, open blocker) and the flow board flag **aging** work.
+over-allocation, overdue risk, open blocker, a gate waiting on a person, a parked task) and the
+flow board flag **aging** work.
 
 ### Z1a. Datasets are pluggable
 The loader is generic over a `Dataset` holder (`catalog.py`): a narrative is a pure data module
@@ -2848,6 +3361,11 @@ backlog:
   plugin) — no React wizard (deliberate); the Docs **tab** itself is built (read + add links).
 - Project rename/archive/date edits (B4) — the header has the weekend toggle + health/status/tags
   meta bar; renaming/archiving/dates are still API-only.
+- Agent work (§AE): **reassigning** a gate to named engineers and **withdrawing** a gate are
+  API-only (`POST /gates/{id}/reassign`, `/cancel`); **edit and approve** (a planner's own plan
+  revision in one step) isn't offered on the gate page — add a note or request changes instead;
+  the per-claim **artifact history** (every plan revision) reads through `GET
+  /tasks/{id}/artifacts`, while the panel shows the latest of each.
 - *(closed previously: G5 blast radius; Risk (§Q) + portfolio scores (§B1); user/role mgmt (A3) +
   engineer workspace (§M); per-role enforcement (§A3a); drift detection (§N); retros/postmortems
   (§P). Closed prior revision: **CI/observability events + Activity feed** (§J8) with incident
@@ -2869,14 +3387,19 @@ backlog:
 ## Not built (deliberately deferred — with rationale)
 - **OIDC/SSO + `HttpOnly`-cookie tokens** (§A1): a substantial auth overhaul; the `Bearer` JWT path
   works and is the safe default. Deferred rather than half-built.
-- **Multi-process real-time** (§K): Redis pub/sub — an infra change that can't be verified in this
-  single-process setup; SSE works in-process today.
 - **Capacity overhaul** (§F2–F5): hours-based allocation, interrupt budget, planned-vs-realized,
   PTO→CPM, skill-task fit — a large model change; allocation stays percent-based.
 - **PagerDuty / on-call** (§J7): an external connector with nothing to feed until the capacity
   overhaul lands.
 - **GitHub PR-latency metrics** (§J6): needs deep repo crawling (like drift's live path); the
   quality-risk family is fed by §J8 events instead.
+- **Agent execution — work queue, stage policy and human gates**: delegating a task to agents,
+  claims with leases, the work brief, plan / hand-off / review artifacts on a task, checks and
+  human gates at stage transitions, and team/project rules (Definition of Done) are **designed
+  in [`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md) and not built**. Today an agent session changes
+  work only through the board verbs it is explicitly told to use (§C9.3) and staged proposals
+  (§AA); nothing offers it work, tracks which session holds a task, or blocks a stage for a
+  person.
 - Smaller follow-ups: Slack/email **alert delivery** (I) + **decision SLA notifications** (G3);
   hard-enforced decision **approval gates** (G3, `can_accept` is advisory); connector **RBAC**;
   resource **leveling**; drift **suppression-management UI** + non-Python analysis. *(Nightly

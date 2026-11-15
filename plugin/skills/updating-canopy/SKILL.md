@@ -29,6 +29,9 @@ Call `canopy:get_workspace_context` before anything else. It tells you:
 - **`projects` / `initiatives`** — anchor every id you use against these; never guess ids.
 - **`open_proposals`** — changes already awaiting review. Read them before staging more so
   you extend rather than duplicate.
+- **`agent`** — the agent work queue: claims this token already holds (resume them first —
+  `working-the-queue`), gates waiting on the user's decision (tell them; they decide in the
+  UI), and which projects have agent intake on. Null when the queue is switched off.
 
 ## 2. The write ladder — decide *how* a change lands
 
@@ -63,6 +66,13 @@ Work out which rung every intended change sits on **before** calling any write t
 
 When in doubt between rungs 2 and 3, stage. A proposal that gets applied unchanged
 costs the human one click; an unwanted direct write costs them trust.
+
+**A separate lane: delegated execution.** When a person has *delegated* a task to agents
+(the board shows it), working it goes through the **work queue**, not this ladder: claim it,
+plan, implement, hand off — `working-the-queue`. The claim is your authority for that one
+task; canopy checks each hand-off and moves the card. Anything you discover beyond the task
+(follow-up work, a risk, a decision someone should make) still climbs this ladder — usually a
+proposal — rather than riding along in the hand-off.
 
 ## 3. Provenance discipline (non-negotiable for harvested facts)
 

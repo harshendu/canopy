@@ -33,9 +33,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -64,6 +64,7 @@ from app.models.base import (
 )
 from app.models.doc import DocLink, DocReference
 from app.models.outcome import Outcome
+from app.models.policy import DeliveryRule
 from app.models.project import Blocker, Dependency, Initiative, Milestone, Project, Task
 from app.models.proposal import Proposal, ProposalItem
 from app.models.risk_register import RiskItem
@@ -173,6 +174,23 @@ class _DecisionPayload(BaseModel):
     proposed_by_id: int | None = None
 
 
+class _RulePayload(BaseModel):
+    """A project rule a session suggests (Phase 4: recurring review notes). Rules stay
+    human-written — the proposal is how a person accepts one."""
+
+    model_config = ConfigDict(extra="forbid")
+    scope_level: Literal["project"] = "project"
+    scope_id: int
+    key: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(default="", max_length=800)
+    kind: Literal["guidance", "attestation"] = "guidance"
+    enforcement: Literal["off", "warn", "block"] = "warn"
+    roles: list[str] = []
+    tags: list[str] = []
+    paths: list[str] = []
+
+
 # Payload field whitelists per (entity, action). `*_ref` keys are the intra-proposal
 # reference alternative for the matching `*_id` key and are validated separately.
 _ALLOWED_FIELDS: dict[tuple[ProposalEntity, ProposalAction], frozenset[str]] = {
@@ -246,6 +264,10 @@ _ALLOWED_FIELDS: dict[tuple[ProposalEntity, ProposalAction], frozenset[str]] = {
     (ProposalEntity.doc_link, ProposalAction.create): frozenset(
         {"doc_id", "entity_type", "entity_id", "relation"}
     ),
+    (ProposalEntity.rule, ProposalAction.create): frozenset(
+        {"scope_level", "scope_id", "key", "title", "body", "kind", "enforcement", "roles",
+         "tags", "paths"}
+    ),
 }
 
 # `<ref key> -> <id key>` per (entity, action): where a staged item may point at an
@@ -284,6 +306,7 @@ _LABEL_FIELDS: dict[ProposalEntity, str] = {
     ProposalEntity.outcome: "statement",
     ProposalEntity.decision: "title",
     ProposalEntity.doc_reference: "url",
+    ProposalEntity.rule: "title",
     ProposalEntity.doc_link: "relation",
 }
 
@@ -346,6 +369,7 @@ def _entity_model(entity: ProposalEntity) -> type[Any]:
         ProposalEntity.outcome: Outcome,
         ProposalEntity.decision: ArchitectureDecision,
         ProposalEntity.doc_reference: DocReference,
+        ProposalEntity.rule: DeliveryRule,
         ProposalEntity.doc_link: DocLink,
     }[entity]
 
@@ -526,6 +550,8 @@ def _shape_validate(
         return OutcomeUpdate.model_validate(concrete).model_dump(exclude_unset=True)
     if entity == ProposalEntity.decision:
         return _DecisionPayload.model_validate(concrete).model_dump()
+    if entity == ProposalEntity.rule:
+        return _RulePayload.model_validate(concrete).model_dump()
     if entity == ProposalEntity.doc_link:
         return _DocLinkPayload.model_validate(concrete).model_dump()
     return DocReferenceCreate.model_validate(concrete).model_dump()
@@ -543,6 +569,9 @@ def _inject_scope_defaults(
             payload.setdefault("project_id", scope_id)
         if entity in (ProposalEntity.risk, ProposalEntity.outcome, ProposalEntity.doc_reference):
             payload.setdefault("scope_level", scope_level.value)
+            payload.setdefault("scope_id", scope_id)
+        if entity == ProposalEntity.rule and scope_level == ProposalScope.project:
+            payload.setdefault("scope_level", "project")
             payload.setdefault("scope_id", scope_id)
     item.payload = payload
 
@@ -661,10 +690,26 @@ async def _check_create(
             raise ValueError("decision project is outside this proposal's scope")
         if not str(fields.get("title") or "").strip():
             raise ValueError("decision title is required")
+    elif entity == ProposalEntity.rule:
+        if not await feature_enabled(session, "ai.stage_policy"):
+            raise ValueError("rules are switched off (feature ai.stage_policy)")
+        if fields.get("scope_id") not in projects:
+            raise ValueError("a proposed rule belongs to a project in this proposal's scope")
+        await _check_rule_key(session, int(fields["scope_id"]), str(fields["key"]))
     elif entity == ProposalEntity.doc_link:
         await _check_doc_link(
             session, payload, fields, projects, scope_level, scope_id, ref_types or {}
         )
+
+
+async def _check_rule_key(session: AsyncSession, project_id: int, key: str) -> None:
+    existing = (await session.execute(
+        select(DeliveryRule.id).where(
+            DeliveryRule.scope_level == "project", DeliveryRule.scope_id == project_id,
+            DeliveryRule.key == key)
+    )).scalars().first()
+    if existing is not None:
+        raise ValueError(f"the project already has a rule {key!r} — propose a new key")
 
 
 async def _check_doc_link(
@@ -912,6 +957,7 @@ async def _apply_item(
     fields: dict[str, Any],
     replan: set[int],
     author: str | None = None,
+    reviewer_id: int | None = None,
 ) -> int:
     """Execute one validated item; returns the created/updated entity id and accumulates
     the projects whose schedule must be recomputed."""
@@ -1038,6 +1084,24 @@ async def _apply_item(
         assert adr.id is not None
         return adr.id
 
+    if entity == ProposalEntity.rule:
+        project_id = int(fields["scope_id"])
+        await _check_rule_key(session, project_id, str(fields["key"]))
+        rule = DeliveryRule(
+            scope_level="project", scope_id=project_id, key=str(fields["key"]),
+            title=str(fields["title"]).strip(), body=str(fields.get("body") or "").strip(),
+            kind=str(fields.get("kind") or "guidance"),
+            enforcement=str(fields.get("enforcement") or "warn"),
+            roles=[str(r).strip().lower() for r in fields.get("roles") or [] if str(r).strip()],
+            selector={"tags": [str(t).strip().lower() for t in fields.get("tags") or []],
+                      "components": [], "paths": [str(p) for p in fields.get("paths") or []]},
+            created_by_user_id=reviewer_id,  # the person who accepted it: rules stay theirs
+        )
+        session.add(rule)
+        await session.flush()
+        assert rule.id is not None
+        return rule.id
+
     if entity == ProposalEntity.doc_link:
         doc = await _require(session, DocReference, int(fields["doc_id"]))
         try:
@@ -1136,7 +1200,7 @@ async def apply_proposal(
     for item in included:
         fields = _validate_payload(item.entity_type, item.action, effective_payload(item))
         fields = _resolve_refs(item, fields, refs)
-        applied_id = await _apply_item(session, item, fields, replan, author)
+        applied_id = await _apply_item(session, item, fields, replan, author, reviewer_user_id)
         item.applied_entity_id = applied_id
         item.error = None
         if item.ref:

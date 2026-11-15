@@ -144,14 +144,48 @@ async def poll_file_drops(ctx: dict[str, Any]) -> dict[str, dict]:
         return await process_drops(session, storage)
 
 
+async def reap_work_claims(ctx: dict[str, Any]) -> dict[str, int]:
+    """Agent work (docs/AGENT_EXECUTION.md §6.3, §9.4): expire claims whose lease lapsed — the
+    task returns to the queue, or parks once its attempts are used up — and widen who may
+    decide gates that have waited past their threshold. Never approves anything."""
+    from app.services import gates, notify, work_service
+
+    async with async_session_factory() as session:
+        expired = await work_service.reap_expired(session)
+        escalated = await gates.sweep(session)
+        # Reminders past due, and work that became ready without a canopy action.
+        queued = await notify.sweep(session)
+        delivered = await notify.deliver_due(session)
+    return {"expired": expired, "escalated": escalated, "queued": queued, **delivered}
+
+
+async def deliver_outbox(ctx: dict[str, Any]) -> dict[str, int]:
+    """Send what the outbox holds (webhooks, Slack, email, comments on mirrored tickets) —
+    kicked after a change queues something, and every minute as the safety net."""
+    from app.services import notify
+
+    async with async_session_factory() as session:
+        return await notify.deliver_due(session)
+
+
 async def startup(ctx: dict[str, Any]) -> None:
     """Refuse to run on a guessable SECRET_KEY: the worker encrypts refreshed connector tokens
     with a key derived from it unless TOKEN_ENCRYPTION_KEY is set."""
     ensure_secure_secret_key()
 
 
+async def shutdown(ctx: dict[str, Any]) -> None:
+    """Close the live-refresh publishing connection (the worker publishes over Redis with
+    EVENTS_BACKEND=redis — tracker syncs, webhook processing and the claim reaper reach open
+    pages that way; it runs no listener)."""
+    from app.core import events
+
+    await events.stop()
+
+
 _poll_minutes = set(range(0, 60, max(1, min(settings.TRACKER_POLL_MINUTES, 30))))
 _drop_minutes = set(range(0, 60, max(1, min(settings.FILE_DROP_POLL_MINUTES, 30))))
+_reaper_minutes = set(range(0, 60, max(1, min(settings.WORK_REAPER_MINUTES, 30))))
 # Every N minutes below an hour; hourly at :15 at or above it (arq crons are minute/hour sets).
 _claude_minutes = (
     set(range(0, 60, settings.CLAUDE_SYNC_MINUTES))
@@ -167,6 +201,8 @@ class WorkerSettings:
         process_webhook,
         capture_risk_snapshots,
         poll_file_drops,
+        reap_work_claims,
+        deliver_outbox,
         claude_artifact_sync,
         claude_artifact_full_sync,
     ]
@@ -177,9 +213,14 @@ class WorkerSettings:
         # Nightly changelog top-up (03:30), after the snapshot.
         cron(tracker_history_backfill, hour={3}, minute={30}, run_at_startup=False),
         cron(poll_file_drops, minute=_drop_minutes, run_at_startup=False),
+        # Agent work: lapsed leases back to the queue, waiting gates escalated.
+        cron(reap_work_claims, minute=_reaper_minutes, run_at_startup=False),
+        # Outbound notifications: whatever is due (the change that queued it also kicks this).
+        cron(deliver_outbox, run_at_startup=False),
         # The organization artifact sync (no-op unless a `claude` connection exists).
         cron(claude_artifact_sync, minute=_claude_minutes, run_at_startup=False),
         cron(claude_artifact_full_sync, hour={4}, minute={0}, run_at_startup=False),
     ]
     on_startup = startup
+    on_shutdown = shutdown
     redis_settings = redis_settings()

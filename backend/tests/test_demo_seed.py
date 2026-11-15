@@ -54,6 +54,157 @@ async def test_seed_loader_builds_a_full_coherent_dataset(db_session):
     assert counts["status_history"] > 0
     assert counts["connections"] == 4  # jira, github, gdrive + the Claude artifact sync
     assert counts["proposals"] == 2  # open change proposals awaiting review
+    assert counts["stage_policies"] >= 4  # the agentic-delivery template on PAYMENTS
+    assert counts["rules"] == len(seed.get_dataset().rules)
+    assert counts["webhooks"] == len(seed.get_dataset().webhooks)
+
+
+@pytest.mark.asyncio
+async def test_seed_agent_work_covers_every_state(db_session):
+    """The demo's agent work is built through the real work-queue services, so each state the
+    UI renders exists: ready, working, a question, a hand-off into review, a parked task."""
+    from app.models.gate import Gate
+    from app.models.project import Project
+    from app.models.work import TaskArtifact, WorkClaim
+    from app.services import work_service
+
+    await seed.load_seed_data(db_session, set())
+    projects = {
+        p.key: p for p in (await db_session.execute(select(Project))).scalars().all()
+    }
+    assert projects["ONEPAGE"].agent_intake == "on" and projects["PAYMENTS"].agent_intake == "on"
+
+    async def task(project: str, name: str) -> Task:
+        row = (await db_session.execute(select(Task).where(
+            Task.project_id == projects[project].id, Task.name == name))).scalars().one()
+        assert row.delegation == "agent", name
+        return row
+
+    handed = await task("ONEPAGE", "Order review & place order")
+    assert handed.status == "In Review" and handed.active_claim_id is None
+    kinds = (await db_session.execute(
+        select(TaskArtifact.kind).where(TaskArtifact.task_id == handed.id)
+    )).scalars().all()
+    assert sorted(kinds) == ["handoff", "plan"]
+
+    asked = await task("ONEPAGE", "Digital wallet buttons")
+    question = (await db_session.execute(
+        select(Gate).where(Gate.task_id == asked.id))).scalars().one()
+    assert question.kind == "question" and question.status == "open"
+    assert len(question.options) == 3
+
+    working = await task("PAYMENTS", "Payment webhooks & retries")
+    claim = await db_session.get(WorkClaim, working.active_claim_id)
+    assert claim is not None and claim.state == "active" and claim.progress_note
+
+    parked = await task("PAYMENTS", "Refunds & partial captures")
+    park = (await db_session.execute(select(Gate).where(Gate.task_id == parked.id))).scalars().one()
+    assert park.kind == "escalation" and park.origin == "system" and park.status == "open"
+
+    ready = await task("ONEPAGE", "A/B test vs legacy checkout")
+    rahul = (await db_session.execute(
+        select(User).where(User.email == "rahul@shop.example.com"))).scalars().one()
+    caller = await work_service.caller_for(db_session, rahul, None, is_agent=False)
+    queue = await work_service.find_work(db_session, caller, "implementer")
+    assert ready.id in {item.task.id for item in queue.ready}
+
+    # PAYMENTS adopted the agentic-delivery template after its work began: its own columns
+    # carry the Appendix A policies, so its delegated cut-over task waits on predecessors
+    # (a blocking entry check) instead of being offered.
+    held = await task("PAYMENTS", "Dual-run reconciliation")
+    assert held.status == "Ready"
+    payments = await work_service.find_work(db_session, caller, "implementer",
+                                            project_id=projects["PAYMENTS"].id)
+    assert payments.ready == [] and payments.reasons.get("waiting_on_dependencies") == 1
+    work = await work_service.load_project_work(db_session, projects["PAYMENTS"])
+    assert [s.status_name for s in work.pipeline.stages if s.worked_by] == [
+        "In Progress", "In Review", "QA", "Sign-off"]
+
+    # The flagship is mirrored from Jira, and a Jira-owned ticket can be delegated (§17); this
+    # one waits on its open blocker, so nothing is offered or cleared.
+    jira_task = await task("ONEPAGE", "Integrate tokenized payments")
+    assert jira_task.status_owner == "jira" and jira_task.clearance_status is None
+    onepage = await work_service.find_work(db_session, caller, "implementer",
+                                           project_id=projects["ONEPAGE"].id)
+    assert jira_task.id not in {item.task.id for item in onepage.ready}
+    assert onepage.reasons.get("blocked")
+    # No webhook is switched on in the demo, so nothing was queued to send.
+    from app.models.notify import OutboxMessage
+
+    assert (await db_session.execute(select(OutboxMessage))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_seed_rules_resolve_per_project(db_session):
+    """Workspace, team and project rules resolve the way §10 says: nearest wins, locks hold,
+    a switched-off rule disappears, and a rule names the decision it comes from."""
+    from app.models.project import Project
+    from app.services import rules
+
+    await seed.load_seed_data(db_session, set())
+    projects = {
+        p.key: p for p in (await db_session.execute(select(Project))).scalars().all()
+    }
+
+    async def effective(key: str) -> dict:
+        return {e.key: e for e in await rules.effective_rules(db_session, projects[key])}
+
+    payments = await effective("PAYMENTS")
+    assert set(payments) == {"small-prs", "tests-added", "escalation", "flags", "card-data"}
+    assert payments["small-prs"].origin == "project"
+    assert payments["small-prs"].overrides == ["workspace"]
+    assert payments["tests-added"].rule.locked and payments["tests-added"].origin == "workspace"
+    assert payments["flags"].origin == "team"  # the Shopping Experience team's
+    card = payments["card-data"]
+    assert card.rule.kind == "attestation" and card.enforcement == "block"
+    assert card.rule.source_adr_id is not None and not card.stale
+    search = await effective("SEARCH")
+    assert "escalation" not in search  # switched off for this project
+    assert {"small-prs", "tests-added", "flags"} <= set(search)
+    tracking = await effective("TRACKING")
+    assert "runbook" in tracking and "flags" not in tracking  # the operations team's
+
+
+@pytest.mark.asyncio
+async def test_seed_traceability_ledger_tells_each_story(db_session):
+    """The demo's decisions span the ledger's verdicts: violated and unimplemented (seeded
+    with the drift scan's own keys), at risk (open drift on what they govern), in progress
+    and honored."""
+    from app.models.architecture import ArchitectureDecision
+    from app.models.project import Project
+    from app.services import traceability, traceability_service
+
+    await seed.load_seed_data(db_session, set())
+    projects = {
+        p.key: p for p in (await db_session.execute(select(Project))).scalars().all()
+    }
+
+    async def verdicts(key: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for adr in (await db_session.execute(select(ArchitectureDecision).where(
+                ArchitectureDecision.project_id == projects[key].id))).scalars().all():
+            facts = await traceability_service.decision_facts(db_session, adr)
+            out[adr.title] = traceability.verdict(facts)[0]
+        return out
+
+    onepage = await verdicts("ONEPAGE")
+    assert onepage["Server-side checkout session as the source of truth"] == "violated"
+    assert onepage["Guest checkout without account creation"] == "pending"
+    assert (await verdicts("PAYMENTS"))["Tokenize cards through the provider vault"] == (
+        "at_risk")
+    assert (await verdicts("SEARCH"))["Search index fed by catalog change events"] == "honored"
+    assert (await verdicts("INVENTORY"))["Inventory as an event stream"] == "honored"
+    assert (await verdicts("RECS"))["Respect consent for personalization"] == "unimplemented"
+    peak = await verdicts("PEAKSCALE")
+    assert peak["Queue shoppers instead of failing under overload"] == "in_progress"
+
+    session_adr = (await db_session.execute(select(ArchitectureDecision).where(
+        ArchitectureDecision.title == "Server-side checkout session as the source of truth"
+    ))).scalar_one()
+    facts = await traceability_service.decision_facts(db_session, session_adr)
+    assert [(t.key is not None, t.implements, t.done) for t in facts.tasks if t.implements] == [
+        (True, True, True)]
+    assert any(p.merged and p.number == 398 for p in facts.prs)
 
 
 @pytest.mark.asyncio
@@ -312,8 +463,10 @@ def _check_references(ds: Dataset) -> None:
         names = set(tasks[p.key])
         assert len(names) == len(tasks[p.key]), f"{p.key}: duplicate task names"
         comps = {c.name for c in p.components}
+        adr_titles = {a.title for a in p.adrs}
         for t in (t for ph in p.phases for t in ph.tasks):
             eng(t.assignee)
+            assert t.implements is None or t.implements in adr_titles, (p.key, t.name)
         for c in p.components:
             eng(c.owner)
         for link in p.component_links:
@@ -328,6 +481,7 @@ def _check_references(ds: Dataset) -> None:
                 assert {a.fitness.source, a.fitness.target} <= comps, (p.key, a.title)
         for d in p.drift:
             assert set(d.components) <= comps
+            assert d.adr is None or d.adr in adr_titles, (p.key, d.summary)
         for sp in p.specs:
             eng(sp.owner)
             assert set(sp.task_names) <= names, (p.key, sp.title)
@@ -358,6 +512,45 @@ def _check_references(ds: Dataset) -> None:
                 eng(c.author)
         for inc in p.incidents:
             assert inc.component is None or inc.component in comps
+        # Agent work: real tasks in agent-pullable columns, real components, a known state.
+        assert p.agent_intake in ("off", "on", "paused")
+        leaves = {t.name: t for ph in p.phases for t in ph.tasks}
+        for w in p.agent_work:
+            assert w.task in leaves, (p.key, w.task)
+            assert leaves[w.task].status in ("To Do", "In Progress"), (p.key, w.task)
+            assert w.state in ("ready", "working", "question", "handed_off", "parked"), w.state
+            assert set(w.components) <= comps, (p.key, w.task)
+            assert w.state != "parked" or len(w.attempt_notes) == 3, (p.key, w.task)
+            assert w.state != "question" or (w.question and w.options), (p.key, w.task)
+        if p.agent_work:
+            assert ds.agent_owner_email in users, f"{ds.key}: agent work needs an owner"
+        assert p.stage_policy in (None, "agentic-delivery"), (p.key, p.stage_policy)
+        assert p.stage_policy is None or ds.agent_owner_email in users, p.key
+
+    # Rules name real scopes (and decisions in their own project); keys are unique per scope.
+    seen: set[tuple[str, str]] = set()
+    for r in ds.rules:
+        level, _, key = r.scope.partition(":")
+        assert level in ("workspace", "team", "project"), r.scope
+        assert (level == "workspace") == (key == ""), r.scope
+        assert level != "team" or key in teams, r.scope
+        assert level != "project" or key in projects, r.scope
+        assert (r.scope, r.key) not in seen, (r.scope, r.key)
+        seen.add((r.scope, r.key))
+        assert r.kind in ("guidance", "attestation") and r.enforcement in ("off", "warn", "block")
+        if r.source_adr is not None:
+            assert level == "project", r.key
+            assert r.source_adr in {a.title for a in projects[key].adrs}, (r.key, r.source_adr)
+
+    # Webhooks live at real scopes and hear real events.
+    from app.services.notify import EVENTS, FORMATS
+
+    for h in ds.webhooks:
+        level, _, key = h.scope.partition(":")
+        assert level != "team" or key in teams, h.scope
+        assert level != "project" or key in projects, h.scope
+        assert set(h.events) <= set(EVENTS) and h.format in FORMATS, h.name
+        assert h.url.startswith("https://"), h.url
 
     # Hand-offs name real tasks and stay inside one initiative (the API enforces the same).
     for (pk, t_pred), (sk, t_succ) in ds.cross_project_handoffs:

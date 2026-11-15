@@ -65,6 +65,7 @@ class TaskSpec:
     estimate: tuple[int, int, int] | None = None  # PERT optimistic/likely/pessimistic
     milestone: bool = False
     deadline_weeks: int | None = None  # a hard deadline (weeks from today; < end = a miss)
+    implements: str | None = None  # an ADR title in the same project (decision → work trace)
 
 
 @dataclass(frozen=True)
@@ -143,11 +144,16 @@ class ADRSpec:
 @dataclass(frozen=True)
 class DriftSpec:
     kind: str  # unexpected_dependency | dead_dependency | unimplemented_adr | implicit_decision
+    #            | fitness_violation
     summary: str
     components: tuple[str, ...] = ()
     detail: str | None = None
     suspected_cause: str | None = None
     status: str = "open"  # open | accepted | rejected | false_positive
+    # The decision an `unimplemented_adr` or `fitness_violation` event is about (an ADR title in
+    # the same project; for a violation, its fitness rule): the event then carries the scan's own
+    # rule key, so the traceability ledger ties it to the decision.
+    adr: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -289,6 +295,65 @@ class IncidentSpec:
     component: str | None = None
 
 
+@dataclass(frozen=True)
+class AgentWorkSpec:
+    """A task delegated to the agent work queue, built through the real work-queue services
+    (claim, plan, hand-off, question, release) so the demo shows each state the UI renders
+    (docs/AGENT_EXECUTION.md): ``ready`` (delegated, waiting for a session), ``working`` (a
+    session holds it), ``question`` (it asked a person), ``handed_off`` (into review), and
+    ``parked`` (three sessions gave it back unfinished). Agents run under tokens the dataset's
+    ``agent_owner_email`` issued; ``agent`` is the token's label."""
+
+    task: str  # a task name in the same project (it must start in a column agents pull from)
+    state: str  # ready | working | question | handed_off | parked
+    agent: str = "checkout-ci"
+    runner: str = "headless"  # interactive | loop | headless | cloud | sdk | action
+    components: tuple[str, ...] = ()  # component names the task touches (the brief's decisions)
+    plan: str = ""
+    steps: tuple[str, ...] = ()
+    affected_paths: tuple[str, ...] = ()
+    note: str | None = None  # working: the last progress note; handed_off: the summary
+    question: str | None = None  # question: what it asks
+    options: tuple[str, ...] = ()
+    attempt_notes: tuple[str, ...] = ()  # parked: each released attempt's note
+
+
+@dataclass(frozen=True)
+class RuleSpec:
+    """A delivery rule (docs/AGENT_EXECUTION.md §10): guidance read in the brief, or a
+    Definition-of-Done item a hand-off attests. ``scope`` is ``workspace``, ``team:<KEY>`` or
+    ``project:<KEY>``; the same ``key`` lower down replaces one above unless that one is
+    locked, and ``disabled`` switches an inherited rule off."""
+
+    scope: str
+    key: str
+    title: str
+    body: str = ""
+    kind: str = "guidance"  # guidance | attestation
+    enforcement: str = "warn"  # off | warn | block (attestations)
+    roles: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+    paths: tuple[str, ...] = ()
+    locked: bool = False
+    disabled: bool = False
+    source_adr: str | None = None  # an ADR title in the rule's project (project scope only)
+    source_url: str | None = None
+
+
+@dataclass(frozen=True)
+class WebhookSpec:
+    """An outbound webhook (USER_FLOWS §AE10) at ``workspace``, ``team:<KEY>`` or
+    ``project:<KEY>`` scope. Seeded switched off: the demo shows the setup without sending
+    anything to the placeholder URLs."""
+
+    scope: str
+    name: str
+    url: str
+    events: tuple[str, ...]
+    format: str = "json"  # json | slack
+    enabled: bool = False
+
+
 # --------------------------------------------------------------------------- #
 # Projects + initiatives + scenarios
 # --------------------------------------------------------------------------- #
@@ -323,6 +388,13 @@ class ProjectSpec:
     deploy_weeks: int = 8  # weekly deploy events (DORA + activity feed)
     pod: str | None = None  # the pod that runs the project (USER_FLOWS §R6)
     owner: str | None = None  # the project's single owner (engineer name)
+    # Agent work (docs/AGENT_EXECUTION.md): the project's intake once seeded, and its
+    # delegated tasks.
+    agent_intake: str = "off"  # off | on | paused
+    agent_work: tuple[AgentWorkSpec, ...] = ()
+    # "agentic-delivery": the project's own columns and stage policies become the Appendix A
+    # template, applied after its agent work is built (the team adopting it mid-flight).
+    stage_policy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -458,6 +530,7 @@ class PullRequestSpec:
     state: str  # open | closed
     author: str  # github login
     task_name: str
+    merged: bool = False
 
 
 @dataclass(frozen=True)
@@ -527,6 +600,11 @@ class Dataset:
     leadership_notes: tuple[LeadershipNoteSpec, ...] = ()
     teams: tuple[TeamSpec, ...] = ()
     proposals: tuple[ProposalSpec, ...] = ()
+    # The planner who delegates the seeded agent work, switches intake and issues the agent
+    # tokens the sessions ran under (docs/AGENT_EXECUTION.md).
+    agent_owner_email: str | None = None
+    rules: tuple[RuleSpec, ...] = ()  # working agreements + the Definition of Done
+    webhooks: tuple[WebhookSpec, ...] = ()  # push starts and gate notifications (switched off)
 
     def accounts(self) -> list[DemoAccount]:
         return [DemoAccount(u.email, u.full_name, u.role.value, u.function.value)

@@ -136,6 +136,10 @@ All settings are environment variables, read from `.env` at the repo root (or `b
 | `TRACKERS_ENABLED` | `jira` | Work trackers a project can be bound to (comma-separated; empty = native tracking only) |
 | `TRACKING_DEFAULT_MODE` | `native` | Tracking mode reported for new projects (`native` — canopy owns status — or `mirrored`) |
 | `TRACKER_POLL_MINUTES` | `10` | Cadence of the worker's tracker reconciliation poll (minutes) |
+| `EVENTS_BACKEND` | `memory` (compose: `redis`) | Live refresh: `memory` delivers events within one process; `redis` fans them out over `REDIS_URL` so the worker's and other API processes' changes reach open pages |
+| `WORK_REAPER_MINUTES` | `5` | Agent work queue: how often the worker expires lapsed claims and escalates waiting gates |
+| `WORK_KEEP_FOR_PEOPLE_TAGS` / `WORK_SMALL_BATCH_DAYS` | `security,incident,compliance` / `5` | Delegating a task with one of these tags, or larger than this many days, warns (never refuses) |
+| `WORK_CLAIM_OVERRUN_HOURS` | `8` | Alert when an agent session holds a task longer than this |
 | `FILE_DROP_BACKEND` (+ `FILE_DROP_*`) | disabled | Poll a local directory or S3 bucket for JSON/CSV exports to ingest (S3 needs the `[s3]` extra) |
 | `PLUGIN_MARKETPLACE_REF`, `PLUGIN_REPO_URL`, `PLUGIN_MCP_SERVER_PATH` | this repo | What the in-app *Agent Setup* page tells users to install — point them at your fork |
 
@@ -224,7 +228,9 @@ instead; see [`docs/PRODUCTION.md`](docs/PRODUCTION.md#4-connect-claude-over-mcp
 | `CANOPY_DASHBOARD_URL` | Dashboard origin used in review links | API base URL |
 | `CANOPY_MCP_TRANSPORT` | `stdio`, `http` (streamable HTTP) or `sse` (legacy) | `stdio` |
 | `CANOPY_MCP_HOST` / `CANOPY_MCP_PORT` / `CANOPY_MCP_PATH` | Bind address and path for the network transports | `127.0.0.1` / `8765` / `/mcp` |
-| `CANOPY_MCP_AUTH_TOKEN` | Require `Authorization: Bearer …` on the HTTP endpoint. Mandatory unless bound to loopback: the server refuses to start without it | — |
+| `CANOPY_MCP_AUTH_MODE` | `shared` — clients send `CANOPY_MCP_AUTH_TOKEN` and act as the server's account; `per_caller` — each client sends its own canopy agent token, validated with the API and used for its calls | `shared` |
+| `CANOPY_MCP_AUTH_TOKEN` | Shared mode: require `Authorization: Bearer …` on the HTTP endpoint. Mandatory unless bound to loopback (or in per-caller mode): the server refuses to start without it | — |
+| `CANOPY_AGENT_LABEL` / `CANOPY_AGENT_RUNNER` / `CANOPY_SESSION_REF` | How sessions name themselves on agent work claims: a label, how they were started (`interactive`, `loop`, `headless`, `cloud`, `sdk`, `action`) and a session id or log URL | token label / — / — |
 
 ## Production deployment
 
@@ -307,6 +313,7 @@ that must stay portable; see [CONTRIBUTING.md](CONTRIBUTING.md#database-changes)
 | [`docs/EXECUTION_PHILOSOPHY.md`](docs/EXECUTION_PHILOSOPHY.md) | The operating model behind canopy |
 | [`docs/AI_NATIVE_EXECUTION.md`](docs/AI_NATIVE_EXECUTION.md) | The AI-native vision and roadmap |
 | [`docs/PROPOSED_FLOWS.md`](docs/PROPOSED_FLOWS.md) | Proposed revisions and extensions to the user flows (not yet built) |
+| [`docs/AGENT_EXECUTION.md`](docs/AGENT_EXECUTION.md) | Design proposal: agent sessions pull delegated tasks from canopy's work queue and move them through gated stages, with people deciding in the UI (not yet built) |
 | [`e2e/README.md`](e2e/README.md) | Running and writing browser end-to-end tests |
 | `http://localhost:8000/docs` | Live OpenAPI reference for the REST API |
 

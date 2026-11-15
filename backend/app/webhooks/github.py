@@ -24,6 +24,9 @@ async def github_webhook(request: Request) -> dict[str, Any]:
     )
 
     payload = await request.json()
+    # The event type lives in a header; carry it with the payload so the worker knows whether it
+    # is a PR, a review or a check (docs/AGENT_EXECUTION.md §11.3).
+    payload["_github_event"] = request.headers.get("X-GitHub-Event", "")
     full_name = (payload.get("repository") or {}).get("full_name")
 
     # Match the repo to the canopy connection(s) that track it, then enqueue async

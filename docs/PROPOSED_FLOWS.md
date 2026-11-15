@@ -272,12 +272,26 @@ A read view answering "for decision X, what implemented it and is it still honor
 implementing tasks (G-R1) → PRs (J-R1, via the PR-to-ADR linker) → fitness-function status (G-R1) →
 drift events (N). This *is* "no drift between architecture and implementation," made concrete and
 queryable instead of asserted. UI: a panel on the Decisions tab; MCP `get_decision_traceability`.
+**Shipped** (USER_FLOWS §G8): the ledger panel + per-decision panel, `Task.implements_adr_id`
+(`link_task_to_decision`), and a computed verdict (violated · unimplemented · at risk · in progress
+· no linked work · not binding yet · honored · retired).
 
 ## U. Definition-of-Done as policy
 A per-project/per-initiative editable **DoD checklist** (tests, ADR if architecturally significant,
 observability/telemetry added, docs/USER_FLOWS updated, fitness functions pass). Surfaced on tasks
 and enforced softly at PR time via the linker. Encodes the quality bar as data, not folklore — the
-operational half of `EXECUTION_PHILOSOPHY.md` §5.
+operational half of `EXECUTION_PHILOSOPHY.md` §5. *(Designed in detail as inherited **rules** with
+hand-off attestations in [`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md) §10.)*
+
+## AB. Agent execution — work queue, stage policy and human gates
+The step beyond L-R3: agent sessions **pull delegated tasks** from canopy (claims with leases),
+receive a **work brief** assembled from the spec, the governing decisions, the doc graph and the
+team's rules, record a **plan** and a **hand-off** on the task, and move it through stages whose
+columns carry **entry checks** and **human gates** that people answer in the Reviews inbox. The
+full design — data model, API, MCP tools, skills, UI, security and rollout — is
+[`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md). It also delivers U (above) and the task ↔ decision
+links T needs, and turns the review stage into the place where L-R3's guardrails run on every
+agent-authored PR.
 
 ---
 
@@ -337,9 +351,9 @@ or fixes a referenced-but-missing tool.)
    a GitHub push-webhook that enqueues the Drift Sentinel (agent-driven scan).
 
 **Later (depth):**
-9. ◐ **Decision fitness functions + traceability ledger** (G-R1, T, C6). **Fitness functions
-   shipped** (machine-checkable forbid/require rules enforced by the drift scan; `add_adr_fitness`).
-   **Remaining:** `Task.implements_adr_id` + the traceability ledger (T).
+9. ✔ **Decision fitness functions + traceability ledger** (G-R1, T, C6). **Fitness functions
+   shipped** (machine-checkable forbid/require rules enforced by the drift scan; `add_adr_fitness`),
+   and `Task.implements_adr_id` + the traceability ledger (T, USER_FLOWS §G8).
 10. **Delivery (DORA+flow) metrics + DoD-as-policy** (S, U) — the quality/velocity backbone.
 11. **Hours-based + reality-checked capacity, skill-fit, PR metrics** (F-R2/3/4, J-R1).
 12. **Contract drift + non-Python analyzers + suppression UI** (N-R2/3).

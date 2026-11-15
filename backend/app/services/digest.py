@@ -33,6 +33,10 @@ class DigestInputs:
     open_blockers: int
     at_risk_projects: list[str] = field(default_factory=list)
     outcomes: list[str] = field(default_factory=list)  # "statement (status)"
+    # Agent work (docs/AGENT_EXECUTION.md §19): gates waiting on a person past their reminder,
+    # and tasks canopy parked.
+    gates_waiting: int = 0
+    parked_tasks: int = 0
     doc_attention: list[str] = field(default_factory=list)  # design-doc exceptions (§V8)
 
 
@@ -55,6 +59,11 @@ def attention_items(inp: DigestInputs) -> list[str]:
         items.append(f"{inp.open_decisions} decision(s) awaiting resolution.")
     for project in inp.at_risk_projects:
         items.append(f"Project needs attention: {project}.")
+    if inp.gates_waiting:
+        items.append(f"{inp.gates_waiting} agent decision(s) waiting on a person past their "
+                     "reminder.")
+    if inp.parked_tasks:
+        items.append(f"{inp.parked_tasks} agent task(s) parked — sessions couldn't finish them.")
     items.extend(inp.doc_attention)
     return items
 

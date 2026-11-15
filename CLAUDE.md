@@ -33,6 +33,10 @@ and a Claude Code plugin (FastMCP server + skills + subagents).
 - **GitHub** owns code + some architecture docs. **Google Drive** holds design docs. canopy reads
   these; it does not own them. **Scoped write:** canopy can upload an *export snapshot* (a generated
   PDF/CSV, see Exports below) into a connected Drive via `GoogleDriveConnector.upload_file`.
+- **Scoped write (comments):** when a person approves an agent's plan in canopy on a mirrored
+  ticket, canopy posts the plan as a comment through `WorkTracker.add_comment` (trackers with the
+  `comments` capability; queued in the outbox) — content only, never status, and only a person's
+  decision in canopy triggers it (with `write_strategy=mcp` the session posts it instead).
 - **Claude** (claude.ai) owns the Claude Docs and artifacts a session publishes. canopy keeps one
   record per document (link, identity, kind, version, summary, review state, links to the work)
   and **never receives the content** — only an optional SHA-256 the MCP server computes locally.
@@ -88,6 +92,10 @@ Plugin (run from `plugin/`, venv at `plugin/.venv`):
 ```bash
 pip install -r mcp_server/requirements.txt
 ```
+Reference runner (run from `runners/sdk/`; its unit tests fake canopy, git and the session):
+```bash
+python -m pytest -q          # the backend venv has what the tests need
+```
 Whole stack: `docker compose up --build` (postgres, redis, backend, worker, frontend).
 Production (single machine): `docker compose -f compose.prod.yml up -d --build` — Caddy terminates
 TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mcp`→MCP server
@@ -125,8 +133,8 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   (`app/models/proposal.py`) stage **inbound canopy writes** an agent inferred (from
   Slack/email/meetings/docs) for a human to review and apply in the UI — the inbound twin of
   draft plans. Items are whitelisted per entity×action (task/dependency/milestone/blocker/
-  risk/outcome/decision/doc_reference/doc_link; task `status` stageable only on canopy-owned tasks,
-  never on a mirrored one), scope-contained
+  risk/outcome/decision/doc_reference/doc_link/rule — a `rule` is a project delivery rule; task
+  `status` stageable only on canopy-owned tasks, never on a mirrored one), scope-contained
   to one project/initiative, may reference each other via `ref`/`*_ref` handles, and carry
   provenance (`source_kind/label/url`) + a stage-time `before` snapshot. Apply is
   **all-or-nothing** + auto-replan (`app/services/proposals.py`); staging/withdraw/**revise**
@@ -152,6 +160,54 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   features, open proposals). Skills: `updating-canopy` (the write-ladder contract + the
   reviewing-together loop), `harvesting-signals`, `persona-playbooks`; subagent
   `signal-harvester`. USER_FLOWS §AA.
+- **Agent work queue (delegated execution):** a person **delegates** a task (`Task.delegation`)
+  and a planner switches the project's **intake** on (`Project.agent_intake` off|on|paused — off
+  is the kill switch); Claude sessions **claim** it (`WorkClaim`, a lease renewed by every call),
+  read its **brief** (`app/services/work_brief.py`: `trust` policy|content sections, sanitised,
+  24 KB), record a plan / hand-off (`TaskArtifact`, append-only revisions) and hand off — canopy
+  evaluates the next column's entry checks (pure `stage_policy.py`) and moves the card, or holds
+  it with a **gate** a person decides (`app/models/gate.py`, human-only `POST /gates/{id}/decide`,
+  no MCP tool). Readiness is computed, never stored (pure `work_queue.py`). **Stage policy**
+  (gate `ai.stage_policy`): a column's policy document (who works it — an agent role, `human` =
+  a decision column, or none; the artifact it hands off; entry checks off|warn|block, each
+  observed or attested; plan/hand-off checkpoints; sign-off; `max_rework`) is a `StagePolicy`
+  row per workflow column (`policy_store.py`, carried over on column renames), resolved with the
+  workflow (`policy_service.py`; no rows = the built-in default: the first in-progress column is
+  the implementer's); every policy write is human-only, and so is a workflow edit once it has
+  policies. The Appendix A template is applied by `policy_template.py` (API + demo seed).
+  **Rules** (`DeliveryRule`, pure `rules.py` merge: workspace → team → project, nearest wins
+  unless locked, stricter attestation wins) are guidance in the brief or Definition-of-Done
+  attestations a hand-off must carry. `agent_flow.py` (pure) + `agent_flow_service.py` compute the
+  team-level measures (`/projects|initiatives|teams/{id}/agent-flow`), never per person.
+  **Learning loop** (Phase 4): a checkpoint's `pre_approved` change classes (`tag:<tag>`) skip a
+  person except at the safety floor (`stage_policy.PRE_APPROVAL_FLOOR`: one-way doors, high
+  criticality, unsettled decisions, low confidence — and a condition naming another tag),
+  suggested from evidence by pure
+  `autonomy.py` (`/projects/{id}/autonomy`; changing one is human-only); retros gain an
+  agent-work section (`retro.agent_work_lines`); recurring request-changes notes and review
+  findings cluster into rule suggestions (pure `rule_suggestions.py`,
+  `/projects/{id}/rule-suggestions`) a session stages as a `rule` proposal item.
+  **Mirrored projects** (§17): policies live on the tracker binding (`StagePolicy.owner_type =
+  "binding"`); a claim's pull, a hand-off or a gate approval *clears* the move
+  (`Task.clearance_status`, written only by `work_service`; responses carry `tracker_transition`)
+  and the inbound sync's `work_service.on_tracker_move` consumes it — any other tracker move is
+  `moved_without_clearance` (claim ends, alert). **Outbound notifications** go through a
+  transactional outbox (`models/notify.py`, `services/notify.py`: queued in the change's own
+  transaction, drained by the worker's `deliver_outbox` with backoff, SSRF-guarded, HMAC-signed;
+  gate `integrations.outbound`; webhooks managed in `api/v1/outbound.py`). Runners:
+  `docs/AGENT_RUNNERS.md` and the reference Agent SDK daemon in `runners/sdk/`. **`work_service.py` is the only writer of a
+  claim's state and `Task.active_claim_id`; `gates.py` of `Gate.status/decision`**
+  (`tests/test_work_invariants.py`). Claiming is a portable compare-and-swap (reserve the task
+  with a conditional UPDATE, *then* insert the claim — inserting first deadlocks on MySQL);
+  `tests/test_claim_race.py` runs it on PostgreSQL/MySQL/MariaDB in CI
+  (`CANOPY_TEST_DATABASE_URL`). Every claim-bound write renews the lease first (fencing → `409
+  claim_lost`); the reaper cron expires lapsed claims; 3 unfinished attempts park a task. An agent
+  token moving a delegated card gets `409 use_work_claim`; a person's move ends the claim.
+  `WorkEvent` is the audit trail. API `app/api/v1/work.py` + `gates.py` (gate `ai.work_queue`);
+  MCP `plugin/mcp_server/tools/work.py` (+ hook tools for `plugin/hooks/hooks.json`); skills
+  `working-the-queue`, `implementing-tasks`, `reviewing-changes`, `verifying-changes`; subagents
+  `task-implementer`, `change-reviewer`, `qa-verifier` (the last two without edit tools). Design +
+  later phases: `docs/AGENT_EXECUTION.md`. USER_FLOWS §AE.
 - **Kanban board + native tracking:** a project is `tracking_mode` native|mirrored. Board columns
   are a **workflow** (`app/models/workflow.py`: ordered statuses, each with a **category**
   todo|in_progress|done|cancelled + optional WIP limit, enforcement off|warn|block), resolved
@@ -194,10 +250,13 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   leading "work has stalled" signal. Any contributor raises one (`POST /tasks/{id}/blockers`);
   open blockers surface in the `/me` workspace and the alerts digest. Folding blocked-time into the
   composite risk score is a follow-up.
-- **Live refresh (SSE):** web-process mutations (replan/baseline) `publish()` to an in-process
-  broker (`app/core/events.py`); `GET /api/v1/events/stream?token=` streams them; the frontend
-  `useEventStream` invalidates query caches. Single-process only (worker syncs don't propagate) —
-  Redis pub/sub is the multi-process upgrade.
+- **Live refresh (SSE):** mutations `publish()` small events (`app/core/events.py`);
+  `GET /api/v1/events/stream?token=` streams them; the frontend `useEventStream` invalidates query
+  caches. `EVENTS_BACKEND=memory` (default) is in-process; `redis` (the compose files) also
+  publishes on the `canopy:events` channel and each API process's listener (started in the app
+  lifespan) fans the *other* processes' events out — so the arq worker's syncs, webhook
+  processing and claim reaper reach open pages. Each event carries its process's origin (no
+  double delivery); a Redis failure degrades to in-process delivery, never a failed request.
 - **Initiatives** (`app/api/v1/initiatives.py`) are the program layer above projects: a `Project`
   carries `initiative_id`, and `GET /initiatives/{id}/rollup` aggregates health across sub-projects
   (worst risk/drift, progress, open-decision backlog, on-track vs target). The per-project summary
@@ -382,7 +441,12 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   (`ADRFitnessFunction`: forbid|require between two components). The drift scan evaluates accepted
   ADRs' rules against the observed edges (`FitnessRule` in `app/services/drift.py`); a violation is a
   `fitness_violation` drift event (heaviest weight) that auto-resolves when fixed. MCP:
-  `add_adr_fitness`. (`Task.implements_adr_id` + a full traceability ledger are a planned follow-up.)
+  `add_adr_fitness`. **Traceability ledger** (USER_FLOWS §G8): `GET /architecture/traceability?
+  project_id=` + `/architecture/adrs/{id}/traceability` join a decision to the tasks that implement
+  it (`Task.implements_adr_id`, same project only) or touch its components, their PRs and reviews,
+  its fitness rules and open drift, with a verdict computed per read (pure
+  `app/services/traceability.py`, never stored). MCP: `get_decision_traceability`,
+  `link_task_to_decision`.
 - **Architecture depth:** `POST /architecture/adrs/import` reads a markdown doc from a GitHub/Drive
   connection and parses it into an ADR (`app/services/markdown_adr.py`, pure). `GET /architecture/adrs/{id}/impact`
   returns directly-affected components plus everything that transitively depends on them
@@ -427,7 +491,7 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
     `session.delete()` 500s on PG/MySQL and silently orphans on SQLite. `tests/test_cascade_delete.py`
     verifies it under `PRAGMA foreign_keys=ON` over the full demo graph, so a missed table fails CI.
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
-  REST routes (~140 across projects/planning/proposals/connectors/tracking/team/architecture/
+  REST routes (~179 across projects/planning/proposals/work queue/connectors/tracking/team/architecture/
   scenarios/specs/docs/delivery/outcomes/sprints; tracker tools are neutral — `sync_tracker`,
   `link_tracker_item`, `ingest_work_items`, `finalize_draft_plan`, `*_project_tracking`). Skills
   are runbooks (`updating-canopy` — the
@@ -435,11 +499,14 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   `persona-playbooks`, `planning-roadmaps`, `writing-adrs`, `syncing-trackers`, `mcp-ingest`,
   `capacity-planning`, `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-tickets`,
   `mapping-epic-docs`, `tracking-design-docs`, `planning-sprints`, `working-the-board`,
-  `spec-driven-development`, `daily-standup`); subagents
-  do isolated multi-step work (`tracker-sync`, `gantt-planner`, `risk-analyst`, `drift-sentinel`,
-  `scenario-architect`, `delivery-enricher`, `signal-harvester`, `doc-sentinel`). Add a tool when Claude needs a new verb; register it
+  `spec-driven-development`, `daily-standup`, `working-the-queue`, `implementing-tasks`,
+  `reviewing-changes`, `verifying-changes`); subagents do isolated multi-step work
+  (`tracker-sync`, `gantt-planner`, `risk-analyst`, `drift-sentinel`, `scenario-architect`,
+  `delivery-enricher`, `signal-harvester`, `doc-sentinel`, `task-implementer`, `change-reviewer`,
+  `qa-verifier`). Add a tool when Claude needs a new verb; register it
   in `mcp_server/server.py`.
-- **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the tracker
+- **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the agent work
+  queue's reaper (`reap_work_claims`: lapsed claims expire, waiting gates escalate), the tracker
   reconciliation poll (`tracker_incremental_sync` over every enabled direct-read tracker), a
   **nightly changelog backfill**
   (`tracker_history_backfill`, bounded per binding via its cursor) and a **nightly risk-snapshot sweep** (`capture_risk_snapshots` → `run_risk_snapshots`)
@@ -450,7 +517,8 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
 - **Startup refuses guessable secrets** (`app/core/startup_checks.py`): the API lifespan and the
   worker's `on_startup` stop on an empty, published-placeholder or <32-byte `SECRET_KEY`; seeding
   refuses to create the first admin with a placeholder or <8-char password; the MCP server refuses
-  HTTP beyond loopback without `CANOPY_MCP_AUTH_TOKEN`. The checks run at startup, not import, so
+  HTTP beyond loopback without `CANOPY_MCP_AUTH_TOKEN` — unless `CANOPY_MCP_AUTH_MODE=per_caller`,
+  where every request must carry the caller's own canopy token, validated with the API. The checks run at startup, not import, so
   tests/Alembic/scripts are unaffected — keep it that way, and don't add an "allow insecure" switch.
 - **Observability:** `GET /api/v1/health` (liveness, also reports `demo_mode`) and
   `/api/v1/health/ready` (DB check) for orchestration; structured logging via `app/core/logging.py`.

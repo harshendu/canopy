@@ -128,6 +128,16 @@ Locally-installed plugins keep using stdio (unchanged): the plugin launches
 `mcp_server/server.py` itself and reads `api_base_url` / `api_token` (or
 `api_email`+`api_password`) from the plugin config.
 
+**Per-caller mode (recommended for agent workers).** With the shared secret above, every client
+of the server acts as the one canopy account the server is configured with. Set
+`CANOPY_MCP_AUTH_MODE=per_caller` instead and every client sends **its own** canopy agent token
+(minted on the Agent Setup page) as `Authorization: Bearer <token>`; the server validates it with
+the API (signature, expiry, revocation — re-checked at least once a minute) and makes that
+request's calls with it, so each session acts as itself, with its own role and project scope
+(`docs/AGENT_EXECUTION.md` §18.2). The server then needs no `CANOPY_API_TOKEN` of its own, and
+`CANOPY_MCP_AUTH_TOKEN` is not used; it still refuses to start beyond loopback in shared mode
+without one.
+
 Smoke-test the endpoint:
 
 ```bash
@@ -145,8 +155,10 @@ curl -s https://<public>/mcp -X POST \
   migrations run automatically before the API starts.
 - **Logs:** `docker compose -f compose.prod.yml logs -f backend worker mcp caddy`.
 - **Health for orchestration:** `GET /api/v1/health` (liveness), `GET /api/v1/health/ready` (DB).
-- The backend runs a **single uvicorn process** because the SSE live-refresh broker is
-  in-process; Redis pub/sub is the documented upgrade path before scaling out.
+- Live refresh runs over Redis (`EVENTS_BACKEND=redis`, set by the compose file): the worker's
+  changes (tracker syncs, webhook processing, the agent-claim reaper) reach open pages at once,
+  and more than one API process would each receive the others' events. The compose file runs a
+  single uvicorn process, which is enough for most teams.
 
 ### Security checklist
 

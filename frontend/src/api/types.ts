@@ -53,6 +53,8 @@ export interface Project {
   /** native: canopy owns every status; mirrored: a bound tracker owns the work it knows (§C12). */
   tracking_mode?: TrackingMode;
   task_key_prefix?: string | null;
+  /** Whether delegated tasks are offered to agents (docs/AGENT_EXECUTION.md §6.1). */
+  agent_intake?: AgentIntake;
 }
 
 export interface Initiative {
@@ -209,6 +211,12 @@ export interface Task {
   estimate_pessimistic: number | null;
   pert_mean: number | null;
   estimate_spread: number | null;
+  /** "agent" when a person delegated the task to the agent work queue; they stay accountable. */
+  delegation?: Delegation | null;
+  delegated_at?: string | null;
+  /** The claim of the session working it right now, if any. */
+  active_claim_id?: number | null;
+  implements_adr_id?: number | null;
 }
 
 export interface GanttTask {
@@ -410,6 +418,94 @@ export interface ImpactResponse {
   adr_id: number;
   direct_component_ids: number[];
   downstream_component_ids: number[];
+}
+
+/** Decision-to-code traceability (PROPOSED_FLOWS §T): the verdict is computed, never stored. */
+export type TraceVerdict =
+  | "retired"
+  | "pending"
+  | "violated"
+  | "unimplemented"
+  | "at_risk"
+  | "no_linked_work"
+  | "in_progress"
+  | "honored";
+
+export interface TracedTask {
+  task_id: number;
+  key: string | null;
+  name: string;
+  status: string | null;
+  done: boolean;
+  implements: boolean;
+  governed: boolean;
+}
+
+export interface TracedPullRequest {
+  task_id: number | null;
+  repo: string;
+  number: number;
+  url: string | null;
+  state: string;
+  merged: boolean;
+  checks_state: string | null;
+  review_decision: string | null;
+}
+
+export interface TracedReview {
+  task_id: number;
+  artifact_id: number;
+  verdict: string | null;
+  checked: boolean;
+}
+
+export interface TracedFitness {
+  fitness_id: number;
+  kind: string;
+  source: string;
+  target: string;
+  description: string | null;
+  violated: boolean;
+}
+
+export interface TracedDrift {
+  drift_id: number;
+  kind: string;
+  summary: string;
+}
+
+export interface DecisionTrace {
+  adr_id: number;
+  number: number;
+  title: string;
+  status: string;
+  reversibility: string | null;
+  verdict: TraceVerdict;
+  reason: string;
+  components: string[];
+  tasks: TracedTask[];
+  pull_requests: TracedPullRequest[];
+  reviews: TracedReview[];
+  fitness: TracedFitness[];
+  drift: TracedDrift[];
+}
+
+export interface TraceLedgerRow {
+  adr_id: number;
+  number: number;
+  title: string;
+  status: string;
+  verdict: TraceVerdict;
+  reason: string;
+  tasks: number;
+  implementing: number;
+  done: number;
+  prs: number;
+  merged: number;
+  fitness: number;
+  violated: number;
+  reviews_checked: number;
+  open_drift: number;
 }
 
 export interface ComponentLink {
@@ -621,12 +717,28 @@ export interface FeatureGate {
 export interface SessionInfo {
   user: User;
   impersonator: User | null;
+  scope?: "full" | "agent";
+  /** For an agent token: what it is narrowed to (null for a person's own session). */
+  agent_token?: AgentTokenScope | null;
+}
+
+/** What an agent token is narrowed to — empty lists mean "whatever the issuer may do". */
+export interface AgentTokenScope {
+  id: number;
+  label: string;
+  roles: string[];
+  project_ids: number[];
+  max_active_claims: number;
 }
 
 // --- Agent tokens (Agent Setup tab: mint a bounded token for Claude / the MCP server, §A6) ---
 export interface AgentTokenRequest {
   label?: string | null;
   expires_minutes?: number | null;
+  /** The agent roles it may claim work as, and the projects it may work in (empty = any). */
+  roles?: string[];
+  project_ids?: number[];
+  max_active_claims?: number | null;
 }
 
 /** A freshly minted token — the only time `access_token` (the secret) is returned. */
@@ -638,6 +750,9 @@ export interface AgentToken {
   label: string;
   expires_minutes: number;
   expires_at: string;
+  roles?: string[];
+  project_ids?: number[];
+  max_active_claims?: number;
 }
 
 /** A minted token as listed later — metadata only, never the secret. */
@@ -649,6 +764,10 @@ export interface AgentTokenInfo {
   expires_at: string;
   revoked_at: string | null;
   status: "active" | "expired" | "revoked";
+  roles?: string[];
+  project_ids?: number[];
+  max_active_claims?: number;
+  last_used_at?: string | null;
 }
 
 /** Non-secret instance metadata (GET /api/v1/meta) — drives the Agent Setup snippets so a fork
@@ -767,6 +886,33 @@ export interface BoardTaskItem {
   story_points?: number | null;
   /** Working days — the estimate of teams that size sprints in days. */
   duration?: number | null;
+  /** Agent work (docs/AGENT_EXECUTION.md §16): delegated to the queue, the session working it,
+   *  the gate holding it for a person, and whether canopy parked it. */
+  delegation?: Delegation | null;
+  claim?: BoardClaim | null;
+  gate?: BoardGate | null;
+  parked?: boolean;
+  /** A mirrored card canopy cleared to move: the status its tracker should show next (§17). */
+  awaiting_move?: string | null;
+}
+
+/** The session working a card. */
+export interface BoardClaim {
+  id: number;
+  role: string;
+  label: string | null;
+  since: string;
+  heartbeat_age_s: number;
+}
+
+/** The open gate holding a card for a person. */
+export interface BoardGate {
+  id: number;
+  kind: GateKind;
+  origin: GateOrigin;
+  parked: boolean;
+  title: string;
+  age_hours: number;
 }
 
 /** A column: the workflow's columns arrive in order, empty ones included. `in_workflow=false`
@@ -786,6 +932,8 @@ export interface BoardLane {
   scope_wip?: number | null;
   over_limit?: boolean;
   in_workflow?: boolean;
+  /** Who works the column: an agent role, "human" (a decision column), or none. */
+  worked_by?: string | null;
 }
 
 /** What the caller may do on the board. */
@@ -1055,6 +1203,8 @@ export interface MyWorkspace {
   blockers: Blocker[];
   /** "My sprint": my tasks in active sprints (§C11). */
   my_sprints: MySprint[];
+  /** Agent work waiting on my decision (ai.work_queue). */
+  gates?: MyGate[];
   /** Design docs in review this user may approve (§V8). */
   docs_to_review?: DocReference[];
 }
@@ -1063,6 +1213,23 @@ export interface MyToday {
   user: User;
   focus_tasks: Task[];
   decisions_to_push: ADR[];
+  gates?: MyGate[];
+}
+
+/** An open gate this person may decide. */
+export interface MyGate {
+  id: number;
+  task_id: number;
+  project_id: number;
+  kind: GateKind;
+  origin: GateOrigin;
+  title: string;
+  stage: string | null;
+  task_key: string | null;
+  task_name: string | null;
+  project_key: string | null;
+  age_hours: number;
+  parked: boolean;
 }
 
 export interface Allocation {
@@ -1805,7 +1972,8 @@ export type ProposalEntityType =
   | "outcome"
   | "decision"
   | "doc_reference"
-  | "doc_link";
+  | "doc_link"
+  | "rule";
 export type ProposalActionType = "create" | "update" | "resolve";
 
 export interface ProposalItem {
@@ -1972,6 +2140,7 @@ export interface PreviewCounts {
   outcomes_edited: number;
   decisions_added: number;
   docs_added: number;
+  rules_added?: number;
   docs_linked?: number;
 }
 
@@ -2125,4 +2294,499 @@ export interface BusinessReview {
   initiatives: ReviewInitiative[];
   open_note_count: number;
   attention: string[];
+}
+
+
+// --- Agent work: the work queue, claims, artifacts, gates (docs/AGENT_EXECUTION.md) ---------
+
+export type AgentIntake = "off" | "on" | "paused";
+export type Delegation = "agent";
+export type ClaimState = "active" | "completed" | "released" | "expired" | "failed" | "superseded";
+export type ClaimOutcome =
+  | "advanced"
+  | "returned"
+  | "gated"
+  | "released"
+  | "failed"
+  | "expired"
+  | "superseded";
+export type ArtifactKind = "plan" | "handoff" | "review" | "qa_report" | "note";
+export type GateKind = "plan_approval" | "handoff_approval" | "signoff" | "question" | "escalation";
+export type GateOrigin = "checkpoint" | "column" | "agent" | "system";
+export type GateStatus =
+  | "open"
+  | "approved"
+  | "changes_requested"
+  | "rejected"
+  | "answered"
+  | "cancelled";
+export type GateDecision =
+  | "approve"
+  | "edit_and_approve"
+  | "approve_with_conditions"
+  | "request_changes"
+  | "reject"
+  | "answer"
+  | "retry"
+  | "take_over"
+  | "cancelled";
+
+export interface WorkClaim {
+  id: number;
+  task_id: number;
+  role: string;
+  stage: string;
+  attempt: number;
+  state: ClaimState;
+  outcome: ClaimOutcome | null;
+  end_reason: string | null;
+  user_id: number;
+  agent_token_id: number | null;
+  agent_label: string | null;
+  runner: string | null;
+  session_ref: string | null;
+  claimed_at: string;
+  heartbeat_at: string;
+  lease_minutes: number;
+  lease_expires_at: string;
+  finished_at: string | null;
+  progress_note: string | null;
+  branch: string | null;
+  pr_url: string | null;
+  usage: Record<string, unknown> | null;
+}
+
+export interface TaskArtifact {
+  id: number;
+  task_id: number;
+  kind: ArtifactKind;
+  revision: number;
+  title: string | null;
+  body: string;
+  data: Record<string, unknown>;
+  verdict: string | null;
+  head_sha: string | null;
+  author_kind: string;
+  author_user_id: number | null;
+  work_claim_id: number | null;
+  created_at: string;
+}
+
+export interface GateOption {
+  value: string;
+  label?: string | null;
+}
+
+export interface Gate {
+  id: number;
+  task_id: number;
+  project_id: number;
+  kind: GateKind;
+  origin: GateOrigin;
+  stage: string | null;
+  status: GateStatus;
+  title: string;
+  prompt: string | null;
+  options: GateOption[];
+  allow_text: boolean;
+  allowed_decisions: GateDecision[];
+  reasons: string[];
+  evidence: Record<string, unknown>;
+  subject_artifact_id: number | null;
+  requested_by_claim_id: number | null;
+  requested_by_user_id: number | null;
+  approvers: string;
+  exclude_requester: boolean;
+  satisfied_by: string[];
+  remind_at: string | null;
+  escalate_at: string | null;
+  escalation_level: number;
+  decision: GateDecision | null;
+  decided_by_user_id: number | null;
+  decided_by_label: string | null;
+  decided_via: string | null;
+  decided_at: string | null;
+  response_note: string | null;
+  response_data: Record<string, unknown>;
+  routed_at: string | null;
+  created_at: string;
+  task_key: string | null;
+  task_name: string | null;
+  project_key: string | null;
+  requester_name: string | null;
+  age_hours: number;
+  /** The caller may decide this gate (always false for an agent token). */
+  may_decide: boolean;
+  /** Approved, but the next column's checks aren't met yet (e.g. the PR isn't merged). */
+  waiting_for_evidence: boolean;
+  tracker_transition?: TrackerTransition | null;
+}
+
+export interface WorkEvent {
+  id: number;
+  task_id: number | null;
+  project_id: number;
+  at: string;
+  kind: string;
+  actor_kind: string;
+  user_id: number | null;
+  agent_token_id: number | null;
+  work_claim_id: number | null;
+  gate_id: number | null;
+  artifact_id: number | null;
+  data: Record<string, unknown>;
+}
+
+export interface GateDetail {
+  gate: Gate;
+  task: Task;
+  subject: TaskArtifact | null;
+  previous: TaskArtifact | null;
+  handoff: TaskArtifact | null;
+  reviews: TaskArtifact[];
+  trail: WorkEvent[];
+}
+
+export interface GateDecideRequest {
+  decision: GateDecision;
+  note?: string | null;
+  option?: string | null;
+  subject_revision?: number | null;
+}
+
+export interface RoleReadiness {
+  ready: boolean;
+  reason: string | null;
+  stage: string | null;
+  detail: string | null;
+}
+
+export interface TaskExecution {
+  task_id: number;
+  delegation: Delegation | null;
+  stage: string | null;
+  worked_by: string | null;
+  active_claim: WorkClaim | null;
+  claims: WorkClaim[];
+  artifacts: TaskArtifact[];
+  gates: Gate[];
+  events: WorkEvent[];
+  exit_contract: Record<string, unknown> | null;
+  readiness: { intake: AgentIntake; by_role: Record<string, RoleReadiness> } | null;
+  tracker_transition?: TrackerTransition | null;
+}
+
+/** A move canopy cleared on a mirrored ticket but may not make itself (§17): someone makes it
+ *  in the tracker (or the tracker's automation does), and canopy sees it on the next sync. */
+export interface TrackerTransition {
+  key: string | null;
+  provider: string;
+  from_status: string | null;
+  to_status: string;
+  cleared_at: string | null;
+}
+
+export interface DelegationResponse {
+  task: Task;
+  hints: string[];
+}
+
+export interface QueueItem {
+  task_id: number;
+  key: string | null;
+  name: string;
+  project_id: number;
+  project_key: string;
+  status: string | null;
+  stage: string;
+  pull: boolean;
+  rank: number;
+}
+
+export interface AgentStage {
+  status: string;
+  category: string;
+  worked_by: string | null;
+  source: string;
+}
+
+export interface AgentsWorking {
+  claim: WorkClaim;
+  task_key: string | null;
+  task_name: string;
+  heartbeat_age_s: number;
+}
+
+export interface ParkedTask {
+  task_id: number;
+  key: string | null;
+  name: string;
+  gate_id: number;
+}
+
+export interface AgentsView {
+  project_id: number;
+  agent_intake: AgentIntake;
+  can_manage: boolean;
+  /** False while the project runs on the built-in default pipeline. */
+  configured: boolean;
+  stages: AgentStage[];
+  ready: Record<string, QueueItem[]>;
+  reasons: Record<string, number>;
+  working: AgentsWorking[];
+  waiting: Gate[];
+  parked: ParkedTask[];
+  delegated: number;
+}
+
+export interface IntakeResponse {
+  project_id: number;
+  agent_intake: AgentIntake;
+  stopped: number;
+}
+
+// --- Stage policy, rules and agent-flow metrics (docs/AGENT_EXECUTION.md §9, §10, §19) -------
+
+export type Enforcement = "off" | "warn" | "block";
+
+export interface CheckDoc {
+  check: string;
+  params?: Record<string, unknown>;
+  enforcement: Enforcement;
+  applies_to?: "agents" | "everyone";
+}
+
+export interface DecisionDoc {
+  kind?: string;
+  when?: string | string[];
+  approvers?: string;
+  approver_engineer_ids?: number[];
+  exclude_requester?: boolean;
+  satisfied_by?: string[];
+  remind_after_hours?: number;
+  escalate_after_hours?: number;
+  on_approve?: string | null;
+  on_changes?: string | null;
+  on_reject?: string | null;
+}
+
+export interface CheckpointDoc {
+  required?: boolean;
+  approval_when?: string | string[];
+  decision?: DecisionDoc;
+}
+
+export interface StagePolicyDoc {
+  worked_by: string | null;
+  artifact?: "handoff" | "review" | "qa_report" | null;
+  instructions?: string;
+  pulls_from?: string[] | null;
+  enter?: { checks?: CheckDoc[] };
+  on_changes?: string | null;
+  decision?: DecisionDoc | null;
+  checkpoints?: Record<string, CheckpointDoc>;
+  lease_minutes?: number;
+  max_attempts?: number;
+  max_rework?: number;
+}
+
+export interface StageColumn {
+  status: string;
+  category: string;
+  position: number;
+  wip_limit: number | null;
+  worked_by: string | null;
+  hands_off: string | null;
+  source: string;
+  policy: StagePolicyDoc | null;
+}
+
+export interface PipelineRead {
+  scope: "project" | "team" | "template" | "default" | "tracker";
+  inherited: boolean;
+  workflow_id: number | null;
+  team_id: number | null;
+  configured: boolean;
+  wip_enforcement: string;
+  roles: string[];
+  columns: StageColumn[];
+  can_edit: boolean;
+}
+
+export interface TemplatePreview {
+  template: string;
+  columns: { name: string; category: string; worked_by: string | null; policy: StagePolicyDoc | null }[];
+  current_columns: string[];
+  moves: { from_status: string; to_status: string; tasks: number }[];
+  wip_enforcement: string;
+  applied: boolean;
+  pipeline: PipelineRead | null;
+}
+
+export type RuleScope = "workspace" | "team" | "project";
+
+export interface DeliveryRule {
+  id: number;
+  scope_level: RuleScope;
+  scope_id: number;
+  key: string;
+  title: string;
+  body: string;
+  kind: "guidance" | "attestation";
+  roles: string[];
+  selector: { tags?: string[]; components?: number[]; paths?: string[] };
+  enforcement: Enforcement;
+  locked: boolean;
+  disabled: boolean;
+  source_adr_id: number | null;
+  source_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A scope whose rules reach a project or team, and whether the caller may edit it. */
+export interface RuleScopeInfo {
+  scope_level: RuleScope;
+  scope_id: number;
+  name: string;
+  can_edit: boolean;
+}
+
+export interface RuleWrite {
+  scope_level?: RuleScope;
+  scope_id?: number;
+  key?: string;
+  title: string;
+  body: string;
+  kind: "guidance" | "attestation";
+  roles: string[];
+  selector: { tags: string[]; components: number[]; paths: string[] };
+  enforcement: Enforcement;
+  locked: boolean;
+  disabled?: boolean;
+  source_adr_id: number | null;
+  source_url: string | null;
+}
+
+export interface EffectiveRule {
+  rule: DeliveryRule;
+  origin: RuleScope;
+  overrides: RuleScope[];
+  enforcement: Enforcement;
+  stale: boolean;
+  stale_reason: string | null;
+  can_edit: boolean;
+}
+
+export interface AgentFlow {
+  scope: string;
+  scope_id: number;
+  weeks: number;
+  projects: number;
+  sufficient: boolean;
+  reason: string | null;
+  queue: {
+    ready_by_role: Record<string, number>;
+    oldest_ready_hours: number | null;
+    held_by_kind: Record<string, number>;
+    parked: number;
+  };
+  human_wait: {
+    by_kind: Record<string, { decided: number; median_hours: number | null; p85_hours: number | null }>;
+    open: number;
+    open_past_reminder: number;
+    open_past_escalation: number;
+  };
+  first_pass: { approvals: number | null; reviews: number | null };
+  rework: { tasks_returned_share: number | null; rounds_per_returned_task: number | null };
+  claims: { finished: number; by_outcome: Record<string, number>; attempts_per_task: number | null };
+  flow_efficiency: number | null;
+  gate_load: { opened: number; per_week: number; by_kind: Record<string, number>; top_reasons: { reason: string; count: number }[] };
+  gates_as_experiments: { kind: string; decided: number; approval_rate: number | null; median_hours: number | null }[];
+  unassisted_share: number | null;
+  agent_tasks_done: number;
+  cost_per_task_usd: number | null;
+}
+
+// --- Outbound notifications (USER_FLOWS §AE9) ---
+
+export type WebhookEvent = "work.ready" | "gate.opened" | "gate.reminder" | "gate.escalated" | "gate.decided";
+
+export interface OutboundWebhook {
+  id: number;
+  scope_level: RuleScope;
+  scope_id: number;
+  scope_name: string | null;
+  name: string;
+  /** The full URL only for people who may edit it (a Slack URL is a credential). */
+  url: string;
+  format: "json" | "slack";
+  events: WebhookEvent[];
+  has_secret: boolean;
+  enabled: boolean;
+  last_delivery_at: string | null;
+  last_status: string | null;
+  consecutive_failures: number;
+  can_edit: boolean;
+  created_at: string;
+}
+
+export interface WebhookCatalog {
+  events: WebhookEvent[];
+  formats: ("json" | "slack")[];
+  email_enabled: boolean;
+  signature_header: string;
+}
+
+export interface WebhookDelivery {
+  id: number;
+  event: string;
+  channel: string;
+  status: "pending" | "sent" | "failed";
+  attempts: number;
+  task_id: number | null;
+  response_status: number | null;
+  last_error: string | null;
+  created_at: string;
+  sent_at: string | null;
+  next_attempt_at: string;
+}
+
+export interface WebhookTestResult {
+  delivered: boolean;
+  status: string;
+  response_status: number | null;
+  error: string | null;
+}
+
+// --- Graduated autonomy (USER_FLOWS §AE6) ---
+
+export interface ChangeClassStats {
+  change_class: string;
+  tasks: number;
+  decided: Record<string, number>;
+  approval_rate: Record<string, number | null>;
+  median_decision_hours: Record<string, number | null>;
+  reviews: number;
+  first_pass_rate: number | null;
+  rework_tasks: number;
+  parked: number;
+}
+
+export interface AutonomySuggestion {
+  action: "pre_approve" | "revoke";
+  checkpoint: "plan" | "handoff";
+  change_class: string;
+  reason: string;
+}
+
+export interface AutonomyRead {
+  stage: string | null;
+  checkpoints: ("plan" | "handoff")[];
+  pre_approved: Record<string, string[]>;
+  floor: string[];
+  weeks: number;
+  classes: ChangeClassStats[];
+  suggestions: AutonomySuggestion[];
+  can_edit: boolean;
 }

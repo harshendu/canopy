@@ -20,13 +20,17 @@ import { featureOn, useFeatures } from "../lib/useFeatures";
 const KanbanBoard = lazy(() => import("../components/board/KanbanBoard"));
 const SprintsPanel = lazy(() => import("../components/sprints/SprintsPanel"));
 const SprintReportView = lazy(() => import("../components/sprints/SprintReportView"));
+const RulesView = lazy(() => import("../components/RulesView"));
+const WebhooksPanel = lazy(() => import("../components/WebhooksPanel"));
 
-type TeamTab = "board" | "sprints" | "report" | "settings";
+type TeamTab = "board" | "sprints" | "report" | "rules" | "notifications" | "settings";
 
 const TABS: { key: TeamTab; label: string; icon: IconName }[] = [
   { key: "board", label: "Board", icon: "board" },
   { key: "sprints", label: "Sprints", icon: "scenarios" },
   { key: "report", label: "Sprint report", icon: "burndown" },
+  { key: "rules", label: "Rules", icon: "specs" },
+  { key: "notifications", label: "Notifications", icon: "alerts" },
   { key: "settings", label: "Settings", icon: "edit" },
 ];
 
@@ -69,8 +73,15 @@ export default function TeamView() {
 
   const sprinting = featureOn(features, "tracking.sprints") && usesSprints(delivery.data?.effective_method);
   const boardOn = featureOn(features, "tracking.board");
+  const rulesOn = featureOn(features, "ai.stage_policy");
+  const outboundOn = featureOn(features, "integrations.outbound");
   const tabs = TABS.filter(
-    (t) => (t.key === "board" && boardOn) || ((t.key === "sprints" || t.key === "report") && sprinting) || t.key === "settings",
+    (t) =>
+      (t.key === "board" && boardOn) ||
+      ((t.key === "sprints" || t.key === "report") && sprinting) ||
+      (t.key === "rules" && rulesOn) ||
+      (t.key === "notifications" && outboundOn) ||
+      t.key === "settings",
   );
   const requested = params.get("tab");
   const tab: TeamTab = tabs.find((t) => t.key === requested)?.key ?? tabs[0].key;
@@ -190,6 +201,18 @@ export default function TeamView() {
             />
           </Suspense>
         ))}
+
+      {tab === "rules" && (
+        <Suspense fallback={loading("rules")}>
+          <RulesView target={{ kind: "team", id }} />
+        </Suspense>
+      )}
+
+      {tab === "notifications" && (
+        <Suspense fallback={loading("notifications")}>
+          <WebhooksPanel target={{ kind: "team", id }} />
+        </Suspense>
+      )}
 
       {tab === "settings" &&
         (delivery.isError ? (

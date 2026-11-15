@@ -27,6 +27,10 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "postgresql+asyncpg://canopy:canopy@localhost:5432/canopy"
     REDIS_URL: str = "redis://localhost:6379/0"
+    # Live refresh (SSE): `memory` delivers events within one process; `redis` also fans them
+    # out over REDIS_URL so the worker's and other API processes' events reach open pages
+    # (app/core/events.py). The compose files set `redis`.
+    EVENTS_BACKEND: str = "memory"
 
     # Signs access tokens and OAuth state. No usable default: the API and worker refuse to start
     # while it's empty, a published placeholder, or under 32 bytes (app/core/startup_checks.py).
@@ -91,6 +95,34 @@ class Settings(BaseSettings):
     # source of truth) or mirrored (status comes from a bound tracker). Existing projects keep
     # theirs; a project switches explicitly (USER_FLOWS §C1a).
     TRACKING_DEFAULT_MODE: str = "native"
+
+    # --- Agent execution (docs/AGENT_EXECUTION.md) ---
+    # Delegating a task warns (never refuses) when it carries one of these tags — work a person
+    # usually keeps — or is sized above the small-batch threshold (working days).
+    WORK_KEEP_FOR_PEOPLE_TAGS: str = "security,incident,compliance"
+    WORK_SMALL_BATCH_DAYS: int = 5
+    # How often the worker expires lapsed claims and escalates waiting gates (minutes).
+    WORK_REAPER_MINUTES: int = 5
+    # Alerts: a claim held longer than this (hours) is an overrun; delegated work ready longer
+    # than this (hours) while intake is on means nobody is running workers for its role.
+    WORK_CLAIM_OVERRUN_HOURS: int = 8
+    WORK_UNCLAIMED_HOURS: int = 24
+    # A mirrored ticket canopy cleared to move but whose tracker doesn't show it after this long
+    # raises `clearance_waiting` (docs/AGENT_EXECUTION.md §17).
+    WORK_CLEARANCE_HOURS: int = 24
+
+    # --- Outbound notifications (webhooks, Slack, email — USER_FLOWS §AE9) ---
+    # Email the people who may decide a gate when it opens, waits past its reminder or escalates.
+    NOTIFY_EMAIL_GATES: bool = False
+    SMTP_HOST: str = ""  # empty = no email
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "canopy@localhost"
+    SMTP_STARTTLS: bool = True
+    # Outbound webhooks go to public https destinations only; true allows http and private
+    # addresses (local development — never in production).
+    OUTBOUND_WEBHOOKS_ALLOW_PRIVATE: bool = False
 
     # --- OAuth 2.0 (3LO) ---
     # The provider redirects here after consent; must match the app registration.
