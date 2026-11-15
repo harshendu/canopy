@@ -477,6 +477,11 @@ async def find_work(
 # --------------------------------------------------------------------------- #
 
 
+# `Task.active_claim_id` between reserving a task and inserting its claim — within one
+# transaction, so no other session ever reads it.
+RESERVED = -1
+
+
 @dataclass
 class AgentInfo:
     label: str | None = None
@@ -561,9 +566,23 @@ async def _try_claim(
     now: datetime,
 ) -> WorkClaim | None:
     """One compare-and-swap attempt on one task. None when another session got there first
-    (or a pull would break a WIP limit)."""
+    (or a pull would break a WIP limit).
+
+    The task is reserved *before* the claim row is inserted: an INSERT's foreign-key check takes
+    a shared lock on the task row, so inserting first lets two racing claims deadlock on MySQL
+    (each holds the shared lock the other's UPDATE waits for). Reserving first, the loser's
+    UPDATE simply waits for the winner's commit, then matches no row."""
     assert task.id is not None
     if not await _expire_if_lapsed(session, task, now):
+        return None
+    won = await session.execute(
+        update(Task)
+        .where(col(Task.id) == task.id, col(Task.active_claim_id).is_(None))
+        .values(active_claim_id=RESERVED)
+        .execution_options(synchronize_session=False)
+    )
+    if won.rowcount != 1:  # type: ignore[attr-defined]
+        await session.refresh(task)
         return None
     attempts = (
         await session.execute(select(WorkClaim.attempt).where(WorkClaim.task_id == task.id))
@@ -587,17 +606,12 @@ async def _try_claim(
     )
     session.add(claim)
     await session.flush()
-    won = await session.execute(
+    await session.execute(
         update(Task)
-        .where(col(Task.id) == task.id, col(Task.active_claim_id).is_(None))
+        .where(col(Task.id) == task.id, col(Task.active_claim_id) == RESERVED)
         .values(active_claim_id=claim.id)
         .execution_options(synchronize_session=False)
     )
-    if won.rowcount != 1:  # type: ignore[attr-defined]
-        await session.delete(claim)
-        await session.flush()
-        await session.refresh(task)
-        return None
     await session.refresh(task)
     if pull:
         try:
@@ -607,7 +621,9 @@ async def _try_claim(
             )
         except TrackingError:
             await session.execute(
-                update(Task).where(col(Task.id) == task.id).values(active_claim_id=None)
+                update(Task)
+                .where(col(Task.id) == task.id, col(Task.active_claim_id) == claim.id)
+                .values(active_claim_id=None)
                 .execution_options(synchronize_session=False)
             )
             await session.delete(claim)

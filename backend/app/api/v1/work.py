@@ -13,6 +13,7 @@ import time
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy.exc import DBAPIError
 from sqlmodel import col, select
 
 from app.api.deps import (
@@ -74,6 +75,9 @@ from app.services.access import ensure_project_editable, project_can_edit
 from app.services.work_service import Caller, GoverningDecision, WorkError
 
 router = APIRouter()
+
+# How often an unnamed claim retries after losing a race at the database.
+CLAIM_RETRIES = 3
 
 
 async def get_caller(
@@ -202,6 +206,7 @@ async def create_claim(
     )
     deadline = time.monotonic() + payload.wait_s
     claim: WorkClaim | None = None
+    contended = 0
     while True:
         try:
             claim = await work_service.claim_work(
@@ -209,10 +214,22 @@ async def create_claim(
                 project_id=payload.project_id, team_id=payload.team_id, repo=payload.repo,
                 agent=info, idempotency_key=idempotency_key,
             )
+            await session.commit()
         except WorkError as exc:
             await session.rollback()
             raise http(exc) from exc
-        await session.commit()
+        except DBAPIError as exc:
+            # Lost a race at the database (a lock timeout or a deadlock the database broke):
+            # nothing was kept. A named task is someone else's; otherwise try again.
+            await session.rollback()
+            contended += 1
+            if payload.task_id is not None or contended > CLAIM_RETRIES:
+                raise HTTPException(status_code=409, detail={
+                    "code": "already_claimed", "retryable": True,
+                    "message": "Another session claimed this work at the same moment",
+                }) from exc
+            await asyncio.sleep(0.05 * contended)
+            continue
         remaining = deadline - time.monotonic()
         if claim is not None or payload.task_id is not None or remaining <= 0:
             break
