@@ -1806,10 +1806,16 @@ items, GitHub→PRs); invalid rows are reported and skipped (a bad row never abo
 
 ## K. Real-time live refresh
 - **Flow:** while logged in, the frontend opens a Server-Sent Events stream
-  (`GET /api/v1/events/stream?token=`). Web-process actions (replan, baseline) publish change events;
-  the client invalidates its caches so views refresh without a manual reload.
-- **Limitation:** single backend process only — events from the arq worker (e.g. webhook-driven
-  syncs) don't propagate here yet (Redis pub/sub is the multi-process upgrade).
+  (`GET /api/v1/events/stream?token=`). Actions publish small change events (replan, baseline,
+  board moves, proposals, sprints, tracking, agent work — `work` events for claims, gates and
+  hand-offs); the client invalidates its caches so views refresh without a manual reload.
+- **Across processes (`EVENTS_BACKEND`):** `memory` (the default for a bare `uvicorn`) delivers
+  within one process; `redis` (what the compose files set) also publishes each event on the Redis
+  channel `canopy:events`, and every API process listens and fans the other processes' events
+  out to its own streams — so changes made by the **arq worker** (tracker syncs, webhook
+  processing, the claim reaper) and by other API processes reach open pages at once. A Redis
+  outage degrades to in-process delivery (logged) and never fails the action. The Decisions
+  inbox, the Agents view and the Reviews badge also refetch every 30 seconds as a backstop.
 
 ---
 
@@ -2835,8 +2841,6 @@ backlog:
 ## Not built (deliberately deferred — with rationale)
 - **OIDC/SSO + `HttpOnly`-cookie tokens** (§A1): a substantial auth overhaul; the `Bearer` JWT path
   works and is the safe default. Deferred rather than half-built.
-- **Multi-process real-time** (§K): Redis pub/sub — an infra change that can't be verified in this
-  single-process setup; SSE works in-process today.
 - **Capacity overhaul** (§F2–F5): hours-based allocation, interrupt budget, planned-vs-realized,
   PTO→CPM, skill-task fit — a large model change; allocation stays percent-based.
 - **PagerDuty / on-call** (§J7): an external connector with nothing to feed until the capacity

@@ -129,6 +129,15 @@ async def startup(ctx: dict[str, Any]) -> None:
     ensure_secure_secret_key()
 
 
+async def shutdown(ctx: dict[str, Any]) -> None:
+    """Close the live-refresh publishing connection (the worker publishes over Redis with
+    EVENTS_BACKEND=redis — tracker syncs, webhook processing and the claim reaper reach open
+    pages that way; it runs no listener)."""
+    from app.core import events
+
+    await events.stop()
+
+
 _poll_minutes = set(range(0, 60, max(1, min(settings.TRACKER_POLL_MINUTES, 30))))
 _drop_minutes = set(range(0, 60, max(1, min(settings.FILE_DROP_POLL_MINUTES, 30))))
 _reaper_minutes = set(range(0, 60, max(1, min(settings.WORK_REAPER_MINUTES, 30))))
@@ -154,4 +163,5 @@ class WorkerSettings:
         cron(reap_work_claims, minute=_reaper_minutes, run_at_startup=False),
     ]
     on_startup = startup
+    on_shutdown = shutdown
     redis_settings = redis_settings()

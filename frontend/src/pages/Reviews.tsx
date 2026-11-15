@@ -164,6 +164,8 @@ function DecisionsInbox() {
       api.get<Gate[]>(
         filter === "mine" ? "/gates?mine=true" : filter === "open" ? "/gates" : "/gates?status=all",
       ),
+    // Live refresh carries changes (§K); this is the backstop when it can't.
+    refetchInterval: 30_000,
   });
   const rows = [...(gates.data ?? [])].sort((a, b) =>
     a.status === b.status ? b.age_hours - a.age_hours : a.status === "open" ? -1 : 1,

@@ -1039,10 +1039,10 @@ Claude (`read_strategy = mcp`, §A8) is not left out. After every PR upsert two 
 `gates.on_pull_request` (satisfy or route gates, §9.4) and `work_service.on_pull_request` (the
 merged-ahead rule; retry an approved gate's pending move).
 
-These hooks run in the arq worker, as the claim reaper does (§6.3), and canopy's SSE broker is
-in-process (§K): until the Redis pub/sub upgrade, a change caused by a webhook or by the reaper
-reaches open pages on their next refetch, not instantly.
-The inbox and the Agents view poll every 30 seconds as a backstop.
+These hooks run in the arq worker, as the claim reaper does (§6.3). With live refresh over
+Redis (`EVENTS_BACKEND=redis`, done before Phase 2 per D10) their changes reach open pages at
+once; on the in-process backend they arrive on the next refetch. The inbox and the Agents view
+poll every 30 seconds as a backstop.
 
 ### 11.4 Portability
 

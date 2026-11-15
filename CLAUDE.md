@@ -205,10 +205,13 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   leading "work has stalled" signal. Any contributor raises one (`POST /tasks/{id}/blockers`);
   open blockers surface in the `/me` workspace and the alerts digest. Folding blocked-time into the
   composite risk score is a follow-up.
-- **Live refresh (SSE):** web-process mutations (replan/baseline) `publish()` to an in-process
-  broker (`app/core/events.py`); `GET /api/v1/events/stream?token=` streams them; the frontend
-  `useEventStream` invalidates query caches. Single-process only (worker syncs don't propagate) —
-  Redis pub/sub is the multi-process upgrade.
+- **Live refresh (SSE):** mutations `publish()` small events (`app/core/events.py`);
+  `GET /api/v1/events/stream?token=` streams them; the frontend `useEventStream` invalidates query
+  caches. `EVENTS_BACKEND=memory` (default) is in-process; `redis` (the compose files) also
+  publishes on the `canopy:events` channel and each API process's listener (started in the app
+  lifespan) fans the *other* processes' events out — so the arq worker's syncs, webhook
+  processing and claim reaper reach open pages. Each event carries its process's origin (no
+  double delivery); a Redis failure degrades to in-process delivery, never a failed request.
 - **Initiatives** (`app/api/v1/initiatives.py`) are the program layer above projects: a `Project`
   carries `initiative_id`, and `GET /initiatives/{id}/rollup` aggregates health across sub-projects
   (worst risk/drift, progress, open-decision backlog, on-track vs target). The per-project summary

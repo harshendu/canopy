@@ -139,10 +139,17 @@ jobs:
 
   claim-race:
     # The work queue's compare-and-swap claim (docs/AGENT_EXECUTION.md §6.3) must hold under real
-    # concurrency on every production database — SQLite can't show a deadlock or a lost update.
-    name: Claim race (PostgreSQL, MySQL, MariaDB)
+    # concurrency on every production database — SQLite can't show a deadlock or a lost update —
+    # and live-refresh events must cross processes over a real Redis.
+    name: Concurrency (claim race on PostgreSQL, MySQL, MariaDB; events over Redis)
     runs-on: ubuntu-latest
     services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
       postgres:
         image: postgres:16-alpine
         env:
@@ -201,6 +208,10 @@ jobs:
         env:
           CANOPY_TEST_DATABASE_URL: mysql+aiomysql://canopy:canopy@127.0.0.1:3307/canopy
         run: pytest -q tests/test_claim_race.py
+      - name: Live-refresh events over Redis
+        env:
+          CANOPY_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+        run: pytest -q tests/test_events.py
 
   frontend:
     name: Frontend lint, test, build

@@ -155,8 +155,10 @@ curl -s https://<public>/mcp -X POST \
   migrations run automatically before the API starts.
 - **Logs:** `docker compose -f compose.prod.yml logs -f backend worker mcp caddy`.
 - **Health for orchestration:** `GET /api/v1/health` (liveness), `GET /api/v1/health/ready` (DB).
-- The backend runs a **single uvicorn process** because the SSE live-refresh broker is
-  in-process; Redis pub/sub is the documented upgrade path before scaling out.
+- Live refresh runs over Redis (`EVENTS_BACKEND=redis`, set by the compose file): the worker's
+  changes (tracker syncs, webhook processing, the agent-claim reaper) reach open pages at once,
+  and more than one API process would each receive the others' events. The compose file runs a
+  single uvicorn process, which is enough for most teams.
 
 ### Security checklist
 

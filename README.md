@@ -136,6 +136,7 @@ All settings are environment variables, read from `.env` at the repo root (or `b
 | `TRACKERS_ENABLED` | `jira` | Work trackers a project can be bound to (comma-separated; empty = native tracking only) |
 | `TRACKING_DEFAULT_MODE` | `native` | Tracking mode reported for new projects (`native` — canopy owns status — or `mirrored`) |
 | `TRACKER_POLL_MINUTES` | `10` | Cadence of the worker's tracker reconciliation poll (minutes) |
+| `EVENTS_BACKEND` | `memory` (compose: `redis`) | Live refresh: `memory` delivers events within one process; `redis` fans them out over `REDIS_URL` so the worker's and other API processes' changes reach open pages |
 | `WORK_REAPER_MINUTES` | `5` | Agent work queue: how often the worker expires lapsed claims and escalates waiting gates |
 | `WORK_KEEP_FOR_PEOPLE_TAGS` / `WORK_SMALL_BATCH_DAYS` | `security,incident,compliance` / `5` | Delegating a task with one of these tags, or larger than this many days, warns (never refuses) |
 | `WORK_CLAIM_OVERRUN_HOURS` | `8` | Alert when an agent session holds a task longer than this |

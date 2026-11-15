@@ -31,6 +31,7 @@ export default function AgentsView({
   const view = useQuery({
     queryKey: ["agents", projectId],
     queryFn: () => api.get<AgentsViewData>(`/projects/${projectId}/agents`),
+    refetchInterval: 30_000, // a backstop to live refresh (§K)
   });
   const [stopped, setStopped] = useState<number | null>(null);
   const intake = useMutation({

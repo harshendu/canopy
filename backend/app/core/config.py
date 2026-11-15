@@ -27,6 +27,10 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "postgresql+asyncpg://canopy:canopy@localhost:5432/canopy"
     REDIS_URL: str = "redis://localhost:6379/0"
+    # Live refresh (SSE): `memory` delivers events within one process; `redis` also fans them
+    # out over REDIS_URL so the worker's and other API processes' events reach open pages
+    # (app/core/events.py). The compose files set `redis`.
+    EVENTS_BACKEND: str = "memory"
 
     # Signs access tokens and OAuth state. No usable default: the API and worker refuse to start
     # while it's empty, a published placeholder, or under 32 bytes (app/core/startup_checks.py).

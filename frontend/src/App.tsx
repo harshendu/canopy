@@ -71,6 +71,7 @@ function ProtectedLayout() {
     queryFn: () => api.get<Gate[]>("/gates?mine=true"),
     enabled: isAuthenticated && featureOn(features, "ai.work_queue"),
     staleTime: 30 * 1000,
+    refetchInterval: 30 * 1000, // a backstop to live refresh (§K)
   });
   const reviewCount = (openProposals.data?.length ?? 0) + (myGates.data?.length ?? 0);
   if (!isAuthenticated) {
