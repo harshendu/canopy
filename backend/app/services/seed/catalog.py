@@ -270,6 +270,29 @@ class IncidentSpec:
     component: str | None = None
 
 
+@dataclass(frozen=True)
+class AgentWorkSpec:
+    """A task delegated to the agent work queue, built through the real work-queue services
+    (claim, plan, hand-off, question, release) so the demo shows each state the UI renders
+    (docs/AGENT_EXECUTION.md): ``ready`` (delegated, waiting for a session), ``working`` (a
+    session holds it), ``question`` (it asked a person), ``handed_off`` (into review), and
+    ``parked`` (three sessions gave it back unfinished). Agents run under tokens the dataset's
+    ``agent_owner_email`` issued; ``agent`` is the token's label."""
+
+    task: str  # a task name in the same project (it must start in a column agents pull from)
+    state: str  # ready | working | question | handed_off | parked
+    agent: str = "checkout-ci"
+    runner: str = "headless"  # interactive | loop | headless | cloud | sdk | action
+    components: tuple[str, ...] = ()  # component names the task touches (the brief's decisions)
+    plan: str = ""
+    steps: tuple[str, ...] = ()
+    affected_paths: tuple[str, ...] = ()
+    note: str | None = None  # working: the last progress note; handed_off: the summary
+    question: str | None = None  # question: what it asks
+    options: tuple[str, ...] = ()
+    attempt_notes: tuple[str, ...] = ()  # parked: each released attempt's note
+
+
 # --------------------------------------------------------------------------- #
 # Projects + initiatives + scenarios
 # --------------------------------------------------------------------------- #
@@ -304,6 +327,10 @@ class ProjectSpec:
     deploy_weeks: int = 8  # weekly deploy events (DORA + activity feed)
     pod: str | None = None  # the pod that runs the project (USER_FLOWS §R6)
     owner: str | None = None  # the project's single owner (engineer name)
+    # Agent work (docs/AGENT_EXECUTION.md): the project's intake once seeded, and its
+    # delegated tasks.
+    agent_intake: str = "off"  # off | on | paused
+    agent_work: tuple[AgentWorkSpec, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -508,6 +535,9 @@ class Dataset:
     leadership_notes: tuple[LeadershipNoteSpec, ...] = ()
     teams: tuple[TeamSpec, ...] = ()
     proposals: tuple[ProposalSpec, ...] = ()
+    # The planner who delegates the seeded agent work, switches intake and issues the agent
+    # tokens the sessions ran under (docs/AGENT_EXECUTION.md).
+    agent_owner_email: str | None = None
 
     def accounts(self) -> list[DemoAccount]:
         return [DemoAccount(u.email, u.full_name, u.role.value, u.function.value)

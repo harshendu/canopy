@@ -136,6 +136,9 @@ All settings are environment variables, read from `.env` at the repo root (or `b
 | `TRACKERS_ENABLED` | `jira` | Work trackers a project can be bound to (comma-separated; empty = native tracking only) |
 | `TRACKING_DEFAULT_MODE` | `native` | Tracking mode reported for new projects (`native` — canopy owns status — or `mirrored`) |
 | `TRACKER_POLL_MINUTES` | `10` | Cadence of the worker's tracker reconciliation poll (minutes) |
+| `WORK_REAPER_MINUTES` | `5` | Agent work queue: how often the worker expires lapsed claims and escalates waiting gates |
+| `WORK_KEEP_FOR_PEOPLE_TAGS` / `WORK_SMALL_BATCH_DAYS` | `security,incident,compliance` / `5` | Delegating a task with one of these tags, or larger than this many days, warns (never refuses) |
+| `WORK_CLAIM_OVERRUN_HOURS` | `8` | Alert when an agent session holds a task longer than this |
 | `FILE_DROP_BACKEND` (+ `FILE_DROP_*`) | disabled | Poll a local directory or S3 bucket for JSON/CSV exports to ingest (S3 needs the `[s3]` extra) |
 | `PLUGIN_MARKETPLACE_REF`, `PLUGIN_REPO_URL`, `PLUGIN_MCP_SERVER_PATH` | this repo | What the in-app *Agent Setup* page tells users to install — point them at your fork |
 
@@ -225,6 +228,7 @@ instead; see [`docs/PRODUCTION.md`](docs/PRODUCTION.md#4-connect-claude-over-mcp
 | `CANOPY_MCP_HOST` / `CANOPY_MCP_PORT` / `CANOPY_MCP_PATH` | Bind address and path for the network transports | `127.0.0.1` / `8765` / `/mcp` |
 | `CANOPY_MCP_AUTH_MODE` | `shared` — clients send `CANOPY_MCP_AUTH_TOKEN` and act as the server's account; `per_caller` — each client sends its own canopy agent token, validated with the API and used for its calls | `shared` |
 | `CANOPY_MCP_AUTH_TOKEN` | Shared mode: require `Authorization: Bearer …` on the HTTP endpoint. Mandatory unless bound to loopback (or in per-caller mode): the server refuses to start without it | — |
+| `CANOPY_AGENT_LABEL` / `CANOPY_AGENT_RUNNER` / `CANOPY_SESSION_REF` | How sessions name themselves on agent work claims: a label, how they were started (`interactive`, `loop`, `headless`, `cloud`, `sdk`, `action`) and a session id or log URL | token label / — / — |
 
 ## Production deployment
 

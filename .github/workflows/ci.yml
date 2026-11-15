@@ -241,6 +241,12 @@ jobs:
           cache: pip
           cache-dependency-path: plugin/mcp_server/requirements.txt
       - run: pip install -r requirements.txt
+      # The tools aren't type-checked like the backend, so at least catch undefined names and
+      # syntax errors (the pyflakes rules) — with the backend's pinned ruff.
+      - name: ruff (pyflakes rules)
+        run: |
+          pip install "ruff==0.17.0"
+          ruff check --isolated --select F,E9 .
       # Run from stdin so the working directory (mcp_server/) is on sys.path for `import server`.
       - name: Import the server and list its tools
         run: |

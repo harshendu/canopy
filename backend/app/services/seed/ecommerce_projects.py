@@ -14,6 +14,7 @@ from __future__ import annotations
 from app.services.seed.catalog import (
     ADRCommentSpec,
     ADRSpec,
+    AgentWorkSpec,
     BindingSpec,
     BlockerSpec,
     ComponentSpec,
@@ -249,6 +250,37 @@ _ONEPAGE = ProjectSpec(
     deploy_weeks=9,
     pod="Checkout & Payments",
     owner="Rahul Verma",
+    agent_intake="on",
+    agent_work=(
+        # Handed off into review by an engineer's own session.
+        AgentWorkSpec(
+            "Order review & place order", "handed_off", agent="rahul-laptop",
+            runner="interactive", components=("checkout-api", "web-checkout"),
+            plan="Add a review step rendered from the server-side checkout session, and a "
+                 "place-order endpoint that turns the session into an order exactly once.",
+            steps=("Review panel rendered from the session",
+                   "POST /checkout/{id}/place with a per-session idempotency key",
+                   "Order confirmation page and email", "Contract tests against the session"),
+            affected_paths=("services/checkout/orders.py", "web/checkout/review/"),
+            note="Review step and an idempotent place-order endpoint; a double click places "
+                 "one order. Contract tests pass.",
+        ),
+        # A headless worker stopped to ask: the spec doesn't say which wallets.
+        AgentWorkSpec(
+            "Digital wallet buttons", "question", agent="checkout-ci",
+            components=("web-checkout", "payment-gateway"),
+            plan="Render wallet buttons from the provider's SDK above the card form and hide "
+                 "them where the device can't pay.",
+            steps=("Load the provider SDK lazily", "Buttons above the card form",
+                   "Hide on unsupported devices", "Visual and accessibility tests"),
+            affected_paths=("web/checkout/payment/",),
+            question="The spec says \"digital wallets\" but not which ones. The provider "
+                     "supports Apple Pay, Google Pay and PayPal; PayPal needs its own merchant "
+                     "agreement. Which should ship at GA?",
+            options=("Apple Pay and Google Pay", "Apple Pay only",
+                     "All three, PayPal behind a flag"),
+        ),
+    ),
 )
 
 _PAYMENTS = ProjectSpec(
@@ -416,6 +448,34 @@ _PAYMENTS = ProjectSpec(
     deploy_weeks=6,
     pod="Checkout & Payments",
     owner="Priya Shah",
+    agent_intake="on",
+    agent_work=(
+        # A session is working on it right now.
+        AgentWorkSpec(
+            "Payment webhooks & retries", "working", agent="payments-ci",
+            components=("payments-service",),
+            plan="Verify provider webhook signatures, store each event once by its id, and "
+                 "retry failed handlers with backoff into a dead-letter queue.",
+            steps=("Signature verification", "Event store keyed by provider event id",
+                   "Retry with backoff and a dead-letter queue", "Replay tool for support"),
+            affected_paths=("services/payments/webhooks/",),
+            note="Signature checks and the event store are done; writing the retry tests.",
+        ),
+        # Three sessions gave it back: canopy parked it for a person.
+        AgentWorkSpec(
+            "Refunds & partial captures", "parked", agent="payments-ci",
+            components=("payments-service", "payments-ledger"),
+            attempt_notes=(
+                "The sandbox rejects partial captures on 3-D Secure payments; couldn't "
+                "reproduce production behaviour.",
+                "Refund amounts don't reconcile with the ledger when a capture was partial — "
+                "unclear which side is right.",
+                "Same ledger mismatch; it needs a decision on how partial refunds are booked.",
+            ),
+        ),
+        # Delegated, waiting for a session.
+        AgentWorkSpec("Dual-run reconciliation", "ready", components=("payments-ledger",)),
+    ),
 )
 
 # =========================================================================== #

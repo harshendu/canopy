@@ -165,7 +165,7 @@ export const INTAKE_OPTIONS: { value: AgentIntake; label: string; help: string }
   {
     value: "on",
     label: "On",
-    help: "Delegated tasks are offered to agent sessions.",
+    help: "Agent sessions can claim delegated tasks now.",
   },
   {
     value: "paused",

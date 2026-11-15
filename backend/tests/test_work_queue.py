@@ -211,6 +211,10 @@ async def test_claim_plan_and_hand_off(client: Any, db_session: Any) -> None:
 
     dry = (await client.get(f"{API}/tasks/{tid}/advance-check", headers=w.agent)).json()
     assert dry["target"] == "In Review" and not dry["allowed"]  # no hand-off yet
+    # Counting the hand-off about to be sent, only the PR warning is left.
+    dry = (await client.get(f"{API}/tasks/{tid}/advance-check", params={"with_handoff": "true"},
+                            headers=w.agent)).json()
+    assert dry["allowed"] and [x["check"] for x in dry["warnings"]] == ["pr_linked"]
 
     submitted = await client.post(
         f"{API}/work/claims/{claim['id']}/submit",

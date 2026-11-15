@@ -57,6 +57,56 @@ async def test_seed_loader_builds_a_full_coherent_dataset(db_session):
 
 
 @pytest.mark.asyncio
+async def test_seed_agent_work_covers_every_state(db_session):
+    """The demo's agent work is built through the real work-queue services, so each state the
+    UI renders exists: ready, working, a question, a hand-off into review, a parked task."""
+    from app.models.gate import Gate
+    from app.models.project import Project
+    from app.models.work import TaskArtifact, WorkClaim
+    from app.services import work_service
+
+    await seed.load_seed_data(db_session, set())
+    projects = {
+        p.key: p for p in (await db_session.execute(select(Project))).scalars().all()
+    }
+    assert projects["ONEPAGE"].agent_intake == "on" and projects["PAYMENTS"].agent_intake == "on"
+
+    async def task(project: str, name: str) -> Task:
+        row = (await db_session.execute(select(Task).where(
+            Task.project_id == projects[project].id, Task.name == name))).scalars().one()
+        assert row.delegation == "agent", name
+        return row
+
+    handed = await task("ONEPAGE", "Order review & place order")
+    assert handed.status == "In Review" and handed.active_claim_id is None
+    kinds = (await db_session.execute(
+        select(TaskArtifact.kind).where(TaskArtifact.task_id == handed.id)
+    )).scalars().all()
+    assert sorted(kinds) == ["handoff", "plan"]
+
+    asked = await task("ONEPAGE", "Digital wallet buttons")
+    question = (await db_session.execute(
+        select(Gate).where(Gate.task_id == asked.id))).scalars().one()
+    assert question.kind == "question" and question.status == "open"
+    assert len(question.options) == 3
+
+    working = await task("PAYMENTS", "Payment webhooks & retries")
+    claim = await db_session.get(WorkClaim, working.active_claim_id)
+    assert claim is not None and claim.state == "active" and claim.progress_note
+
+    parked = await task("PAYMENTS", "Refunds & partial captures")
+    park = (await db_session.execute(select(Gate).where(Gate.task_id == parked.id))).scalars().one()
+    assert park.kind == "escalation" and park.origin == "system" and park.status == "open"
+
+    ready = await task("PAYMENTS", "Dual-run reconciliation")
+    rahul = (await db_session.execute(
+        select(User).where(User.email == "rahul@shop.example.com"))).scalars().one()
+    caller = await work_service.caller_for(db_session, rahul, None, is_agent=False)
+    queue = await work_service.find_work(db_session, caller, "implementer")
+    assert ready.id in {item.task.id for item in queue.ready}
+
+
+@pytest.mark.asyncio
 async def test_seed_proposals_are_reviewable(db_session):
     """Every seeded proposal lands whole (the loader drops one on any unresolved name) and
     is ready to review: the plan preview computes and an apply would succeed."""
@@ -330,6 +380,18 @@ def _check_references(ds: Dataset) -> None:
                 eng(c.author)
         for inc in p.incidents:
             assert inc.component is None or inc.component in comps
+        # Agent work: real tasks in agent-pullable columns, real components, a known state.
+        assert p.agent_intake in ("off", "on", "paused")
+        leaves = {t.name: t for ph in p.phases for t in ph.tasks}
+        for w in p.agent_work:
+            assert w.task in leaves, (p.key, w.task)
+            assert leaves[w.task].status in ("To Do", "In Progress"), (p.key, w.task)
+            assert w.state in ("ready", "working", "question", "handed_off", "parked"), w.state
+            assert set(w.components) <= comps, (p.key, w.task)
+            assert w.state != "parked" or len(w.attempt_notes) == 3, (p.key, w.task)
+            assert w.state != "question" or (w.question and w.options), (p.key, w.task)
+        if p.agent_work:
+            assert ds.agent_owner_email in users, f"{ds.key}: agent work needs an owner"
 
     # Hand-offs name real tasks and stay inside one initiative (the API enforces the same).
     for (pk, t_pred), (sk, t_succ) in ds.cross_project_handoffs:

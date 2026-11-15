@@ -25,6 +25,7 @@ from app.connectors.tracker import tracker_enabled
 from app.core.crypto import encrypt_token
 from app.core.security import hash_password
 from app.models.activity import ActivityEvent
+from app.models.agent_token import AgentTokenRecord
 from app.models.architecture import (
     ADRComment,
     ADRComponentLink,
@@ -40,13 +41,17 @@ from app.models.architecture import (
 from app.models.base import (
     ADRCommentKind,
     ADRStatus,
+    AgentIntake,
+    ArtifactKind,
     BlockerCategory,
     BlockerSeverity,
     CriterionStatus,
+    Delegation,
     DeliveryMethod,
     DocKind,
     DocScope,
     DocSource,
+    GateKind,
     LeadershipNoteKind,
     LeadershipNoteStatus,
     LeadershipScope,
@@ -76,6 +81,7 @@ from app.models.base import (
 )
 from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
+from app.models.gate import Gate
 from app.models.integration import (
     Connection,
     ExternalRef,
@@ -114,9 +120,11 @@ from app.models.spec import Spec, SpecCriterion
 from app.models.sprint import Sprint
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
+from app.models.work import WorkClaim
 from app.services import proposals as proposal_svc
-from app.services import sprint_service, tracker_links, tracker_sync, workflow
+from app.services import sprint_service, tracker_links, tracker_sync, work_service, workflow
 from app.services import sprints as sprint_metrics
+from app.services.access import project_can_edit
 from app.services.org import team_project_ids
 from app.services.planner import reschedule_project
 from app.services.scenario_engine import snapshot_live_into_scenario
@@ -1146,6 +1154,101 @@ async def _build_proposals(session: AsyncSession, refs: _Refs) -> None:
         await _build_one_proposal(session, refs, spec)
 
 
+async def _agent_caller(
+    session: AsyncSession, owner: User, label: str, tokens: dict[str, AgentTokenRecord]
+) -> work_service.Caller:
+    """The agent session `label` runs as: a token the owner issued (one per label)."""
+    token = tokens.get(label)
+    if token is None:
+        token = await _add(session, AgentTokenRecord(
+            user_id=_req(owner.id), jti=f"demo-agent-{label}", label=label,
+            expires_at=utcnow() + timedelta(days=30), max_active_claims=5))
+        tokens[label] = token
+    return await work_service.caller_for(session, owner, token, is_agent=True)
+
+
+async def _build_one_agent_work(
+    session: AsyncSession, refs: _Refs, spec: ProjectSpec, work: catalog.AgentWorkSpec,
+    person: work_service.Caller, tokens: dict[str, AgentTokenRecord],
+) -> None:
+    task = refs.tasks.get(spec.key, {}).get(work.task)
+    project = refs.projects.get(spec.key)
+    if task is None or task.id is None or project is None:
+        return
+    await work_service.set_delegation(session, task, person, Delegation.agent.value)
+    if work.components:
+        names = (await session.execute(
+            select(ArchitectureComponent).where(ArchitectureComponent.project_id == project.id)
+        )).scalars().all()
+        ids = [c.id for c in names if c.name in work.components and c.id is not None]
+        await work_service.set_components(session, task, ids, person)
+    if work.state == "ready":
+        return
+    agent = await _agent_caller(session, person.user, work.agent, tokens)
+    info = work_service.AgentInfo(label=work.agent, runner=work.runner)
+    if work.state == "parked":
+        for note in work.attempt_notes:
+            claim = await work_service.claim_work(session, agent, "implementer",
+                                                  task_id=task.id, agent=info)
+            if claim is None:
+                return
+            await work_service.release_work(session, claim, agent, reason="could not finish",
+                                            note=note)
+        return
+    claim = await work_service.claim_work(session, agent, "implementer", task_id=task.id,
+                                          agent=info)
+    if claim is None:
+        return
+    await work_service.submit_plan(session, claim, agent, body=work.plan, data={
+        "approach": work.plan, "affected_paths": list(work.affected_paths),
+        "steps": [{"content": step, "status": "pending"} for step in work.steps],
+        "confidence": "medium",
+    })
+    if work.state == "working":
+        steps = [{"content": step, "status": "completed" if i < 2 else "pending"}
+                 for i, step in enumerate(work.steps)]
+        await work_service.heartbeat(session, claim, agent, note=work.note, steps=steps)
+    elif work.state == "question":
+        gate = await work_service.ask_human(
+            session, claim, agent, kind=GateKind.question,
+            title=f"Question on {task.key or task.name}", prompt=work.question or "",
+            options=[{"value": o, "label": o} for o in work.options], allow_text=True)
+        # It has waited a while: past its reminder, so the inbox and the alerts show it.
+        waited = timedelta(hours=5)
+        gate.created_at -= waited
+        if gate.remind_at is not None:
+            gate.remind_at -= waited
+        if gate.escalate_at is not None:
+            gate.escalate_at -= waited
+    elif work.state == "handed_off":
+        await work_service.submit_work(
+            session, claim, agent, kind=ArtifactKind.handoff, body=work.note or "",
+            data={"summary": work.note or "", "verification": [
+                {"command": "pytest -q services/checkout", "result": "passed"}]})
+
+
+async def _build_agent_work(session: AsyncSession, refs: _Refs) -> None:
+    """Delegate the dataset's agent work and run it through the work queue (as the dataset's
+    agent owner, who must be able to plan the project), then set each project's intake."""
+    owner = refs.users.get(refs.ds.agent_owner_email or "")
+    if owner is None:
+        return
+    person = await work_service.caller_for(session, owner, None, is_agent=False)
+    tokens: dict[str, AgentTokenRecord] = {}
+    for spec in refs.ds.projects:
+        project = refs.projects.get(spec.key)
+        if project is None or (not spec.agent_work and spec.agent_intake == "off"):
+            continue
+        if not await project_can_edit(session, owner, project):
+            continue
+        await work_service.set_intake(session, project, person, AgentIntake.on.value)
+        for work in spec.agent_work:
+            await _build_one_agent_work(session, refs, spec, work, person, tokens)
+        if spec.agent_intake != AgentIntake.on.value:
+            await work_service.set_intake(session, project, person, spec.agent_intake)
+        await session.flush()
+
+
 async def load_seed_data(
     session: AsyncSession, keep_user_ids: set[int], dataset: Dataset | None = None
 ) -> dict[str, int]:
@@ -1165,6 +1268,7 @@ async def load_seed_data(
     await _build_scenarios(session, refs)
     await _build_leadership_notes(session, refs)
     await _build_proposals(session, refs)
+    await _build_agent_work(session, refs)
     await session.commit()
     return await seed_summary(session)
 
@@ -1192,6 +1296,7 @@ async def seed_summary(session: AsyncSession) -> dict[str, int]:
         "outcomes": Outcome, "blockers": Blocker, "retrospectives": Retrospective,
         "draft_plans": DraftPlan, "connections": Connection, "scenarios": Scenario,
         "activity_events": ActivityEvent, "status_history": TaskStatusHistory,
-        "documents": DocReference, "proposals": Proposal,
+        "documents": DocReference, "proposals": Proposal, "work_claims": WorkClaim,
+        "gates": Gate,
     }
     return {name: await _count(session, model) for name, model in models.items()}

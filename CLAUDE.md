@@ -143,6 +143,26 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   features, open proposals). Skills: `updating-canopy` (the write-ladder contract + the
   reviewing-together loop), `harvesting-signals`, `persona-playbooks`; subagent
   `signal-harvester`. USER_FLOWS §AA.
+- **Agent work queue (delegated execution):** a person **delegates** a task (`Task.delegation`)
+  and a planner switches the project's **intake** on (`Project.agent_intake` off|on|paused — off
+  is the kill switch); Claude sessions **claim** it (`WorkClaim`, a lease renewed by every call),
+  read its **brief** (`app/services/work_brief.py`: `trust` policy|content sections, sanitised,
+  24 KB), record a plan / hand-off (`TaskArtifact`, append-only revisions) and hand off — canopy
+  evaluates the next column's entry checks (pure `stage_policy.py`, the built-in default
+  pipeline until stage policies land) and moves the card, or holds it with a **gate** a person
+  decides (`app/models/gate.py`, human-only `POST /gates/{id}/decide`, no MCP tool). Readiness is
+  computed, never stored (pure `work_queue.py`). **`work_service.py` is the only writer of a
+  claim's state and `Task.active_claim_id`; `gates.py` of `Gate.status/decision`**
+  (`tests/test_work_invariants.py`). Claiming is a portable compare-and-swap (reserve the task
+  with a conditional UPDATE, *then* insert the claim — inserting first deadlocks on MySQL);
+  `tests/test_claim_race.py` runs it on PostgreSQL/MySQL/MariaDB in CI
+  (`CANOPY_TEST_DATABASE_URL`). Every claim-bound write renews the lease first (fencing → `409
+  claim_lost`); the reaper cron expires lapsed claims; 3 unfinished attempts park a task. An agent
+  token moving a delegated card gets `409 use_work_claim`; a person's move ends the claim.
+  `WorkEvent` is the audit trail. API `app/api/v1/work.py` + `gates.py` (gate `ai.work_queue`);
+  MCP `plugin/mcp_server/tools/work.py` (+ hook tools for `plugin/hooks/hooks.json`); skills
+  `working-the-queue`, `implementing-tasks`; subagent `task-implementer`. Design + later phases:
+  `docs/AGENT_EXECUTION.md`. USER_FLOWS §AE.
 - **Kanban board + native tracking:** a project is `tracking_mode` native|mirrored. Board columns
   are a **workflow** (`app/models/workflow.py`: ordered statuses, each with a **category**
   todo|in_progress|done|cancelled + optional WIP limit, enforcement off|warn|block), resolved
@@ -378,7 +398,7 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
     `session.delete()` 500s on PG/MySQL and silently orphans on SQLite. `tests/test_cascade_delete.py`
     verifies it under `PRAGMA foreign_keys=ON` over the full demo graph, so a missed table fails CI.
 - MCP tools (`plugin/mcp_server/tools/`) are curated — one per architect intent, not a 1:1 mirror of
-  REST routes (~140 across projects/planning/proposals/connectors/tracking/team/architecture/
+  REST routes (~160 across projects/planning/proposals/work queue/connectors/tracking/team/architecture/
   scenarios/specs/docs/delivery/outcomes/sprints; tracker tools are neutral — `sync_tracker`,
   `link_tracker_item`, `ingest_work_items`, `finalize_draft_plan`, `*_project_tracking`). Skills
   are runbooks (`updating-canopy` — the
@@ -386,11 +406,12 @@ TLS and serves the built frontend + routes `/api`+`/webhooks`→backend and `/mc
   `persona-playbooks`, `planning-roadmaps`, `writing-adrs`, `syncing-trackers`, `mcp-ingest`,
   `capacity-planning`, `decision-deadline-nudger`, `pr-to-adr-linker`, `drafting-tickets`,
   `mapping-epic-docs`, `planning-sprints`, `working-the-board`, `spec-driven-development`,
-  `daily-standup`); subagents
+  `daily-standup`, `working-the-queue`, `implementing-tasks`); subagents
   do isolated multi-step work (`tracker-sync`, `gantt-planner`, `risk-analyst`, `drift-sentinel`,
-  `scenario-architect`, `delivery-enricher`, `signal-harvester`). Add a tool when Claude needs a new verb; register it
+  `scenario-architect`, `delivery-enricher`, `signal-harvester`, `task-implementer`). Add a tool when Claude needs a new verb; register it
   in `mcp_server/server.py`.
-- **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the tracker
+- **Background schedules (arq worker):** `app/workers/worker.py` runs cron jobs — the agent work
+  queue's reaper (`reap_work_claims`: lapsed claims expire, waiting gates escalate), the tracker
   reconciliation poll (`tracker_incremental_sync` over every enabled direct-read tracker), a
   **nightly changelog backfill**
   (`tracker_history_backfill`, bounded per binding via its cursor) and a **nightly risk-snapshot sweep** (`capture_risk_snapshots` → `run_risk_snapshots`)

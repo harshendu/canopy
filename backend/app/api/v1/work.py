@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import time
 from typing import Annotated, Any
 
@@ -478,10 +479,16 @@ async def get_brief(
 
 @router.get("/tasks/{task_id}/advance-check")
 async def advance_check(
-    session: SessionDep, caller: CallerDep, task_id: int, to_status: str | None = None
+    session: SessionDep,
+    caller: CallerDep,
+    task_id: int,
+    to_status: str | None = None,
+    with_handoff: bool = False,
 ) -> dict[str, Any]:
     """Dry run of the policy evaluation: could this task enter `to_status` (default: the column
-    after its current one) right now? The same function a hand-off uses."""
+    after its current one) right now? The same function a hand-off uses. `with_handoff` counts
+    a new hand-off as attached — what `submit_work` does before it evaluates — so a session
+    sees what it still needs rather than the hand-off it hasn't sent yet."""
     task = await _task(session, task_id)
     project = await _project(session, task.project_id)
     pipeline = await policy_service.resolve_pipeline(session, project)
@@ -499,6 +506,12 @@ async def advance_check(
         session, task, pipeline, actor="agent" if caller.is_agent else "human",
         current=caller.actor_fact(), extra_rules=rules,
     )
+    if with_handoff:
+        revision = max((a.revision for a in ctx.artifacts if a.kind == "handoff"), default=0)
+        ctx = dataclasses.replace(ctx, artifacts=[
+            *ctx.artifacts,
+            stage_policy.ArtifactFact(kind="handoff", revision=revision + 1, created_at=utcnow()),
+        ])
     return stage_policy.evaluate(target, ctx).to_dict()
 
 

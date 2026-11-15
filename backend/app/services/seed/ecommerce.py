@@ -696,4 +696,5 @@ ECOMMERCE = Dataset(
     leadership_notes=LEADERSHIP_NOTES,
     teams=TEAMS,
     proposals=PROPOSALS,
+    agent_owner_email=_email("rahul"),
 )

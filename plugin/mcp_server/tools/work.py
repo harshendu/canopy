@@ -59,8 +59,12 @@ HINTS: dict[str, str] = {
 }
 
 
-def _agent_info() -> dict:
-    """How this session identifies itself on a claim (shown on the board and the timeline)."""
+def _agent_info(client) -> dict:
+    """How this session identifies itself on a claim (shown on the board and the timeline).
+    A per-caller server serves many sessions, so it stamps none of its own: the backend falls
+    back to the caller's token label."""
+    if getattr(client, "per_caller", False):
+        return {}
     runner = (os.environ.get("CANOPY_AGENT_RUNNER") or "").strip().lower()
     info = {
         "label": (os.environ.get("CANOPY_AGENT_LABEL") or "").strip()[:120] or None,
@@ -185,7 +189,7 @@ def register(mcp, client) -> None:
         body = _clean({
             "role": role, "task_id": task_id, "project_id": project_id, "team_id": team_id,
             "repo": repo, "wait_s": max(0, min(int(wait_s or 0), 25)),
-            "agent": _agent_info() or None,
+            "agent": _agent_info(client) or None,
         })
         return await _call(client.post("/work/claims", body))
 
@@ -428,11 +432,17 @@ def register(mcp, client) -> None:
         return await _call(client.get(f"/tasks/{task_id}/execution"))
 
     @mcp.tool
-    async def check_advance(task_id: int, to_status: str | None = None) -> dict:
+    async def check_advance(
+        task_id: int, to_status: str | None = None, with_handoff: bool = True
+    ) -> dict:
         """Dry run: would this task pass the entry checks of `to_status` (default: the next
         column) right now? Returns each check with its result — the same evaluation a hand-off
-        gets. Run it before submit_work to see what's missing."""
-        params = {"to_status": to_status} if to_status else None
+        gets. By default it counts the hand-off you're about to submit as present (submit_work
+        attaches it before the checks run), so what's left is what you still need — a linked
+        PR, passing checks, criteria. `with_handoff=False` evaluates the task exactly as it is."""
+        params: dict = {"with_handoff": "true" if with_handoff else "false"}
+        if to_status:
+            params["to_status"] = to_status
         return await _call(client.get(f"/tasks/{task_id}/advance-check", params=params))
 
     @mcp.tool
@@ -474,7 +484,7 @@ def register(mcp, client) -> None:
             claim_id = claim.get("id")
             if not isinstance(claim_id, int):
                 continue
-            if now - _last_beat.get(claim_id, 0.0) < _HOOK_BEAT_SECONDS:
+            if now - _last_beat.get(claim_id, 0.0) < _HOOK_SECONDS:
                 continue
             _last_beat[claim_id] = now
             try:
