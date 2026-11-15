@@ -20,8 +20,12 @@ what's already awaiting review, and where the dashboard lives.
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from client import CanopyClient
 
 
 def _dashboard_base() -> str:
@@ -39,6 +43,47 @@ def _dashboard_base() -> str:
 
 def _review_url(proposal_id: int | None = None) -> str:
     return f"{_dashboard_base()}/reviews" + (f"/{proposal_id}" if proposal_id else "")
+
+
+async def _agent_context(client: CanopyClient, session: dict, context: dict) -> dict | None:
+    """The agent work queue at a glance (docs/AGENT_EXECUTION.md §14.1): this token's scope,
+    the claims it holds (resume those first), the gates the person may decide, and the projects
+    whose intake is on. None when the `ai.work_queue` feature is off."""
+    features = context.get("features") or {}
+    if isinstance(features, dict) and features.get("ai.work_queue") is False:
+        return None
+    try:
+        claims = await client.get("/work/claims", params={"mine": "true", "state": "active"})
+    except httpx.HTTPStatusError:
+        return None
+    try:
+        gates = await client.get("/gates", params={"mine": "true"})
+    except httpx.HTTPStatusError:
+        gates = []
+    token = session.get("agent_token") or {}
+    return {
+        "token_roles": token.get("roles") or [],
+        "token_project_ids": token.get("project_ids") or [],
+        "max_active_claims": token.get("max_active_claims", 1),
+        "active_claims": [
+            {"claim_id": c.get("id"), "task_id": c.get("task_id"), "role": c.get("role"),
+             "stage": c.get("stage"), "lease_expires_at": c.get("lease_expires_at")}
+            for c in claims
+        ],
+        "gates_waiting_on_user": [
+            {"gate_id": g.get("id"), "kind": g.get("kind"), "task_key": g.get("task_key"),
+             "title": g.get("title"), "age_hours": g.get("age_hours"),
+             "review_url": f"{_dashboard_base()}/reviews/gates/{g.get('id')}"}
+            for g in gates[:20]
+        ],
+        "intake_on": [
+            {"id": p.get("id"), "key": p.get("key"), "intake": p.get("agent_intake")}
+            for p in context.get("projects", [])
+            if p.get("agent_intake") in ("on", "paused")
+        ],
+        "how": "Resume an active claim first (get_work_brief, then continue). Otherwise "
+        "find_work / claim_work for a role — see the working-the-queue skill.",
+    }
 
 
 def _compact_impact(preview: dict) -> dict:
@@ -280,6 +325,10 @@ def register(mcp, client) -> None:
         - `trackers`: the work trackers enabled here and what each supports.
         - `open_proposals`: staged changes already awaiting review (don't duplicate them —
           `revise_proposal` an open one instead of staging a near-copy).
+        - `agent`: the work queue — this token's roles / project scope, the claims it already
+          holds (**resume those before claiming anything new**), the gates waiting on the
+          user's decision (tell them; only they can decide, in the UI) and the projects whose
+          agent intake is on (null when the queue is switched off).
         - `dashboard_url` / `reviews_url`: where to send the user to look and to commit.
         """
         context: dict = {
@@ -302,6 +351,8 @@ def register(mcp, client) -> None:
                 # native = canopy owns every status (move cards with move_task); mirrored = a
                 # tracker owns its tasks' status (read-only here — see get_project_tracking).
                 "tracking_mode": p.get("tracking_mode", "native"),
+                # off | on | paused — whether delegated tasks here are offered to agents.
+                "agent_intake": p.get("agent_intake", "off"),
             }
             for p in await client.get("/projects")
         ]
@@ -342,4 +393,5 @@ def register(mcp, client) -> None:
             ]
         except httpx.HTTPStatusError:
             context["open_proposals"] = []  # ai.proposals gated off
+        context["agent"] = await _agent_context(client, session, context)
         return context

@@ -30,6 +30,14 @@ mirrored project — its tracker's statuses).
   moves their own cards, or **pulls** an unassigned one by moving it to another column (it is
   assigned to them). Reordering an unassigned card doesn't take it.
 
+## Delegated cards (the agent work queue)
+A card with `delegation: "agent"` is worked through canopy's work queue: its `claim` badge
+shows the session holding it and its `gate` badge what a person must decide. **Don't
+`move_task` a delegated card** — an agent token gets `409 use_work_claim`; claim it and hand
+off with `submit_work` instead (`working-the-queue`). A person *can* move one (the board
+follows reality): the running claim ends and its session is told to stop, and any entry-check
+warnings come back in the move response.
+
 ## Refusals and what they mean
 - `409 status_externally_owned` — a mirrored card: its tracker owns the status. Say so and give
   the link (`url` in the response); don't try another route to change it.
@@ -37,6 +45,9 @@ mirrored project — its tracker's statuses).
   something out first (`warn` succeeds with `warnings: ["wip_limit_exceeded"]` — mention it).
 - `422 unknown_status` — not a column of that card's workflow (`columns` lists them).
 - `403 native_tracking_disabled` — the admin turned canopy-owned status off.
+- `409 use_work_claim` — a delegated card and an agent token: use the work queue's verbs.
+- `409 checks_failed` (a person's move of a delegated card) — a column check marked for
+  everyone blocks it; a planner may pass `override_reason` (recorded) if they insist.
 
 ## Inferred vs instructed
 Move a card when the user **tells** you to ("move CHK-12 to In Review"). When you merely

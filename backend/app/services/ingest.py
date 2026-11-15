@@ -365,6 +365,27 @@ async def upsert_pull_request(
     return action
 
 
+async def pull_request_effects(session: AsyncSession, rows: list[PullRequest]) -> int:
+    """After PR cache rows changed: let agent work react — a GitHub approval or a merge may
+    satisfy a gate, an approved gate waiting for evidence may now route, a merge ahead of the
+    queue moves its task to done (docs/AGENT_EXECUTION.md §9.4). A no-op with `ai.work_queue`
+    off or when no row is tied to a task. Returns how many gates were satisfied or routed."""
+    linked = [r for r in rows if r.task_id is not None]
+    if not linked:
+        return 0
+    from app.services import gates
+    from app.services.features import feature_enabled
+
+    if not await feature_enabled(session, "ai.work_queue"):
+        return 0
+    await session.flush()
+    count = 0
+    for row in linked:
+        effects = await gates.on_pull_request(session, row)
+        count += effects.satisfied + effects.routed
+    return count
+
+
 async def find_pull_request(session: AsyncSession, repo: str, number: int) -> PullRequest | None:
     return (
         await session.execute(
@@ -427,6 +448,7 @@ async def ingest_pull_requests(
     full_name = f"{owner}/{repo}"
 
     result = SyncResult(provider="github")
+    touched: list[PullRequest] = []
     for pr in prs:
         action = await upsert_pull_request(
             session,
@@ -453,5 +475,9 @@ async def ingest_pull_requests(
             ),
         )
         setattr(result, action, getattr(result, action) + 1)
+        row = await find_pull_request(session, full_name, pr.number)
+        if row is not None:
+            touched.append(row)
+    await pull_request_effects(session, touched)
     await session.commit()
     return result

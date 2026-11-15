@@ -30,10 +30,12 @@ from app.models.architecture import (
     DriftEvent,
     DriftScan,
     DriftSuppression,
+    TaskComponentLink,
 )
 from app.models.base import DocScope, LeadershipScope, ProposalScope, RiskScope
 from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
+from app.models.gate import Gate
 from app.models.integration import ExternalRef, PullRequest, TrackerBinding
 from app.models.leadership import LeadershipNote
 from app.models.outcome import Outcome
@@ -62,6 +64,7 @@ from app.models.scenario import (
 from app.models.spec import Spec, SpecCriterion
 from app.models.sprint import TaskSprintHistory
 from app.models.team import Allocation
+from app.models.work import TaskArtifact, WorkClaim, WorkEvent
 from app.models.workflow import Workflow, WorkflowStatus
 
 
@@ -93,7 +96,15 @@ async def delete_task_cascade(session: AsyncSession, task_id: int) -> None:
     await session.execute(
         update(Allocation).where(col(Allocation.task_id) == task_id).values(task_id=None)
     )
-    # Rows that only exist because of this task → delete.
+    # Rows that only exist because of this task → delete. Agent work first: a gate references
+    # the claim that asked and the artifact it judges; an artifact references its claim.
+    await session.execute(delete(Gate).where(col(Gate.task_id) == task_id))
+    await session.execute(delete(TaskArtifact).where(col(TaskArtifact.task_id) == task_id))
+    await session.execute(delete(WorkClaim).where(col(WorkClaim.task_id) == task_id))
+    await session.execute(delete(WorkEvent).where(col(WorkEvent.task_id) == task_id))
+    await session.execute(
+        delete(TaskComponentLink).where(col(TaskComponentLink.task_id) == task_id)
+    )
     await session.execute(
         delete(Dependency).where(
             or_(col(Dependency.predecessor_id) == task_id, col(Dependency.successor_id) == task_id)
@@ -255,6 +266,20 @@ async def delete_project_cascade(session: AsyncSession, project_id: int) -> None
         # the project's own board workflow (override), columns first
         delete(WorkflowStatus).where(col(WorkflowStatus.workflow_id).in_(workflow_ids)),
         delete(Workflow).where(col(Workflow.project_id) == pid),
+        # agent work: gates (→ claims, artifacts) → artifacts (→ claims) → claims, the event
+        # log, and the task ↔ component links
+        delete(Gate).where(or_(col(Gate.project_id) == pid, col(Gate.task_id).in_(task_ids))),
+        delete(TaskArtifact).where(col(TaskArtifact.task_id).in_(task_ids)),
+        delete(WorkClaim).where(col(WorkClaim.task_id).in_(task_ids)),
+        delete(WorkEvent).where(
+            or_(col(WorkEvent.project_id) == pid, col(WorkEvent.task_id).in_(task_ids))
+        ),
+        delete(TaskComponentLink).where(
+            or_(
+                col(TaskComponentLink.task_id).in_(task_ids),
+                col(TaskComponentLink.component_id).in_(comp_ids),
+            )
+        ),
         # task-derived rows
         delete(TaskStatusHistory).where(col(TaskStatusHistory.task_id).in_(task_ids)),
         delete(TaskSprintHistory).where(col(TaskSprintHistory.task_id).in_(task_ids)),

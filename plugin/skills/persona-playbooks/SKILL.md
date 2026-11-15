@@ -48,6 +48,9 @@ what differs per persona is *what you read and stage*, not the review rules.
   PTO seen in Calendar: report it — availability is planner UI work, not yours.
 - **Chain:** `capacity-planning`, `daily-standup`, `delivery-enricher` agent for the
   pre-steering annotation pass.
+- **Agent work:** how long agent work waits on people (`list_gates`, the `gate_waiting` /
+  `task_parked` alerts) is the number to watch — a queue held up by unanswered gates is a
+  staffing question, not an agent one.
 
 ## Leadership (exec)
 - **Read first (usually read-only):** `get_initiative_digest` per initiative,
@@ -67,6 +70,9 @@ what differs per persona is *what you read and stage*, not the review rules.
   lane); anything touching the wider plan → proposal (they usually can't write it
   anyway — staging carries their judgment to the planner).
 - **Chain:** `spec-driven-development`, `writing-adrs` (propose flow).
+- **Agent work:** they delegate tasks (in the UI), watch the board's claim badges, and answer
+  the gates on their tasks (`list_gates(mine=True)`). Their own Claude session can work the
+  queue too: "pick up my next canopy task" → `working-the-queue` + `implementing-tasks`.
 
 ## Design (UX)
 - **Read first:** the doc graph (`list_doc_references` — design/PRD coverage), the tasks

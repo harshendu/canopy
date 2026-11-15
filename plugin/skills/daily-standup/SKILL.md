@@ -29,6 +29,11 @@ signal, is flagged, not assumed green). See `docs/AI_NATIVE_EXECUTION.md` §5.
    - most likely to slip → `canopy:get_forecast(initiative_id=…)` (P50/P85) and the cross-project
      critical path `canopy:get_initiative_critical_path(initiative_id)` (the hand-offs).
    - outcomes off-track → `canopy:list_outcomes(scope_level="initiative", scope_id=…)`.
+   - **agent work** (when `get_workspace_context.agent` isn't null): gates waiting on people
+     (`canopy:list_gates()` — oldest first; name who decides and link `review_url`), parked
+     tasks (`task_parked` alerts: sessions gave up — someone must retry with guidance, take
+     over or cancel), and stale or over-running claims (`claim_stale` / `claim_overrun`).
+     Waiting on a person is the queue's usual bottleneck — lead with it when it's there.
    - **sprint teams** (`canopy:get_team_delivery(team_id)` → `effective_method` sprint or
      both): the active sprint's burndown and scope added
      (`canopy:get_sprint(sprint_id, include_report=True)`, the id from `list_sprints`) and any

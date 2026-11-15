@@ -15,10 +15,12 @@ from app.models.architecture import (
     DriftEvent,
     DriftScan,
     DriftSuppression,
+    TaskComponentLink,
 )
 from app.models.doc import DocReference
 from app.models.draft import DraftPlan, DraftTask
 from app.models.feature import FeatureFlag
+from app.models.gate import Gate
 from app.models.integration import (
     Connection,
     EngineerIdentity,
@@ -60,6 +62,7 @@ from app.models.spec import Spec, SpecCriterion
 from app.models.sprint import Sprint, TaskSprintHistory
 from app.models.team import Allocation, Engineer, EngineerAvailability, Role
 from app.models.user import User
+from app.models.work import TaskArtifact, WorkClaim, WorkEvent
 from app.models.workflow import Workflow, WorkflowStatus
 
 __all__ = [
@@ -89,6 +92,7 @@ __all__ = [
     "EngineerIdentity",
     "ExternalRef",
     "FeatureFlag",
+    "Gate",
     "Holiday",
     "Initiative",
     "InitiativeLead",
@@ -118,6 +122,8 @@ __all__ = [
     "SpecCriterion",
     "Sprint",
     "Task",
+    "TaskArtifact",
+    "TaskComponentLink",
     "TaskSprintHistory",
     "TaskStatusHistory",
     "Team",
@@ -125,6 +131,8 @@ __all__ = [
     "TrackerBinding",
     "User",
     "UserConnection",
+    "WorkClaim",
+    "WorkEvent",
     "Workflow",
     "WorkflowStatus",
 ]

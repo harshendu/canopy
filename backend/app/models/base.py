@@ -69,6 +69,132 @@ class ActorKind(StrEnum):
     system = "system"  # canopy itself: routing after a gate decision, a PR event, the reaper
 
 
+# --- Agent execution (docs/AGENT_EXECUTION.md): the work queue, claims, artifacts, gates ---
+# Stored as VARCHAR and validated by these StrEnums at the API boundary (the TrackingMode
+# pattern), so adding a value never needs a dialect-branched enum migration.
+class AgentIntake(StrEnum):
+    """A project's switch for agent work."""
+
+    off = "off"  # nothing in the project is offered to agents (the default)
+    on = "on"
+    paused = "paused"  # no new claims; sessions already working may finish
+
+
+class Delegation(StrEnum):
+    """A person's mark on a task: agents may work it. The assignee stays accountable."""
+
+    agent = "agent"
+
+
+class AgentRole(StrEnum):
+    """The built-in agent roles. A team may add its own keys (planner, security-reviewer, …);
+    roles are plain strings everywhere they are stored."""
+
+    implementer = "implementer"
+    reviewer = "reviewer"
+    qa = "qa"
+
+
+class ClaimState(StrEnum):
+    active = "active"  # the session holds the lease
+    completed = "completed"  # handed off, returned for rework, or ended at a gate
+    released = "released"  # the session gave the task back
+    failed = "failed"  # the session said a person is needed
+    expired = "expired"  # the lease ran out
+    superseded = "superseded"  # a person took over, or the task was cancelled / undelegated
+
+
+class ClaimOutcome(StrEnum):
+    advanced = "advanced"  # handed off; the task moved on
+    returned = "returned"  # a review / QA verdict sent the task back for rework
+    gated = "gated"  # ended because a person must decide (a question, a checkpoint)
+    released = "released"
+    failed = "failed"
+    expired = "expired"
+    superseded = "superseded"
+
+
+class ArtifactKind(StrEnum):
+    plan = "plan"
+    handoff = "handoff"
+    review = "review"
+    qa_report = "qa_report"
+    note = "note"
+
+
+class Verdict(StrEnum):
+    """A review / QA verdict (the BMAD-style vocabulary, waivers live on the sign-off)."""
+
+    passed = "pass"
+    concerns = "concerns"
+    failed = "fail"
+
+
+class GateKind(StrEnum):
+    plan_approval = "plan_approval"  # a plan checkpoint fired
+    handoff_approval = "handoff_approval"  # a hand-off checkpoint fired
+    signoff = "signoff"  # the default kind of a decision column
+    question = "question"  # the agent needs an answer to proceed
+    escalation = "escalation"  # the agent (or canopy) says it should not proceed
+
+
+class GateOrigin(StrEnum):
+    checkpoint = "checkpoint"
+    column = "column"
+    agent = "agent"
+    system = "system"
+
+
+class GateStatus(StrEnum):
+    """A gate's coarse outcome; the exact response is `Gate.decision`."""
+
+    open = "open"
+    approved = "approved"
+    changes_requested = "changes_requested"
+    rejected = "rejected"
+    answered = "answered"
+    cancelled = "cancelled"
+
+
+class GateDecision(StrEnum):
+    approve = "approve"
+    edit_and_approve = "edit_and_approve"
+    approve_with_conditions = "approve_with_conditions"
+    request_changes = "request_changes"
+    reject = "reject"
+    take_over = "take_over"
+    answer = "answer"
+    retry = "retry"  # escalations: try again with guidance (attempts reset)
+    cancelled = "cancelled"  # withdrawn, or closed because the task left the queue
+
+
+class DecidedVia(StrEnum):
+    canopy = "canopy"  # a person decided in canopy
+    pr_review = "pr_review"  # a GitHub review satisfied it
+    pr_merge = "pr_merge"  # the PR was merged
+    policy = "policy"  # canopy closed it (the task was cancelled, undelegated, merged ahead)
+
+
+class WorkEventKind(StrEnum):
+    delegated = "delegated"  # also undelegation (data.delegation = null)
+    intake_changed = "intake_changed"
+    components_changed = "components_changed"
+    claimed = "claimed"
+    claim_ended = "claim_ended"  # data.outcome
+    artifact_added = "artifact_added"
+    checks_evaluated = "checks_evaluated"  # the decision log of a policy evaluation
+    advanced = "advanced"
+    returned = "returned"
+    gate_opened = "gate_opened"
+    gate_decided = "gate_decided"
+    gate_escalated = "gate_escalated"
+    gate_reassigned = "gate_reassigned"
+    override = "override"
+    merged_ahead_of_stage = "merged_ahead_of_stage"
+    moved_without_clearance = "moved_without_clearance"
+    policy_changed = "policy_changed"
+
+
 class DeliveryMethod(StrEnum):
     """How a team runs its work, across all of its projects (USER_FLOWS §C11)."""
 

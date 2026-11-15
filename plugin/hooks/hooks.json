@@ -1,0 +1,42 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact|clear",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:canopy:canopy",
+            "tool": "session_context",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:canopy:canopy",
+            "tool": "heartbeat",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:canopy:canopy",
+            "tool": "handoff_check",
+            "input": { "stop_hook_active": "${stop_hook_active}" },
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

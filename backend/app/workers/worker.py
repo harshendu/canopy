@@ -111,6 +111,18 @@ async def poll_file_drops(ctx: dict[str, Any]) -> dict[str, dict]:
         return await process_drops(session, storage)
 
 
+async def reap_work_claims(ctx: dict[str, Any]) -> dict[str, int]:
+    """Agent work (docs/AGENT_EXECUTION.md §6.3, §9.4): expire claims whose lease lapsed — the
+    task returns to the queue, or parks once its attempts are used up — and widen who may
+    decide gates that have waited past their threshold. Never approves anything."""
+    from app.services import gates, work_service
+
+    async with async_session_factory() as session:
+        expired = await work_service.reap_expired(session)
+        escalated = await gates.sweep(session)
+    return {"expired": expired, "escalated": escalated}
+
+
 async def startup(ctx: dict[str, Any]) -> None:
     """Refuse to run on a guessable SECRET_KEY: the worker encrypts refreshed connector tokens
     with a key derived from it unless TOKEN_ENCRYPTION_KEY is set."""
@@ -119,6 +131,7 @@ async def startup(ctx: dict[str, Any]) -> None:
 
 _poll_minutes = set(range(0, 60, max(1, min(settings.TRACKER_POLL_MINUTES, 30))))
 _drop_minutes = set(range(0, 60, max(1, min(settings.FILE_DROP_POLL_MINUTES, 30))))
+_reaper_minutes = set(range(0, 60, max(1, min(settings.WORK_REAPER_MINUTES, 30))))
 
 
 class WorkerSettings:
@@ -128,6 +141,7 @@ class WorkerSettings:
         process_webhook,
         capture_risk_snapshots,
         poll_file_drops,
+        reap_work_claims,
     ]
     cron_jobs: ClassVar = [
         cron(tracker_incremental_sync, minute=_poll_minutes, run_at_startup=False),
@@ -136,6 +150,8 @@ class WorkerSettings:
         # Nightly changelog top-up (03:30), after the snapshot.
         cron(tracker_history_backfill, hour={3}, minute={30}, run_at_startup=False),
         cron(poll_file_drops, minute=_drop_minutes, run_at_startup=False),
+        # Agent work: lapsed leases back to the queue, waiting gates escalated.
+        cron(reap_work_claims, minute=_reaper_minutes, run_at_startup=False),
     ]
     on_startup = startup
     redis_settings = redis_settings()

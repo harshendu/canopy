@@ -67,6 +67,34 @@ class AlertSprintTask:
 
 
 @dataclass
+class AlertGate:
+    """An open gate — agent work waiting on a person (docs/AGENT_EXECUTION.md §9.4, §19)."""
+
+    id: int
+    task_id: int
+    task_name: str
+    kind: str
+    title: str
+    age_hours: float
+    parked: bool = False  # canopy stopped offering the task (attempts used up, rework loop)
+    remind_after_hours: float | None = None
+    escalate_after_hours: float | None = None
+
+
+@dataclass
+class AlertClaim:
+    """An active work claim — a session working a task (docs/AGENT_EXECUTION.md §6.3, §19)."""
+
+    id: int
+    task_id: int
+    task_name: str
+    role: str
+    lease_minutes: int
+    heartbeat_age_minutes: float
+    active_hours: float
+
+
+@dataclass
 class Alert:
     kind: str
     severity: str  # info | warning | error
@@ -87,8 +115,12 @@ def compute_alerts(
     blockers: list[AlertBlocker] | None = None,
     register_risks: list[AlertRiskItem] | None = None,
     sprint_tasks: list[AlertSprintTask] | None = None,
+    gates: list[AlertGate] | None = None,
+    claims: list[AlertClaim] | None = None,
+    claim_overrun_hours: float = 8,
 ) -> list[Alert]:
     alerts: list[Alert] = []
+    alerts.extend(agent_work_alerts(gates or [], claims or [], claim_overrun_hours))
 
     # Sprints never pin the schedule (CPM dates stay computed): surface the conflict instead.
     for st in sprint_tasks or []:
@@ -187,4 +219,76 @@ def compute_alerts(
                 )
             )
 
+    return alerts
+
+
+def agent_work_alerts(
+    gates: list[AlertGate], claims: list[AlertClaim], claim_overrun_hours: float = 8
+) -> list[Alert]:
+    """Agent work that needs a person (§19): a parked task, a gate waiting past its reminder
+    (warning) or escalation threshold (error), a session that stopped checking in, a claim
+    that has run for too long."""
+    alerts: list[Alert] = []
+    for gate in gates:
+        if gate.parked:
+            alerts.append(
+                Alert(
+                    kind="task_parked",
+                    severity="error",
+                    message=(
+                        f"'{gate.task_name}' is parked — {gate.title}. Retry it with guidance, "
+                        "take it over, or cancel it."
+                    ),
+                    entity_type="task",
+                    entity_id=gate.task_id,
+                )
+            )
+            continue
+        past_escalation = (
+            gate.escalate_after_hours is not None and gate.age_hours >= gate.escalate_after_hours
+        )
+        past_reminder = (
+            gate.remind_after_hours is not None and gate.age_hours >= gate.remind_after_hours
+        )
+        if past_escalation or past_reminder:
+            alerts.append(
+                Alert(
+                    kind="gate_waiting",
+                    severity="error" if past_escalation else "warning",
+                    message=(
+                        f"'{gate.task_name}' has waited {gate.age_hours:.0f} h for a person "
+                        f"({gate.kind.replace('_', ' ')}): {gate.title}"
+                    ),
+                    entity_type="gate",
+                    entity_id=gate.id,
+                )
+            )
+    for claim in claims:
+        if claim.heartbeat_age_minutes > claim.lease_minutes / 2:
+            alerts.append(
+                Alert(
+                    kind="claim_stale",
+                    severity="warning",
+                    message=(
+                        f"The {claim.role} session on '{claim.task_name}' last checked in "
+                        f"{claim.heartbeat_age_minutes:.0f} min ago (lease {claim.lease_minutes} "
+                        "min) — it may have stopped"
+                    ),
+                    entity_type="task",
+                    entity_id=claim.task_id,
+                )
+            )
+        if claim.active_hours > claim_overrun_hours:
+            alerts.append(
+                Alert(
+                    kind="claim_overrun",
+                    severity="warning",
+                    message=(
+                        f"The {claim.role} session on '{claim.task_name}' has held it for "
+                        f"{claim.active_hours:.0f} h — check it is still making progress"
+                    ),
+                    entity_type="task",
+                    entity_id=claim.task_id,
+                )
+            )
     return alerts

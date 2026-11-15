@@ -5,6 +5,7 @@ from sqlmodel import Field
 
 from app.models.base import (
     CANOPY_OWNER,
+    AgentIntake,
     BlockerCategory,
     BlockerSeverity,
     DecisionRule,
@@ -74,6 +75,9 @@ class Project(TimestampMixin, table=True):
     # Native task keys are `<task_key_prefix or key>-<n>`; this is the next `n` to hand out.
     next_task_number: int = 1
     task_key_prefix: str | None = None
+    # Agent work (docs/AGENT_EXECUTION.md §6.1): off | on | paused (`AgentIntake`). Nothing in a
+    # project is offered to agents until a planner switches this on; `off` is its kill switch.
+    agent_intake: str = AgentIntake.off.value
 
 
 class Holiday(TimestampMixin, table=True):
@@ -156,6 +160,16 @@ class Task(TimestampMixin, table=True):
     assignee_engineer_id: int | None = Field(default=None, foreign_key="engineer.id")
     # The spec this task implements (intent → work traceability; spec-driven development).
     spec_id: int | None = Field(default=None, foreign_key="spec.id", index=True)
+    # Agent work (docs/AGENT_EXECUTION.md §6, §11.2). `delegation` = "agent" when a person has
+    # marked the task as workable by agents (the assignee stays accountable). `active_claim_id`
+    # points at the one active `WorkClaim` (written ONLY by `work_service` — the claim's
+    # compare-and-swap). `implements_adr_id` names the decision this task implements. All plain
+    # integers (no FK): an FK on an existing table forces a SQLite rebuild (CLAUDE.md).
+    delegation: str | None = None
+    delegated_by_user_id: int | None = None
+    delegated_at: datetime | None = None
+    active_claim_id: int | None = Field(default=None, index=True)
+    implements_adr_id: int | None = Field(default=None, index=True)
 
 
 class TaskStatusHistory(TimestampMixin, table=True):

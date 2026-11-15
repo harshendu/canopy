@@ -20,6 +20,7 @@ from app.api.v1 import (
     exports,
     features,
     gantt,
+    gates,
     initiatives,
     leadership,
     me,
@@ -39,6 +40,7 @@ from app.api.v1 import (
     teams,
     tracker_links,
     tracking,
+    work,
     workflows,
 )
 
@@ -112,6 +114,12 @@ api_router.include_router(
     prefix="/proposals",
     tags=["proposals"],
     dependencies=[FeatureGate("ai.proposals")],
+)
+# The agent work queue and its gates (docs/AGENT_EXECUTION.md). Paths span /work, /gates and
+# task/project sub-resources, so these routers carry no prefix.
+api_router.include_router(work.router, tags=["work"], dependencies=[FeatureGate("ai.work_queue")])
+api_router.include_router(
+    gates.router, tags=["gates"], dependencies=[FeatureGate("ai.work_queue")]
 )
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(gantt.router, tags=["gantt"])

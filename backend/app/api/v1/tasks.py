@@ -11,7 +11,7 @@ from app.api.deps import (
     is_planner,
 )
 from app.core.events import publish
-from app.models.base import ActorKind, TaskType, TokenScope
+from app.models.base import ActorKind, Delegation, TaskType, TokenScope
 from app.models.project import Project, Task, TaskStatusHistory
 from app.models.user import User
 from app.schemas.entities import (
@@ -23,6 +23,7 @@ from app.schemas.entities import (
     TaskStatusHistoryRead,
     TaskUpdate,
 )
+from app.services import work_service
 from app.services.access import (
     ensure_project_editable,
     ensure_task_editable,
@@ -210,6 +211,25 @@ async def move_task(
     planner_ok = (
         is_planner(user) and project is not None and await project_can_edit(session, user, project)
     )
+    # Agent work (docs/AGENT_EXECUTION.md §9.2): a delegated card's status moves through the
+    # queue for agents, and a person's move is checked (warnings) and ends any running claim.
+    status_change = payload.to_status is not None and (
+        payload.to_status.strip().casefold() != (task.status or "").casefold()
+    )
+    agent_work = (
+        status_change
+        and task.delegation == Delegation.agent.value
+        and await feature_enabled(session, "ai.work_queue")
+    )
+    if agent_work and scope == TokenScope.agent:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "use_work_claim",
+                "message": "This task is delegated to agents: claim it (claim_work) and hand "
+                "off with submit_work — the queue moves it",
+            },
+        )
     if not planner_ok:
         # Engineer rules — also for a planner outside this project (their own cards still move).
         try:
@@ -218,6 +238,18 @@ async def move_task(
             if is_planner(user):
                 await ensure_project_editable(session, user, task.project_id)  # says why
             raise
+    caller: work_service.Caller | None = None
+    policy_warnings: list[str] = []
+    if agent_work and payload.to_status is not None:
+        caller = await work_service.caller_for(session, user, None, is_agent=False)
+        try:
+            policy_warnings = await work_service.check_person_move(
+                session, task, caller, payload.to_status,
+                override_reason=payload.override_reason, may_override=planner_ok,
+            )
+        except work_service.WorkError as exc:
+            await session.rollback()
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
     try:
         outcome = await workflow_move(
             session,
@@ -239,11 +271,17 @@ async def move_task(
         raise _tracking_http_error(exc) from exc
     if pull_for is not None:
         task.assignee_engineer_id = pull_for
+    if caller is not None and outcome.changed:
+        await work_service.on_person_move(session, task, caller)
     await session.commit()
     await session.refresh(task)
     await publish({"type": "board", "project_id": task.project_id, "task_id": task.id})
+    if caller is not None:
+        await work_service.notify(task.project_id, task.id)
     return TaskMoveResponse(
-        task=TaskRead.model_validate(task), changed=outcome.changed, warnings=outcome.warnings
+        task=TaskRead.model_validate(task),
+        changed=outcome.changed,
+        warnings=[*outcome.warnings, *policy_warnings],
     )
 
 

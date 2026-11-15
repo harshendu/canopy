@@ -197,6 +197,18 @@ FEATURE_CATALOG: tuple[FeatureDef, ...] = (
         "Agent-staged canopy changes a human reviews, edits down, and applies from the UI.",
         "ai",
     ),
+    FeatureDef(
+        "ai.work_queue", "Agent work queue",
+        "Delegate tasks to agents: intake, claims, briefs, plans and hand-offs, the questions "
+        "agents ask and their Decisions inbox, the Agents view.",
+        "ai",
+    ),
+    FeatureDef(
+        "ai.stage_policy", "Stage policy & rules",
+        "Per-column agent policy: entry checks, plan and hand-off checkpoints, decision "
+        "columns and the gates they raise, team and project rules.",
+        "ai",
+    ),
 )
 
 FEATURES_BY_KEY: dict[str, FeatureDef] = {f.key: f for f in FEATURE_CATALOG}

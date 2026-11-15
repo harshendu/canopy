@@ -178,7 +178,10 @@ def register(mcp, client) -> None:
         Each card says who owns its status (`status_owner`: "canopy" or a tracker) and whether
         it is `movable`; `mode` is native|mirrored and `delivery_method` kanban|sprint|both.
         `sprint` narrows it to active | backlog | all | a sprint id. Manage flow by finishing
-        aging/high-WIP work before starting more."""
+        aging/high-WIP work before starting more. Agent work: a card's `delegation` ("agent"
+        when a person delegated it to the work queue), `claim` (the session working it: role,
+        since, heartbeat age), `gate` (what a person must decide; `parked` when canopy stopped
+        offering it), and each lane's `worked_by` role."""
         params = {"sprint": sprint} if sprint else None
         if team_id is not None:
             return await client.get(f"/teams/{team_id}/board", params=params)
@@ -207,6 +210,10 @@ def register(mcp, client) -> None:
         review. Every move is recorded in the task's status history (burndown, cycle time).
         Returns {task, changed, warnings} — `wip_limit_exceeded` means the column is now over its
         limit; under `block` enforcement the move is refused instead.
+
+        A **delegated** card (`delegation: "agent"`) moves through the agent work queue: on an
+        agent token this returns `use_work_claim` — claim it (`claim_work`) and hand off with
+        `submit_work`, and canopy moves it.
         """
         body: dict = {"position": position}
         for field, value in (

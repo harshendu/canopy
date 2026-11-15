@@ -129,21 +129,28 @@ class GitHubConnector(Connector):
         `_github_event`). Any event carrying a `pull_request` upserts the PR cache; a
         `pull_request_review` also records that reviewer's verdict; `check_suite`, `check_run`
         and `status` update the check state of the PRs whose current head they report on
-        (docs/AGENT_EXECUTION.md §11.3). Nothing here moves a task's status."""
+        (docs/AGENT_EXECUTION.md §11.3). Nothing here moves a task's status — except agent
+        work's evidence rules: a merge or an outside approval may satisfy a gate, and a PR merged
+        while its delegated, canopy-owned task is upstream moves it to done (§9.4)."""
         result = SyncResult(provider="github")
         event = str(payload.get("_github_event") or "")
         repo = (payload.get("repository") or {}).get("full_name", self.full_name)
         pr = payload.get("pull_request")
+        touched: list[PullRequest] = []
         if pr:
             action = await self._upsert_pull_request(repo, pr)
             setattr(result, action, getattr(result, action) + 1)
+            row = await ingest.find_pull_request(self.session, repo, int(pr["number"]))
             review = payload.get("review")
-            if event == "pull_request_review" and isinstance(review, dict):
-                row = await ingest.find_pull_request(self.session, repo, int(pr["number"]))
-                if row is not None:
+            if row is not None:
+                if event == "pull_request_review" and isinstance(review, dict):
                     self._record_review(row, review)
+                touched.append(row)
         elif event in ("check_suite", "check_run", "status"):
-            result.updated += await self._record_check(repo, event, payload)
+            touched = await self._record_check(repo, event, payload)
+            result.updated += len(touched)
+        # Agent work: an approval or a merge may satisfy a gate (docs/AGENT_EXECUTION.md §9.4).
+        await ingest.pull_request_effects(self.session, touched)
         if result.created or result.updated:
             await self.session.commit()
         return result
@@ -154,8 +161,11 @@ class GitHubConnector(Connector):
         row.approved_by = pr_signals.approvals_at_head(row.reviews, row.head_sha)
         row.review_decision = pr_signals.review_decision(row.reviews, row.head_sha)
 
-    async def _record_check(self, repo: str, event: str, payload: dict[str, Any]) -> int:
-        """Record one check suite / check run / commit status on the PRs at that head."""
+    async def _record_check(
+        self, repo: str, event: str, payload: dict[str, Any]
+    ) -> list[PullRequest]:
+        """Record one check suite / check run / commit status on the PRs at that head; returns
+        the rows it changed."""
         if event == "status":
             head_sha = str(payload.get("sha") or "")
             key = f"status:{payload.get('context') or 'default'}"
@@ -175,7 +185,7 @@ class GitHubConnector(Connector):
                 int(p["number"]) for p in body.get("pull_requests") or [] if p.get("number")
             ]
         if not head_sha:
-            return 0
+            return []
         rows: dict[int, PullRequest] = {}
         for row in (
             await self.session.execute(
@@ -190,7 +200,7 @@ class GitHubConnector(Connector):
             found = await ingest.find_pull_request(self.session, repo, number)
             if found is not None and found.id is not None:
                 rows.setdefault(found.id, found)
-        touched = 0
+        touched: list[PullRequest] = []
         for row in rows.values():
             if row.head_sha and row.head_sha != head_sha:
                 continue  # a check on an older commit says nothing about the current head
@@ -199,5 +209,5 @@ class GitHubConnector(Connector):
             checks[key] = state
             row.checks = checks
             row.checks_state = pr_signals.roll_up_checks(checks)
-            touched += 1
+            touched.append(row)
         return touched

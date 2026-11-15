@@ -13,8 +13,20 @@ from app.api.deps import (
     is_contributor,
     is_planner,
 )
+from app.core.config import settings
 from app.core.events import publish
-from app.models.base import RiskScope, RiskStatus, SprintState, StatusCategory, TaskType
+from app.models.base import (
+    ClaimState,
+    GateKind,
+    GateStatus,
+    RiskScope,
+    RiskStatus,
+    SprintState,
+    StatusCategory,
+    TaskType,
+    utcnow,
+)
+from app.models.gate import Gate
 from app.models.project import (
     Baseline,
     Blocker,
@@ -27,6 +39,7 @@ from app.models.risk_register import RiskItem
 from app.models.sprint import Sprint
 from app.models.team import Allocation, Engineer, EngineerAvailability
 from app.models.user import User
+from app.models.work import WorkClaim
 from app.schemas.entities import (
     AlertRead,
     AlertsResponse,
@@ -46,6 +59,8 @@ from app.schemas.entities import (
 from app.services.access import ensure_project_editable, project_can_edit
 from app.services.alerts import (
     AlertBlocker,
+    AlertClaim,
+    AlertGate,
     AlertMilestone,
     AlertRiskItem,
     AlertSprintTask,
@@ -344,6 +359,67 @@ def _is_open(task: Task) -> bool:
     )
 
 
+def _escalate_after_hours(gate: Gate) -> float | None:
+    if gate.escalation_level > 0:
+        return 0.0  # it has escalated at least once, so it is past its threshold
+    if gate.escalate_at is None:
+        return None
+    return (gate.escalate_at - gate.created_at).total_seconds() / 3600
+
+
+async def agent_work_alert_facts(
+    session: AsyncSession, project_id: int, task_names: dict[int, str]
+) -> tuple[list[AlertGate], list[AlertClaim]]:
+    """Open gates and active claims of a project, for the agent-work alerts (empty with
+    `ai.work_queue` off)."""
+    if not task_names or not await feature_enabled(session, "ai.work_queue"):
+        return [], []
+    now = utcnow()
+    gates = [
+        AlertGate(
+            id=g.id,
+            task_id=g.task_id,
+            task_name=task_names.get(g.task_id, f"#{g.task_id}"),
+            kind=g.kind,
+            title=g.title,
+            age_hours=max(0.0, (now - g.created_at).total_seconds()) / 3600,
+            parked=g.kind == GateKind.escalation.value and g.origin == "system",
+            remind_after_hours=(g.remind_at - g.created_at).total_seconds() / 3600
+            if g.remind_at is not None else None,
+            escalate_after_hours=_escalate_after_hours(g),
+        )
+        for g in (
+            await session.execute(
+                select(Gate).where(
+                    col(Gate.project_id) == project_id, Gate.status == GateStatus.open.value
+                )
+            )
+        ).scalars().all()
+        if g.id is not None
+    ]
+    claims = [
+        AlertClaim(
+            id=c.id,
+            task_id=c.task_id,
+            task_name=task_names.get(c.task_id, f"#{c.task_id}"),
+            role=c.role,
+            lease_minutes=c.lease_minutes,
+            heartbeat_age_minutes=max(0.0, (now - c.heartbeat_at).total_seconds()) / 60,
+            active_hours=max(0.0, (now - c.claimed_at).total_seconds()) / 3600,
+        )
+        for c in (
+            await session.execute(
+                select(WorkClaim).where(
+                    col(WorkClaim.task_id).in_(set(task_names)),
+                    WorkClaim.state == ClaimState.active.value,
+                )
+            )
+        ).scalars().all()
+        if c.id is not None
+    ]
+    return gates, claims
+
+
 @router.get(
     "/projects/{project_id}/alerts",
     response_model=AlertsResponse,
@@ -476,6 +552,7 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
         and t.type != TaskType.summary
         and category_of_task(t) not in (StatusCategory.done, StatusCategory.cancelled)
     ]
+    alert_gates, alert_claims = await agent_work_alert_facts(session, project_id, task_names)
     computed = compute_alerts(
         date.today(),
         alert_tasks,
@@ -484,6 +561,9 @@ async def alerts(session: SessionDep, _: CurrentUser, project_id: int) -> Alerts
         alert_blockers,
         alert_risks,
         alert_sprint_tasks,
+        alert_gates,
+        alert_claims,
+        claim_overrun_hours=settings.WORK_CLAIM_OVERRUN_HOURS,
     )
     return AlertsResponse(
         project_id=project_id,

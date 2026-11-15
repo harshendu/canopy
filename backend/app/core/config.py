@@ -82,6 +82,18 @@ class Settings(BaseSettings):
     # theirs; a project switches explicitly (USER_FLOWS §C1a).
     TRACKING_DEFAULT_MODE: str = "native"
 
+    # --- Agent execution (docs/AGENT_EXECUTION.md) ---
+    # Delegating a task warns (never refuses) when it carries one of these tags — work a person
+    # usually keeps — or is sized above the small-batch threshold (working days).
+    WORK_KEEP_FOR_PEOPLE_TAGS: str = "security,incident,compliance"
+    WORK_SMALL_BATCH_DAYS: int = 5
+    # How often the worker expires lapsed claims and escalates waiting gates (minutes).
+    WORK_REAPER_MINUTES: int = 5
+    # Alerts: a claim held longer than this (hours) is an overrun; delegated work ready longer
+    # than this (hours) while intake is on means nobody is running workers for its role.
+    WORK_CLAIM_OVERRUN_HOURS: int = 8
+    WORK_UNCLAIMED_HOURS: int = 24
+
     # --- OAuth 2.0 (3LO) ---
     # The provider redirects here after consent; must match the app registration.
     OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
