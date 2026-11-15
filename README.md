@@ -306,6 +306,7 @@ that must stay portable; see [CONTRIBUTING.md](CONTRIBUTING.md#database-changes)
 | [`docs/EXECUTION_PHILOSOPHY.md`](docs/EXECUTION_PHILOSOPHY.md) | The operating model behind canopy |
 | [`docs/AI_NATIVE_EXECUTION.md`](docs/AI_NATIVE_EXECUTION.md) | The AI-native vision and roadmap |
 | [`docs/PROPOSED_FLOWS.md`](docs/PROPOSED_FLOWS.md) | Proposed revisions and extensions to the user flows (not yet built) |
+| [`docs/AGENT_EXECUTION.md`](docs/AGENT_EXECUTION.md) | Design proposal: agent sessions pull delegated tasks from canopy's work queue and move them through gated stages, with people deciding in the UI (not yet built) |
 | [`e2e/README.md`](e2e/README.md) | Running and writing browser end-to-end tests |
 | `http://localhost:8000/docs` | Live OpenAPI reference for the REST API |
 

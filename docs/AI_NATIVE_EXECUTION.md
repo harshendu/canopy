@@ -324,6 +324,12 @@ outcome-out). (4) Bounded agency + auto-guardrails is the governance prerequisit
 more of the writing. (2) and (6) make the *outcome* and *alignment* halves real for the full
 stakeholder set.
 
+**Proposed next:** [`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md) designs the step these gaps point
+at — canopy as the work queue, state store and policy keeper for agent sessions that plan,
+implement and review delegated tasks. It closes the remaining piece of gap #4 (guardrails run on
+every agent PR, as a claimable review stage), delivers gap #8 (Definition of Done as inherited
+rules) and adds the task ↔ decision links gap #5 needs.
+
 ---
 
 ## 8. The one-line vision

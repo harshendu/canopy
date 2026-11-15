@@ -16,7 +16,9 @@ Both call the same REST API (`/api/v1/...`). Throughout, **API** = REST endpoint
 
 > **Looking ahead:** a critique of these flows and a proposed revision/extension live in
 > [`PROPOSED_FLOWS.md`](./PROPOSED_FLOWS.md); the delivery philosophy behind those proposals is in
-> [`EXECUTION_PHILOSOPHY.md`](./EXECUTION_PHILOSOPHY.md). This file remains the source of truth for
+> [`EXECUTION_PHILOSOPHY.md`](./EXECUTION_PHILOSOPHY.md). The design for agent sessions that pull
+> delegated tasks from canopy and move them through gated stages is in
+> [`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md). This file remains the source of truth for
 > what is *built*; those are the source of intent for what *should change*.
 
 ## Actors
@@ -2616,6 +2618,13 @@ backlog:
   overhaul lands.
 - **GitHub PR-latency metrics** (§J6): needs deep repo crawling (like drift's live path); the
   quality-risk family is fed by §J8 events instead.
+- **Agent execution — work queue, stage policy and human gates**: delegating a task to agents,
+  claims with leases, the work brief, plan / hand-off / review artifacts on a task, checks and
+  human gates at stage transitions, and team/project rules (Definition of Done) are **designed
+  in [`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md) and not built**. Today an agent session changes
+  work only through the board verbs it is explicitly told to use (§C9.3) and staged proposals
+  (§AA); nothing offers it work, tracks which session holds a task, or blocks a stage for a
+  person.
 - Smaller follow-ups: Slack/email **alert delivery** (I) + **decision SLA notifications** (G3);
   hard-enforced decision **approval gates** (G3, `can_accept` is advisory); connector **RBAC**;
   resource **leveling**; drift **suppression-management UI** + non-Python analysis. *(Nightly

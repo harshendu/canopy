@@ -277,7 +277,18 @@ queryable instead of asserted. UI: a panel on the Decisions tab; MCP `get_decisi
 A per-project/per-initiative editable **DoD checklist** (tests, ADR if architecturally significant,
 observability/telemetry added, docs/USER_FLOWS updated, fitness functions pass). Surfaced on tasks
 and enforced softly at PR time via the linker. Encodes the quality bar as data, not folklore — the
-operational half of `EXECUTION_PHILOSOPHY.md` §5.
+operational half of `EXECUTION_PHILOSOPHY.md` §5. *(Designed in detail as inherited **rules** with
+hand-off attestations in [`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md) §10.)*
+
+## AB. Agent execution — work queue, stage policy and human gates
+The step beyond L-R3: agent sessions **pull delegated tasks** from canopy (claims with leases),
+receive a **work brief** assembled from the spec, the governing decisions, the doc graph and the
+team's rules, record a **plan** and a **hand-off** on the task, and move it through stages whose
+columns carry **entry checks** and **human gates** that people answer in the Reviews inbox. The
+full design — data model, API, MCP tools, skills, UI, security and rollout — is
+[`AGENT_EXECUTION.md`](./AGENT_EXECUTION.md). It also delivers U (above) and the task ↔ decision
+links T needs, and turns the review stage into the place where L-R3's guardrails run on every
+agent-authored PR.
 
 ---
 
