@@ -11,7 +11,9 @@
 > roadmap gap #4, delivers gap #8, and lays the links gap #5 needs),
 > [`EXECUTION_PHILOSOPHY.md`](./EXECUTION_PHILOSOPHY.md) §4 and §8 ("guardrails, not gates"; "keep
 > the human on the irreversible decisions"), [`PROPOSED_FLOWS.md`](./PROPOSED_FLOWS.md) (L-R3, T,
-> U). §2 summarises the prior-art survey the design draws on; Appendix D lists the sources.
+> U). The prior-art survey the design draws on is
+> [`research/agent-work-queue-prior-art.md`](./research/agent-work-queue-prior-art.md); §2
+> summarises what was taken from it, and Appendix D lists the sources.
 
 ---
 
@@ -90,7 +92,8 @@ Eight strands of prior art were surveyed for this proposal: products that turn t
 runs, practitioner-built agent queues, plan-first workflows, human-in-the-loop patterns, gate
 machinery in trackers and CI/CD, queue mechanics, the Claude platform itself, and the security and
 empirical record. The full survey, with what could and could not be verified, is the companion
-research report. What follows is the part that shaped the design. Numbers and names are from the
+report, [`research/agent-work-queue-prior-art.md`](./research/agent-work-queue-prior-art.md).
+What follows is the part that shaped the design. Numbers and names are from the
 sources' own documentation unless marked *secondary*; links are in Appendix D.
 
 ### 2.1 Products that drive agents from tickets
@@ -186,6 +189,10 @@ is the ticket text plus instruction files in the repository.
 - **Resuming.** Resumption replays work, so side effects must be idempotent; a Temporal example
   accepts a decision only when it carries the id of the request still pending. Claude Code can end
   a headless turn on a deferred tool call and resume that session later.
+- **The durable form.** 12-Factor Agents' "contact humans with tool calls" is the pattern that
+  needs nothing to stay alive: the agent calls an ordinary tool that records the request and
+  ends its loop; the answer is collected elsewhere; a later run picks the work up from stored
+  state.
 - **Waiting.** No source recommends approving on expiry. A Cloudflare example waits up to seven
   days, reminding at 4 hours and escalating at 24.
 - **Fatigue.** Anthropic reports that users accept 93% of permission prompts, and that with
@@ -283,8 +290,10 @@ These follow from canopy's operating model and from the prior art in §2. Later 
 as P1–P11.
 
 - **P1 — One state machine, one writer.** A ticket's stage is its status. Every status change
-  still ends in `workflow.record_transition`. Agent work adds a lease and a decision queue; it does
-  not add a second workflow.
+  still ends in `workflow.record_transition`. Everything else about agent work sits *beside*
+  status as canopy's own records — who holds the task (a claim), which attempt this is, what is
+  waiting on a person (a gate) — and is never encoded in a status name. Agent work adds a lease
+  and a decision queue; it does not add a second workflow.
 - **P2 — Pull, do not push; canopy does not run agents.** canopy offers work and holds state. It
   has no repository credentials and no compute for agents (the same boundary as "the server can't
   crawl code", §N). Runners are the team's choice.
@@ -352,7 +361,7 @@ sequenceDiagram
     participant A as Implementer session
     participant G as GitHub
     participant R as Reviewer and QA sessions
-    H->>C: delegate task CHK-12 (board or task panel)
+    H->>C: delegate task PAYMENTS-11 (board or task panel)
     A->>C: claim_work(role=implementer)
     C-->>A: claim + brief (spec, criteria, decisions, docs, rules, exit contract)
     A->>C: submit_plan(approach, steps, affected paths)
@@ -447,8 +456,10 @@ that point was to ask, and it did. Nothing in canopy waits on a process.
   whitelist), and a person applies it. Open decision D1 (§24) revisits this.
 - **Accountability** — delegation does not change `assignee_engineer_id`. When an agent claims an
   unassigned delegated task, it is assigned to the engineer linked to the token's issuer — the
-  board's existing pull rule (§C9.3). Agents are never `Engineer` rows: they do not appear in
-  capacity, ownership or per-person views.
+  board's existing pull rule (§C9.3). If the task has no assignee and the issuer has no engineer
+  profile, the claim is refused (`no_accountable_owner`): every agent-worked task has a person
+  behind it. Agents are never `Engineer` rows: they do not appear in capacity, ownership or
+  per-person views.
 - **Readiness hints, not blocks.** Delegating returns warnings when the task is a poor candidate:
   no description, no spec or acceptance criteria, an estimate above the team's small-batch
   threshold, no linked component, or a tag on the workspace's "keep for people" list (default:
@@ -484,6 +495,9 @@ new work. A team throttles its agents with the control it already has.
 **Without any stage policy** (Phase 1, or any workflow nobody has configured) a built-in default
 applies: the first `in_progress` column is the `implementer` stage, fed by the last `todo` column
 before it. Nothing else is agent-worked.
+
+Readiness reads the rows the board already reads — a project's leaf tasks, their blockers,
+dependencies, claims and gates — so it needs no index beyond those in §11.
 
 `GET /work/queue` returns the ready tasks for a role and, for everything delegated that is *not*
 ready, the reason counts — `gate_open`, `blocked`, `waiting_on_dependencies`, `claimed`, `parked`,
@@ -542,7 +556,7 @@ retry, take it over, or cancel it.
 
 **Ending a claim.** `submit_work` and `submit_review` (§9) complete it; `ask_human` completes it
 with outcome `gated`; `release_work` gives the task back with a reason and a note for the next
-session; `fail` says a person is needed and opens an escalation gate.
+session — or, with `needs_human`, marks the attempt `failed` and opens an escalation gate.
 
 **Idempotency.** A token holds one active claim at a time by default
 (`AgentTokenRecord.max_active_claims`), so a retried `claim_work` returns the claim the session
@@ -569,7 +583,7 @@ pure shaping function (`work_brief.py`) — deterministic, no model in the serve
 | `rules` | guidance that applies to this role and task; the Definition-of-Done items this hand-off must attest | `Rule` (§10) |
 | `dependencies` | predecessors with status and PR; successors; open blockers | `Dependency`, `Blocker` |
 | `history` | the latest plan and its approval state; earlier attempts with their outcome and last progress note; gate decisions and the notes people wrote; findings awaiting rework; branch and PR with review and check state | artifacts, claims, gates, `PullRequest` |
-| `conventions` | repository; branch name `<task-key>-<slug>` and PR title prefix, so the PR links itself to the task (§J6) | project / GitHub connection |
+| `conventions` | repository; branch name `<task-key>-<slug>` and PR title prefix, so the PR links itself to the task (§J6) | the components' code bindings (`ComponentCodeBinding.repo`, else its connection's repository) |
 | `more` | tool names and ids for fetching anything in full: `get_adr`, `get_spec`, `adr_impact`, `list_doc_references`, `read_design_doc`, `read_repo_file` | — |
 
 **Relevance is rule-based.** Decisions are included when the task implements them
@@ -663,7 +677,7 @@ workspace template's (§C9.1).
   criteria. Checks sit on entry rather than exit because canopy's workflows allow any-to-any moves:
   an entry check holds whichever column the card comes from.
 - Policy edits are **human-only** and limited to the people who may edit the workflow at that scope
-  (§C9.4). An agent must not be able to loosen its own guardrails; once a workflow carries
+  (§C9.1). An agent must not be able to loosen its own guardrails; once a workflow carries
   policies, `PUT …/workflow` is human-only too.
 
 ### 9.2 Checks
@@ -676,7 +690,7 @@ alternative G).
 | `dependencies_done` | every finish-to-start predecessor is in a `done` category (start-to-start: started) | observed |
 | `no_open_blockers` | the task has no unresolved blocker | observed |
 | `spec_approved` | the task has a spec in `approved` / `in_progress` / `verified` | observed |
-| `artifact` (`kind`) | an artifact of that kind exists for the current attempt cycle | observed |
+| `artifact` (`kind`) | an artifact of that kind was added in the current round — since the task was last returned for rework, or first claimed | observed |
 | `plan_approved` | no approval was required for the latest plan revision, or a gate approved that revision | observed |
 | `gate_approved` (`kind`) | a gate of that kind was approved since the last rework | observed |
 | `pr_linked` (`state`) | a PR is linked to the task (optionally: open / merged) | observed (GitHub) |
@@ -697,6 +711,22 @@ lines canopy saw for itself.
 Evaluation is one pure function, `stage_policy.evaluate(context) → {allowed, failures, warnings,
 decision}`. `GET /tasks/{id}/advance-check?to_status=` exposes it as a dry run; `submit_work` uses
 the same function and stores its result on the work event — the decision log.
+
+```mermaid
+flowchart TD
+    S["submit_work / submit_review"] --> A{"claim still active?"}
+    A -- no --> X1["409 claim_lost: nothing changes"]
+    A -- yes --> B["save the artifact, evaluate the target column's entry checks"]
+    B --> C{"a blocking check fails?"}
+    C -- yes --> X2["409 checks_failed: the claim stays active, fix and resubmit"]
+    C -- no --> D{"must a person decide?"}
+    D -- "yes: checkpoint or decision column" --> G["open the gate, hold the task, end the claim (gated)"]
+    D -- no --> M["move the card through workflow.move_task, end the claim"]
+    G --> H{"the person's decision"}
+    H -- approve --> M2["canopy moves the task on, or it is ready again in place"]
+    H -- "request changes" --> R["back to the work column, rework +1, notes in the next brief"]
+    H -- reject --> K["cancelled"]
+```
 
 **People are warned, not stopped.** A person moving a card on the board gets the same evaluation
 as warnings in the move response, exactly as a WIP `warn` does today. Only checks marked
@@ -777,6 +807,9 @@ task is **held**: it is not ready for any role, and nothing advances it.
 - **The agent asks** — `ask_human`, from any stage, as a `question` (it needs an answer to
   proceed) or an `escalation` (it should not proceed). canopy raises escalations itself when a
   task is parked (§6.3) or a review loop does not converge (§9.5).
+
+A notice that needs no answer is not a gate. It is a `note` artifact on the task — visible in the
+timeline, included in the next brief — and holds nothing up.
 
 **What a gate holds.** The ask (`title`, `prompt`, and for questions a list of `options` and
 whether free text is allowed); the `subject` — the artifact revision under review; the `reasons`
@@ -909,6 +942,7 @@ Seven new tables, and additive columns on five existing ones. Models live in
 | `claimed_at`, `heartbeat_at`, `lease_expires_at`, `finished_at` | DATETIME | naive UTC |
 | `progress_note` | TEXT, null | the last heartbeat note |
 | `branch`, `pr_url` | VARCHAR(255), TEXT — null | declared by the session |
+| `usage` | JSON, null | what the runner chose to report when the claim ended: `turns`, `cost_usd`, `duration_s` |
 
 **`task_artifact`** — append-only; unique on (`task_id`, `kind`, `revision`).
 
@@ -926,7 +960,7 @@ Seven new tables, and additive columns on five existing ones. Models live in
 |---|---|---|
 | `task_id`, `project_id` | FKs, indexed | `project_id` is denormalised for the inbox query |
 | `kind`, `origin`, `stage` | VARCHAR(24), VARCHAR(12), VARCHAR(64) | `plan_approval` · `signoff` · `question` · `escalation` · a policy's own key; `checkpoint` · `column` · `agent` · `system` |
-| `status` | VARCHAR(20) | `open` · `approved` · `changes_requested` · `rejected` · `answered` · `cancelled` |
+| `status` | VARCHAR(20) | the coarse outcome: `open` · `approved` · `changes_requested` · `rejected` · `answered` · `cancelled` (the exact response — `approve_with_conditions`, `retry`, `take_over`, … — is `decision`) |
 | `title`, `prompt`, `options`, `allowed_decisions` | VARCHAR(200), TEXT, JSON, JSON | the ask and the responses offered |
 | `reasons`, `evidence` | JSON | matched conditions; the policy evaluation and PR / verdict snapshot when it opened |
 | `subject_artifact_id` | FK `task_artifact`, null | the revision under review |
@@ -980,7 +1014,9 @@ at another table, so SQLite needs no table rebuild.
 Checks and evidence-satisfied gates need more than "open or closed". The GitHub webhook
 (`app/webhooks/github.py` → `GitHubConnector.handle_webhook`) starts handling
 `pull_request_review` and check events (`check_suite`, or `status`) alongside `pull_request`, and
-`upsert_pull_request` fills the columns above. The MCP and file ingest shapes
+`upsert_pull_request` fills the columns above. `checks_state` is `passing` only when every
+check GitHub requires on the branch has concluded successfully; a `neutral` or skipped check is
+not a failure, and not a pass either. The MCP and file ingest shapes
 (`IngestPullRequest`) gain the same optional fields, so an install that reads GitHub through
 Claude (`read_strategy = mcp`, §A8) is not left out. After every PR upsert two hooks run:
 `gates.on_pull_request` (satisfy or route gates, §9.4) and `work_service.on_pull_request` (the
@@ -1055,12 +1091,12 @@ All under `/api/v1`. "Agent" in the last column means an `agent`-scope token is 
 | Endpoint | Purpose | Who |
 |---|---|---|
 | `GET /work/queue?role=&project_id=&team_id=&repo=` | ready tasks for a role, plus reason counts for delegated tasks that are not ready | any authenticated user |
-| `POST /work/claims` `{role, task_id?, project_id?, team_id?, repo?, agent: {label?, runner?, session_ref?}, wait_s?}` | claim a named task or the next ready one; returns the claim **and the brief**; `{claim: null, retry_after_s, reasons}` when nothing is ready (`wait_s` ≤ 25 long-polls first) | contributor · agent |
+| `POST /work/claims` `{role, task_id?, project_id?, team_id?, repo?, agent: {label?, runner?, session_ref?}, wait_s?}` | claim a named task or the next ready one; returns the claim **and the brief**; `{claim: null, retry_after_s, reasons}` when nothing is ready (`wait_s` ≤ 25 long-polls first). `repo` narrows to projects with a component bound to that repository | contributor · agent |
 | `GET /work/claims?task_id=&state=&project_id=` · `GET /work/claims/{id}` | read claims | any |
 | `POST /work/claims/{id}/heartbeat` `{note?, steps?}` | renew the lease; returns `{lease_expires_at, directive, reason?}` | claim holder · agent |
 | `POST /work/claims/{id}/artifacts` `{kind, title?, body, data}` | add a `plan` or `note`; a plan returns `{artifact, governing_decisions, fitness_rules, unsettled, approval: {required, reasons, gate_id?}}` | claim holder · agent |
 | `POST /work/claims/{id}/gates` `{kind: question\|escalation, title, prompt, options?, allow_text?}` | ask a person; ends the claim (`gated`) | claim holder · agent |
-| `POST /work/claims/{id}/submit` `{handoff}` or `{review}` (+ `to_status?`) | hand off: saves the artifact, evaluates the target column, then advances, returns for rework, or opens a gate | claim holder · agent |
+| `POST /work/claims/{id}/submit` `{handoff}` or `{review}` (+ `to_status?`, `usage?`) | hand off: saves the artifact, evaluates the target column, then advances, returns for rework, or opens a gate | claim holder · agent |
 | `POST /work/claims/{id}/release` `{reason, note?, needs_human?}` | give the task back; `needs_human` opens an escalation gate | claim holder · agent · planner |
 | `GET /tasks/{id}/brief?role=` | the brief, without claiming | any |
 | `GET /tasks/{id}/advance-check?to_status=` | dry-run policy evaluation | any |
@@ -1103,7 +1139,7 @@ arrive with `ai.stage_policy`).
 - `GET /projects|initiatives|teams/{id}/agent-flow?weeks=` — new, the metrics of §19.
 
 **Refusal codes.** `not_delegated` · `intake_off` · `not_ready` (with `reasons`) ·
-`already_claimed` · `claim_lost` · `role_not_allowed` (token scope) · `checks_failed` (with the
+`already_claimed` · `no_accountable_owner` · `claim_lost` · `role_not_allowed` (token scope) · `checks_failed` (with the
 failed checks; the claim stays active) · `plan_missing` · `use_work_claim` · `not_an_approver` ·
 `self_approval_blocked` · `stale_subject` · `gate_closed` · `policy_invalid`.
 
@@ -1203,10 +1239,11 @@ server, so no canopy credential has to reach a shell command.
 
 | Event | The hook | Why |
 |---|---|---|
-| `SessionStart` (sources `resume` and `compact`) | calls `session_context`; when the token holds a claim, injects "you hold claim 812 on CHK-12 — call `get_work_brief`" | compaction or a resume can drop the claim from context |
+| `SessionStart` (sources `resume` and `compact`) | calls `session_context`; when the token holds a claim, injects "you hold claim 812 on PAYMENTS-11 — call `get_work_brief`" | compaction or a resume can drop the claim from context |
 | `PostToolBatch` | calls `heartbeat` (the server writes at most once a minute) | liveness that does not depend on the model remembering |
 | `Stop` | calls `handoff_check`; while the token still holds an active claim, blocks with "hand off, ask, or release before ending" | no dangling claims |
 
+`session_context`, `heartbeat` and `handoff_check` are small tools that exist for these hooks.
 The server finds the session's claim from the token alone, because a token holds one active
 claim at a time (§6.3).
 
@@ -1238,7 +1275,8 @@ canopy offers work; something else starts sessions (P2). The same plugin serves 
   or cloud environment; `dontAsk`, or `auto` with `--permission-prompts none`; narrow allow rules
   and explicit deny rules; the Bash sandbox on; a network allow-list; no production credentials
   in the worker's environment; a GitHub credential limited to the repository, behind branch
-  protection that requires a human review. `bypassPermissions` only in a disposable container.
+  protection that requires a human review — and, where the forge offers it, approval before
+  workflows run on an agent's pushes. `bypassPermissions` only in a disposable container.
 - **Resuming the same session is optional.** A headless runner can pause a session at a gate with
   Claude Code's deferred tool call (`PreToolUse` → `defer`) and continue it later with
   `claude -p --resume <session-id>` when canopy reports the decision; `WorkClaim.session_ref`
@@ -1270,8 +1308,9 @@ proposals** (as today) — and the nav badge counts both. A gate row shows its k
 one-line ask, why it exists, who asked, and its age against the reminder threshold. The gate page
 (`/reviews/gates/:id`), top to bottom:
 
-- **Why you are being asked** — the matched conditions in plain words ("touches *Payments*, which
-  ADR-0007 governs as a one-way door"), or the agent's question.
+- **Why you are being asked** — the matched conditions in plain words ("touches
+  *payments-service*, which the decision *Tokenize cards through the provider vault* governs as a
+  one-way door"), or the agent's question.
 - **The subject** — the plan rendered as written, or the hand-off with its PR link.
 - **Evidence** — every check with its result, grouped as *seen by canopy* (PR state, checks,
   approvals) and *stated by the agent* (attestations, self-audit), plus the review and QA
@@ -1414,6 +1453,12 @@ by token (P10).
 | Flow efficiency | time under an active claim ÷ elapsed time from first claim to done | the active-versus-waiting split §X2 lacked |
 | Gate load | gates opened per week, by kind and by the condition that fired | which rule creates the review work — the input for tuning policy |
 | Unassisted share | agent-worked tasks that reached done with no gate other than sign-off | how much autonomy the team is actually granting |
+| Cost per completed task | reported `usage` summed over a task's claims, where runners report it | whether rework and parking are where the spend goes |
+
+**A gate is an experiment.** Nobody has measured whether plan review or stage gates improve
+outcomes (§2.3), so `agent-flow` reports, per gate kind and per condition, the approval rate and
+the median time to decide. A gate that is approved nearly every time, in seconds, is not
+protecting anything: narrow its conditions or retire it.
 
 The delivery metrics of §X need no change. Agent-worked tasks move through the same statuses and
 categories, so throughput, cycle time, WIP and aging include them.
@@ -1426,6 +1471,8 @@ whatever delivery hook §I gets):
 | `gate_waiting` | a gate is open past its reminder / past its escalation threshold | warning / error |
 | `task_parked` | a task used up its attempts | error |
 | `claim_stale` | a claim's last heartbeat is older than half its lease | warning |
+| `claim_overrun` | a claim has been active longer than 8 hours | warning |
+| `work_unclaimed` | a task has been ready for more than 24 hours while intake is on — nobody is running workers for that role | warning |
 | `rework_loop` | a task is one round short of `max_rework` | warning |
 | `review_saturated` | a review or decision column is at its WIP limit while ready work waits upstream | warning |
 | `merged_ahead_of_stage` | a PR merged while its task was upstream of sign-off | warning |
@@ -1460,7 +1507,7 @@ intake on: the per-project switch is the real opt-in. Routers are gated at inclu
 | Claim, heartbeat, add artifacts, ask, submit, release | ✓ | ✓ | own or unassigned tasks | – | ✓ within the token's scope |
 | Decide a gate | by the gate's approver rule | ✓ by default | questions on own tasks | – | ✗ human-only |
 | Take over, release another's claim, add guidance | ✓ | ✓ | own tasks | – | ✗ |
-| Edit stage policy | as the workflow at that scope (§C9.4) | project scope | – | – | ✗ human-only |
+| Edit stage policy | as the workflow at that scope (§C9.1) | project scope | – | – | ✗ human-only |
 | Edit rules | all scopes | project scope; team scope with a director / manager seat | – | – | ✗ human-only |
 | Move a delegated card on the board | ✓ | ✓ with warnings, override with a reason | own, with warnings | – | ✗ `use_work_claim` |
 
@@ -1563,7 +1610,7 @@ Beyond the nine invariants of §12:
 
 | # | Alternative | Why not |
 |---|---|---|
-| A | A separate execution pipeline with its own stage field, independent of board status | Two state machines to reconcile; the board and every flow metric would show half the truth. It would let a pipeline be finer than a tracker's statuses — §17 handles that case with checkpoints instead. Revisit only if mirrored teams cannot live with that |
+| A | A separate execution pipeline with its own stage field, independent of board status | The survey argues for keeping agent work state as an overlay beside ticket status, and most of it is one here: the claim, the attempt and the pending decision are canopy's own records on native and mirrored tasks alike (P1). Only the *stage* rides on status — as it does in Symphony's and Linear's workflows — because a second stage field means two state machines to reconcile, and a board and flow metrics that each show half the truth. A stage overlay would let a pipeline be finer than a tracker's statuses; §17 covers that case with checkpoints. Revisit if mirrored teams cannot live with that |
 | B | canopy launches and supervises agents itself (an orchestrator inside the server) | canopy would need repository credentials, compute and a sandbox — the opposite of its boundary (P2). A pull queue lets any runner take part; a reference runner outside the server is Phase 3 |
 | C | Agents poll the tracker (Jira, Linear) directly; canopy only observes | The tracker cannot hand out canopy's context or enforce canopy's policy, and its only state is status. Supported as a degraded mode for mirrored projects (§17), not as the design |
 | D | Reuse change proposals for gates | A proposal stages writes to the plan and applies them all-or-nothing; a gate is a decision about work, with routing. They share the inbox, not the model |
@@ -1574,6 +1621,17 @@ Beyond the nine invariants of §12:
 | I | `SELECT … FOR UPDATE SKIP LOCKED` for the queue | Not available on SQLite, and unnecessary: one conditional `UPDATE` per claim is atomic on all three engines |
 | J | Keep rules only in repository files (`CLAUDE.md`, `AGENTS.md`, a workflow file) | They cannot carry per-team process or decisions with a status, cannot be inherited across repositories, and cannot be enforced at a transition. They remain the right place for code conventions (§10) |
 | K | Several roles working one column at once (code review and security review in parallel) | It breaks "one active claim per task", the property that keeps the claim primitive trivial. Sequential columns, or PR-level bots outside the queue, cover it; open decision D8 |
+
+**Deliberately not in this design**
+
+- canopy does not start, host, sandbox or supervise agent sessions, and holds no repository
+  credentials for them.
+- canopy does not merge pull requests, and never writes a status to a tracker.
+- Nothing is approved by a timeout, and no MCP tool decides a gate.
+- Agents are not `Engineer` rows: no capacity, allocation or per-person view models them.
+- No agent metric is broken down by person or by token.
+- An agent does not reshape the plan while executing; work it discovers is a change proposal.
+- There is no chat box in the UI; the conversation stays in the person's own Claude session.
 
 ---
 
@@ -1626,17 +1684,19 @@ process.
 
 ## Appendix B. Example work brief
 
-Trimmed for length; identifiers are from the fictional demo retailer.
+Illustrative, trimmed for length, and built on the demo retailer's *Payments Platform Migration*
+project (its components, code binding and decisions are in the seed; the spec is invented for
+the example).
 
 ```jsonc
 {
   "task": {
-    "key": "CHK-12", "name": "Retry declined card payments with a backup processor",
-    "description": {"trust": "content", "text": "When the primary processor declines with a retryable code…"},
-    "tags": ["payments"], "deadline": "2026-12-04", "story_points": 5,
-    "project": {"key": "CHK", "name": "Checkout Modernization"},
-    "phase": {"name": "Payment resilience"},
-    "accountable": "Isabel Moreno"
+    "key": "PAYMENTS-11", "name": "Payment webhooks & retries",
+    "description": {"trust": "content", "text": "Handle provider webhooks for captures and refunds; retry failed deliveries…"},
+    "tags": ["backend"], "duration_days": 4,
+    "project": {"key": "PAYMENTS", "name": "Payments Platform Migration"},
+    "phase": {"name": "Build"},
+    "accountable": "Priya Shah"
   },
   "stage": {
     "trust": "policy",
@@ -1649,56 +1709,63 @@ Trimmed for length; identifiers are from the fictional demo retailer.
       {"check": "plan_approved", "enforcement": "block"},
       {"check": "attestations_complete", "enforcement": "warn"}
     ],
-    "checkpoints": {"plan": {"required": true, "approval_when": ["one_way_door", "unsettled_decision", "no_spec", "low_confidence", "probation:5"]}},
-    "limits": {"lease_minutes": 30, "heartbeat_interval_s": 300, "attempt": 1, "max_attempts": 3, "rework": 0, "max_rework": 3}
+    "checkpoints": {"plan": {"required": true,
+                             "approval_when": ["one_way_door", "unsettled_decision", "no_spec", "low_confidence", "probation:5"]}},
+    "limits": {"lease_minutes": 30, "heartbeat_interval_s": 300,
+               "attempt": 1, "max_attempts": 3, "rework": 0, "max_rework": 3}
   },
   "intent": {
-    "spec": {"id": 7, "title": "Payment retry", "status": "approved",
-             "problem": "Recoverable declines currently fail the order…", "out_of_scope": "Changing the primary processor"},
+    "spec": {"id": 7, "title": "Provider webhooks", "status": "approved",
+             "problem": "Captures and refunds confirmed by the provider must reach the ledger exactly once…",
+             "out_of_scope": "Changing how cards are tokenized"},
     "criteria": [
-      {"id": 31, "text": "A retryable decline is retried once on the backup processor", "status": "open"},
-      {"id": 32, "text": "A customer is never charged twice for one order", "status": "open"}
+      {"id": 31, "text": "A webhook delivered twice changes the ledger once", "status": "open"},
+      {"id": 32, "text": "A failed delivery is retried with backoff and surfaces after the last attempt", "status": "open"}
     ]
   },
   "decisions": {
     "binding": [
-      {"adr": "ADR-0007", "title": "Payments go through the processor gateway", "reversibility": "one_way",
-       "why": "governs component Payments", "decision": "All processor calls go through PaymentGateway; no direct SDK use…",
-       "fitness": [{"kind": "forbid", "source": "Checkout API", "target": "Processor SDK"}]}
+      {"adr": "ADR-0001", "title": "Tokenize cards through the provider vault", "reversibility": "one_way",
+       "why": "governs component payments-service",
+       "decision": "Cards are tokenized in the provider's vault straight from the browser; our services only ever see tokens.",
+       "fitness": [{"kind": "require", "source": "payments-service", "target": "token-vault"}]}
     ],
-    "unsettled": []
+    "unsettled": [
+      {"adr": "ADR-0002", "title": "Single provider vs payment orchestration layer", "status": "under_discussion",
+       "note": "Do not build on either outcome; ask if the task depends on it."}
+    ]
   },
   "components": [
-    {"name": "Payments", "criticality": "high", "owner": "Isabel Moreno",
+    {"name": "payments-service", "kind": "service", "criticality": "high", "owner": "Priya Shah",
      "code": [{"repo": "example/shop", "path_glob": "services/payments/**"}]}
   ],
   "docs": [
-    {"kind": "tech_design", "title": "Payment retry design", "url": "https://docs.example.com/d/abc", "scope": "task"},
-    {"kind": "prd", "title": "Checkout resilience PRD", "url": "https://docs.example.com/d/def", "scope": "project"}
+    {"kind": "tech_design", "title": "Webhook handling design", "url": "https://docs.example.com/d/abc", "scope": "task"},
+    {"kind": "prd", "title": "Payments migration PRD", "url": "https://docs.example.com/d/def", "scope": "project"}
   ],
   "docs_missing": ["qa"],
   "rules": {
     "trust": "policy",
     "guidance": [
       {"key": "feature-flags", "from": "team", "title": "Flag anything user-visible",
-       "body": "New behaviour ships behind a flag in flags.yaml, default off…"}
+       "body": "New behaviour ships behind a flag, default off…"}
     ],
     "attestations": [
       {"key": "tests", "from": "workspace", "title": "Tests at the right level", "enforcement": "block"},
-      {"key": "user-flows", "from": "project", "title": "USER_FLOWS.md updated if a flow changed", "enforcement": "warn"}
+      {"key": "user-flows", "from": "project", "title": "User-facing docs updated if a flow changed", "enforcement": "warn"}
     ]
   },
-  "dependencies": {"predecessors": [{"key": "CHK-9", "name": "Backup processor contract", "category": "done"}],
-                   "successors": [{"key": "CHK-15"}], "blockers": []},
+  "dependencies": {"predecessors": [{"key": "PAYMENTS-7", "name": "Ledger & idempotency keys", "category": "done"}],
+                   "successors": [{"key": "PAYMENTS-13", "name": "Dual-run reconciliation"}], "blockers": []},
   "history": {"plan": null, "attempts": [], "decisions": [], "findings": [], "pull_requests": []},
-  "conventions": {"repo": "example/shop", "branch": "chk-12-payment-retry", "pr_title_prefix": "CHK-12"},
-  "more": {"get_adr": [7], "get_spec": [7], "read_design_doc": ["abc"], "adr_impact": [7]}
+  "conventions": {"repo": "example/shop", "branch": "payments-11-webhooks-retries", "pr_title_prefix": "PAYMENTS-11"},
+  "more": {"get_adr": [1, 2], "get_spec": [7], "read_design_doc": ["abc"], "adr_impact": [1]}
 }
 ```
 
-With this brief, `submit_plan` on a plan that touches `services/payments/**` answers that
-ADR-0007 governs the change as a one-way door, and opens a plan-approval gate whose reason reads
-exactly that.
+With this brief, `submit_plan` on a plan that touches `services/payments/**` answers that the
+tokenization decision governs the change as a one-way door and that the orchestration-layer
+decision is still open — and it opens a plan-approval gate whose reasons say exactly that.
 
 ---
 
@@ -1764,6 +1831,7 @@ theirs.
 
 **Asking a person (§2.4)**
 - LangChain — [Human-in-the-loop](https://docs.langchain.com/oss/python/langchain/human-in-the-loop) · [Agent Inbox](https://github.com/langchain-ai/agent-inbox) · [Introducing ambient agents](https://www.langchain.com/blog/introducing-ambient-agents) (14 Jan 2025)
+- HumanLayer — [12-Factor Agents, factor 7: contact humans with tool calls](https://github.com/humanlayer/12-factor-agents/blob/main/content/factor-07-contact-humans-with-tools.md)
 - [A2A specification](https://a2a-protocol.org/latest/specification/) · MCP — [Multi round-trip requests](https://modelcontextprotocol.io/specification/draft/basic/patterns/mrtr)
 - Temporal — [Human-in-the-loop cookbook](https://docs.temporal.io/ai-cookbook/human-in-the-loop-python) · Cloudflare — [Human in the loop](https://developers.cloudflare.com/agents/concepts/human-in-the-loop/)
 - Anthropic — [Claude Code auto mode](https://www.anthropic.com/engineering/claude-code-auto-mode) (25 Mar 2026) · [Measuring AI agent autonomy in practice](https://www.anthropic.com/research/measuring-agent-autonomy) (18 Feb 2026)
