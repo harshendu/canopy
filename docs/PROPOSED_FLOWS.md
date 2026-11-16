@@ -293,6 +293,20 @@ full design — data model, API, MCP tools, skills, UI, security and rollout —
 links T needs, and turns the review stage into the place where L-R3's guardrails run on every
 agent-authored PR.
 
+## AC. Deliberation records — structured thinking before the decision
+canopy stores decisions and detects when judgment is missing (a stuck decision, an unsettled one
+under a plan, a low-confidence plan, a parked task) but has no home for the thinking that produces
+a decision. The proposal keeps it that way on purpose: a **deliberation** — a multi-perspective
+debate, pre-mortem, estimate round or retro run by an external facilitator, with Claude as the
+only model — stays with the facilitator, and canopy **links** it. The outcome is filed as **one
+reviewed proposal** (a `proposed` ADR, its risks and follow-up work) whose source is the record,
+registered as a design doc and linked to the decision as its **basis**; deliberation that blocks
+work runs as a queue stage worked by a `deliberator` role and ends at a human decision column.
+The full design — the filing contract, four hardening fixes it depends on, the plugin skill and
+tools, the small backend additions, the discovery template, measures and rollout — is
+[`DELIBERATION.md`](./DELIBERATION.md). It also closes the open half of roadmap gap #5 (decision
+latency) and gives retros a path to "a change to the system".
+
 ---
 
 ## Consolidated MCP additions (closes C4)
